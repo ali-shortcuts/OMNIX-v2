@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using OMNIX.Core.AiGateway.Adapters;
+using OMNIX.Core.Context;
 using OMNIX.Core.ContextLimiter;
 using OMNIX.Core.Errors;
 using OMNIX.Core.Logging;

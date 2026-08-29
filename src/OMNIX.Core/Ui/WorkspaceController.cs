@@ -28,7 +28,7 @@ namespace OMNIX.Core.Ui
     public sealed class WorkspaceController : IDisposable
     {
         private readonly IHostAdapter _adapter;
-        private readonly AiGateway _gateway;
+        private readonly AiGateway.AiGateway _gateway;
         private readonly ChatHistoryStore _historyStore;
         private readonly ToolExecutor _toolExecutor;
 
@@ -42,7 +42,7 @@ namespace OMNIX.Core.Ui
         public AiGateway.AiGateway Gateway { get { return _gateway; } }
         public ProviderRegistry GatewayRegistry { get { return _gateway.Registry; } }
 
-        public WorkspaceController(IHostAdapter adapter, AiGateway gateway, ChatHistoryStore historyStore)
+        public WorkspaceController(IHostAdapter adapter, AiGateway.AiGateway gateway, ChatHistoryStore historyStore)
         {
             _adapter = adapter;
             _gateway = gateway;

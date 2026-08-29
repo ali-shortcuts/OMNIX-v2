@@ -76,7 +76,7 @@ namespace OMNIX.Core.Ui
             }
         }
 
-        private AiGateway Gateway
+        private AiGateway.AiGateway Gateway
         {
             get { return _controller != null ? _controller.Gateway : null; }
         }
