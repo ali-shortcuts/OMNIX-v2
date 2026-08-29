@@ -1,0 +1,140 @@
+using System;
+using System.Collections.Generic;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
+namespace OMNIX.Core.Tools
+{
+    /// <summary>
+    /// Layer 7 — the EXACT tool whitelist from the master spec. No tool outside this list may
+    /// be executed, ever (spec: "هیچ ابزاری خارج از این لیست بدون تصویب صریح این سند اضافه نشود").
+    /// </summary>
+    public static class ToolNames
+    {
+        // read-only
+        public const string ReadSelection = "read_selection";
+        public const string ReadDocument = "read_document";
+        public const string ReadPresentation = "read_presentation";
+        public const string CaptureChartAsImage = "capture_chart_as_image";
+        public const string CaptureSlideAsImage = "capture_slide_as_image";
+
+        // write (user confirmation + native Office undo)
+        public const string WriteToCell = "write_to_cell";
+        public const string InsertFormula = "insert_formula";
+        public const string RewriteSelectedText = "rewrite_selected_text";
+        public const string InsertSlide = "insert_slide";
+        public const string AddSpeakerNotes = "add_speaker_notes";
+        public const string HighlightRange = "highlight_range";
+
+        private static readonly HashSet<string> Whitelist = new HashSet<string>(StringComparer.Ordinal)
+        {
+            ReadSelection, ReadDocument, ReadPresentation, CaptureChartAsImage, CaptureSlideAsImage,
+            WriteToCell, InsertFormula, RewriteSelectedText, InsertSlide, AddSpeakerNotes, HighlightRange
+        };
+
+        private static readonly HashSet<string> WriteTools = new HashSet<string>(StringComparer.Ordinal)
+        {
+            WriteToCell, InsertFormula, RewriteSelectedText, InsertSlide, AddSpeakerNotes, HighlightRange
+        };
+
+        public static bool IsWhitelisted(string name) { return !string.IsNullOrEmpty(name) && Whitelist.Contains(name); }
+        public static bool IsWriteTool(string name) { return !string.IsNullOrEmpty(name) && WriteTools.Contains(name); }
+    }
+
+    public sealed class ToolCall
+    {
+        public string Name { get; set; }
+        public string ArgumentsJson { get; set; }
+    }
+
+    public sealed class ToolResult
+    {
+        public bool Success { get; set; }
+        public string ContentForModel { get; set; }
+        public string UiNote { get; set; }
+        public byte[] CapturedPng { get; set; }
+
+        public static ToolResult Ok(string contentForModel, string uiNote = null)
+        {
+            return new ToolResult { Success = true, ContentForModel = contentForModel, UiNote = uiNote };
+        }
+
+        public static ToolResult Fail(string contentForModel)
+        {
+            return new ToolResult { Success = false, ContentForModel = contentForModel };
+        }
+    }
+
+    public sealed class WritePreview
+    {
+        public string ToolName { get; set; }
+        public string Title { get; set; }
+        public string Before { get; set; }
+        public string After { get; set; }
+        public string ArgumentsJson { get; set; }
+    }
+
+    /// <summary>Minimal JSON argument accessor with defaults.</summary>
+    public sealed class ToolArguments
+    {
+        private readonly JObject _obj;
+
+        private ToolArguments(JObject obj) { _obj = obj ?? new JObject(); }
+
+        public static ToolArguments Parse(string json)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(json)) return new ToolArguments(new JObject());
+                return new ToolArguments(JObject.Parse(json));
+            }
+            catch
+            {
+                return new ToolArguments(new JObject());
+            }
+        }
+
+        public string Get(string key, string fallback)
+        {
+            var token = _obj[key];
+            if (token == null) return fallback;
+            string s = token.ToString();
+            return s ?? fallback;
+        }
+    }
+
+    /// <summary>
+    /// Parses the model's ```omnix_tool {"tool":..., "args":{...}}``` block.
+    /// Returns null when the reply contains no tool call.
+    /// </summary>
+    public static class ToolCallParser
+    {
+        public static ToolCall Parse(string reply)
+        {
+            if (string.IsNullOrEmpty(reply)) return null;
+            const string marker = "```omnix_tool";
+            int idx = reply.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) return null;
+
+            int start = idx + marker.Length;
+            // skip to end of line
+            while (start < reply.Length && reply[start] != '\n') start++;
+            int end = reply.IndexOf("```", start, StringComparison.Ordinal);
+            if (end < 0) return null;
+            string body = reply.Substring(start, end - start).Trim();
+
+            try
+            {
+                var obj = JObject.Parse(body);
+                string tool = (string)obj["tool"];
+                if (string.IsNullOrEmpty(tool)) return null;
+                string args = obj["args"] != null ? obj["args"].ToString(Formatting.None) : "{}";
+                return new ToolCall { Name = tool.Trim(), ArgumentsJson = args };
+            }
+            catch
+            {
+                return new ToolCall { Name = "", ArgumentsJson = body };
+            }
+        }
+    }
+}

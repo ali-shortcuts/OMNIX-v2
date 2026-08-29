@@ -1,0 +1,18 @@
+# Normalize line endings; text files stored as LF in repo, checked out per-OS default
+* text=auto
+
+*.cs text
+*.csproj text
+*.sln text eol=crlf
+*.xaml text
+*.xml text
+*.iss text
+*.ps1 text
+*.bat text eol=crlf
+*.md text
+*.yml text
+*.json text
+*.png binary
+*.ico binary
+*.cer binary
+*.dll binary

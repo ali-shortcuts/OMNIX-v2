@@ -1,0 +1,118 @@
+# ============================================================================
+# OMNIX CI — build the full solution on Windows, package the single-exe
+# installer, run the honest Defender check, and (on version tags) publish a
+# GitHub Release with the ONE .exe file (spec Phase 2.7, 2.8, Section 12).
+# ============================================================================
+name: build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  SOLUTION: OMNIX.sln
+  CONFIGURATION: Release
+
+jobs:
+  build:
+    name: Build + package (windows-latest)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+        with:
+          vs-prerelease: false
+
+      - name: Ensure VSTO SDK is present (installs Office dev tools if missing)
+        shell: pwsh
+        run: ./build/ensure-vsto-sdk.ps1
+
+      - name: Create temporary self-signed code-signing certificate
+        id: cert
+        shell: pwsh
+        run: |
+          ./build/create-signing-cert.ps1
+          $thumb = (Get-Content build/cert/thumbprint.txt).Trim()
+          "thumbprint=$thumb" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Thumbprint: $thumb"
+
+      - name: NuGet restore
+        shell: pwsh
+        run: |
+          if (-not (Test-Path build/nuget.exe)) {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest 'https://dist.nuget.org/win-x86-commandline/latest/nuget.exe' -OutFile build/nuget.exe
+          }
+          ./build/nuget.exe restore $env:SOLUTION
+
+      - name: Build solution (Release, signed VSTO manifests)
+        shell: pwsh
+        run: >
+          msbuild $env:SOLUTION
+          /p:Configuration=$env:CONFIGURATION
+          /p:Platform="Any CPU"
+          /p:SignManifests=true
+          /p:ManifestCertificateThumbprint=${{ steps.cert.outputs.thumbprint }}
+          /p:ManifestTimestampUrl=http://timestamp.digicert.com
+          /bl:build/logs/build.binlog
+          /m
+
+      - name: Stage installer payload
+        shell: pwsh
+        run: ./build/package.ps1
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Compile single-exe installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $iscc "installer/installer.iss"
+          Get-ChildItem installer/Output
+
+      - name: Windows Defender check with real-time protection ON (spec 2.9 — honest)
+        shell: pwsh
+        run: ./build/defender-check.ps1
+
+      - name: Upload build artifacts (installer + reports + logs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: omnix-build
+          path: |
+            installer/Output/*.exe
+            build/defender-report.txt
+            build/logs/build.binlog
+          if-no-files-found: error
+
+      - name: Release (only on v* tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Output/OMNIX-Setup-*.exe
+          body: |
+            OMNIX ${{ github.ref_name }} — single-exe installer.
+
+            **Install:** download the ONE .exe below and run it (no zip, no helper files).
+            Excel/Word/PowerPoint are detected automatically; only the hosts that exist
+            on your system are registered. The only step that may ask for Administrator
+            permission is the Microsoft VSTO Runtime bootstrap (transparent UAC, only
+            when it is actually missing).
+
+            **Honest notes:**
+            - The installer is signed with a temporary self-signed certificate.
+              Until a real Authenticode certificate is used (spec 10.2), SmartScreen
+              may show "Windows protected your PC" — choose "More info → Run anyway".
+            - A Windows Defender scan with real-time protection ON ran in CI; the
+              result is in the build artifacts (defender-report.txt).
+          draft: false
+          prerelease: false

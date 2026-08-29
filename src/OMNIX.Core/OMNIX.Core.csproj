@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{E8F14B2C-9D41-4E7A-8B6F-1C2D5A9E7F01}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>OMNIX.Core</RootNamespace>
+    <AssemblyName>OMNIX.Core</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <LangVersion>7.3</LangVersion>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <!-- Office PIAs are marked x86; AnyCPU referencing them is intentional -->
+    <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>None</ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
+    <!-- Standard PIA install location of the Visual Studio "Office development" tools (present on local VS and on GitHub windows-latest runners) -->
+    <VSTOPIAPath Condition="'$(VSTOPIAPath)'==''">C:\Program Files (x86)\Microsoft Visual Studio\Shared\Visual Studio Tools for Office\PIA\Office15</VSTOPIAPath>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Security" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xaml" />
+    <Reference Include="System.Xml" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsFormsIntegration" />
+    <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\Newtonsoft.Json.13.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <!-- Office 2013+ PIAs (work on Office 2013..365). Present with the VS "Office development" tools. -->
+    <Reference Include="Microsoft.Office.Interop.Excel, Version=15.0.0.0, Culture=neutral, PublicKeyToken=71E9BCE111E9429C">
+      <HintPath>$(VSTOPIAPath)\Microsoft.Office.Interop.Excel.dll</HintPath>
+      <Private>False</Private>
+      <EmbedInteropTypes>False</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="Microsoft.Office.Interop.Word, Version=15.0.0.0, Culture=neutral, PublicKeyToken=71E9BCE111E9429C">
+      <HintPath>$(VSTOPIAPath)\Microsoft.Office.Interop.Word.dll</HintPath>
+      <Private>False</Private>
+      <EmbedInteropTypes>False</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="office, Version=15.0.0.0, Culture=neutral, PublicKeyToken=71E9BCE111E9429C">
+      <HintPath>$(VSTOPIAPath)\Office.dll</HintPath>
+      <Private>False</Private>
+      <EmbedInteropTypes>False</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="Microsoft.Office.Interop.PowerPoint, Version=15.0.0.0, Culture=neutral, PublicKeyToken=71E9BCE111E9429C">
+      <HintPath>$(VSTOPIAPath)\Microsoft.Office.Interop.PowerPoint.dll</HintPath>
+      <Private>False</Private>
+      <EmbedInteropTypes>False</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="stdole, Version=7.0.3300.0, Culture=neutral, PublicKeyToken=B03F5F7F11D50A3A">
+      <HintPath>$(VSTOPIAPath)\stdole.dll</HintPath>
+      <Private>False</Private>
+      <EmbedInteropTypes>False</EmbedInteropTypes>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="AiGateway\Adapters\CustomOpenAiCompatibleAdapter.cs" />
+    <Compile Include="AiGateway\Adapters\GeminiAdapter.cs" />
+    <Compile Include="AiGateway\Adapters\GroqAdapter.cs" />
+    <Compile Include="AiGateway\Adapters\LmStudioAdapter.cs" />
+    <Compile Include="AiGateway\Adapters\OllamaAdapter.cs" />
+    <Compile Include="AiGateway\Adapters\OpenRouterAdapter.cs" />
+    <Compile Include="AiGateway\AiGateway.cs" />
+    <Compile Include="AiGateway\Http\OpenAiCompatibleClient.cs" />
+    <Compile Include="AiGateway\Http\SseLineReader.cs" />
+    <Compile Include="AiGateway\Models\Models.cs" />
+    <Compile Include="AiGateway\PrivacyGate.cs" />
+    <Compile Include="AiGateway\ProviderContracts.cs" />
+    <Compile Include="AiGateway\ProviderRegistry.cs" />
+    <Compile Include="AiGateway\Resilience.cs" />
+    <Compile Include="Context\ContextModels.cs" />
+    <Compile Include="Context\ExcelHostAdapter.cs" />
+    <Compile Include="Context\IHostAdapter.cs" />
+    <Compile Include="Context\PowerPointHostAdapter.cs" />
+    <Compile Include="Context\VstoHostItemResolver.cs" />
+    <Compile Include="Context\WordHostAdapter.cs" />
+    <Compile Include="ContextLimiter\ContextLimiter.cs" />
+    <Compile Include="Errors\OmnixErrors.cs" />
+    <Compile Include="Localization\Strings.cs" />
+    <Compile Include="Logging\Logger.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Security\UntrustedData.cs" />
+    <Compile Include="Settings\OmnixSettings.cs" />
+    <Compile Include="Settings\SettingsManager.cs" />
+    <Compile Include="Storage\ChatStorage.cs" />
+    <Compile Include="Theming\ThemeManager.cs" />
+    <Compile Include="Tools\ToolExecutor.cs" />
+    <Compile Include="Tools\Tools.cs" />
+    <Compile Include="Ui\ChatBubble.cs" />
+    <Compile Include="Ui\Dialogs\OmnixDialogs.cs" />
+    <Compile Include="Ui\Markdown\MarkdownRenderer.cs" />
+    <Compile Include="Ui\TaskPaneHostControl.cs" />
+    <Compile Include="Ui\Views\AboutView.xaml.cs">
+      <DependentUpon>AboutView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Ui\Views\ChatView.xaml.cs">
+      <DependentUpon>ChatView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Ui\Views\SettingsView.xaml.cs">
+      <DependentUpon>SettingsView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Ui\Views\WorkspaceView.xaml.cs">
+      <DependentUpon>WorkspaceView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Ui\WorkspaceController.cs" />
+    <Compile Include="Util\Utils.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Page Include="Localization\Strings.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Theming\Themes\Dark.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Theming\Themes\Light.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Ui\Views\AboutView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Ui\Views\ChatView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Ui\Views\SettingsView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Ui\Views\WorkspaceView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Ui\Resources\Icons.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

@@ -1,0 +1,156 @@
+<UserControl x:Class="OMNIX.Core.Ui.ChatView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d"
+             d:DesignWidth="360" d:DesignHeight="600"
+             Background="{DynamicResource B.Background}">
+
+    <UserControl.Resources>
+        <Style x:Key="MiniButton" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource B.Surface}" />
+            <Setter Property="Foreground" Value="{DynamicResource B.Foreground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource B.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.85" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <DockPanel LastChildFill="True">
+
+        <!-- Context bar (bottom): what the AI currently "sees" -->
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource B.Surface}"
+                BorderBrush="{DynamicResource B.Border}" BorderThickness="0,1,0,0" Padding="8,3">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{DynamicResource S.Chat.ContextSee}"
+                           FontSize="10" Foreground="{DynamicResource B.ForegroundDim}"
+                           VerticalAlignment="Center" Margin="0,0,5,0" />
+                <TextBlock x:Name="ContextText" Grid.Column="1" Text="—" FontSize="10"
+                           Foreground="{DynamicResource B.ForegroundDim}" TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
+        <!-- Status line (errors / confirmations) -->
+        <Border x:Name="StatusBorder" DockPanel.Dock="Bottom" Visibility="Collapsed"
+                Background="{DynamicResource B.Surface}" Padding="8,4"
+                BorderBrush="{DynamicResource B.Border}" BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusText" Grid.Column="0" FontSize="10.5" TextWrapping="Wrap"
+                           Foreground="{DynamicResource B.Danger}" />
+                <Button x:Name="StatusClose" Grid.Column="1" Style="{StaticResource MiniButton}"
+                        Content="✕" Click="OnStatusClose" VerticalAlignment="Top" />
+            </Grid>
+        </Border>
+
+        <!-- Pending image strip -->
+        <Border x:Name="PendingImageBorder" DockPanel.Dock="Bottom" Visibility="Collapsed"
+                BorderBrush="{DynamicResource B.Border}" BorderThickness="0,1,0,0"
+                Background="{DynamicResource B.Surface}" Padding="8,4">
+            <StackPanel Orientation="Horizontal">
+                <Image x:Name="PendingImage" Width="64" Height="48" Stretch="Uniform" />
+                <TextBlock x:Name="PendingImageLabel" Text="{DynamicResource S.Chat.AttachedImage}"
+                           FontSize="10.5" VerticalAlignment="Center" Margin="6,0,6,0"
+                           Foreground="{DynamicResource B.ForegroundDim}" />
+                <Button x:Name="RemovePendingImage" Style="{StaticResource MiniButton}"
+                        Content="✕" Click="OnRemovePendingImage" VerticalAlignment="Center" />
+            </StackPanel>
+        </Border>
+
+        <!-- Input row -->
+        <Border DockPanel.Dock="Bottom" Padding="6,6" Background="{DynamicResource B.Background}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Vertical" VerticalAlignment="Bottom" Margin="0,0,4,0">
+                    <Button x:Name="AttachDocButton" Style="{StaticResource MiniButton}"
+                            Content="📎" ToolTip="{DynamicResource S.Chat.AttachImage}"
+                            Click="OnAttachFromDocument" />
+                    <Button x:Name="UploadButton" Style="{StaticResource MiniButton}"
+                            Content="＋" ToolTip="{DynamicResource S.Chat.UploadImage}"
+                            Click="OnUploadImage" Margin="0,2,0,0" />
+                </StackPanel>
+
+                <TextBox x:Name="InputBox" Grid.Column="1"
+                         Background="{DynamicResource B.Surface}"
+                         Foreground="{DynamicResource B.Foreground}"
+                         BorderBrush="{DynamicResource B.Border}"
+                         CaretBrush="{DynamicResource B.Foreground}"
+                         AcceptsReturn="False" TextWrapping="Wrap"
+                         FontSize="12" MaxHeight="96" VerticalScrollBarVisibility="Auto"
+                         VerticalContentAlignment="Center" Padding="6,5"
+                         PreviewKeyDown="OnInputKeyDown" />
+
+                <Button x:Name="SendButton" Grid.Column="2" Margin="4,0,0,0"
+                        Style="{StaticResource MiniButton}" Content="{DynamicResource S.Chat.Send}"
+                        Click="OnSend" VerticalAlignment="Bottom" MinWidth="46" />
+                <Button x:Name="StopButton" Grid.Column="2" Margin="4,0,0,0"
+                        Style="{StaticResource MiniButton}" Content="{DynamicResource S.Chat.Stop}"
+                        Click="OnStop" VerticalAlignment="Bottom" MinWidth="46" Visibility="Collapsed" />
+            </Grid>
+        </Border>
+
+        <!-- Toolbar + messages -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" Padding="6,4" BorderBrush="{DynamicResource B.Border}"
+                    BorderThickness="0,0,0,1">
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="NewChatButton" Style="{StaticResource MiniButton}"
+                            Content="{DynamicResource S.Chat.NewChat}" Click="OnNewChat" />
+                    <Button x:Name="CopyButton" Style="{StaticResource MiniButton}"
+                            Content="{DynamicResource S.Chat.Copy}" Click="OnCopy" Margin="4,0,0,0" />
+                    <Button x:Name="RetryButton" Style="{StaticResource MiniButton}"
+                            Content="{DynamicResource S.Chat.Retry}" Click="OnRetry" Margin="4,0,0,0" />
+                    <Button x:Name="ClearButton" Style="{StaticResource MiniButton}"
+                            Content="{DynamicResource S.Chat.Clear}" Click="OnClear" Margin="4,0,0,0" />
+                </StackPanel>
+            </Border>
+
+            <ScrollViewer x:Name="MessagesScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                          Padding="4,4,4,2">
+                <StackPanel x:Name="MessagesPanel" />
+            </ScrollViewer>
+        </Grid>
+    </DockPanel>
+</UserControl>

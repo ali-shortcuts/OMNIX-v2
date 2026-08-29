@@ -1,0 +1,100 @@
+using System;
+using Word = Microsoft.Office.Interop.Word;
+using Office = Microsoft.Office.Core;
+using OMNIX.Core.AiGateway;
+using OMNIX.Core.Context;
+using OMNIX.Core.Logging;
+using OMNIX.Core.Settings;
+using OMNIX.Core.Storage;
+
+namespace OMNIX.Word
+{
+    /// <summary>
+    /// Thin Word host (spec Section 3, Layer 1). Static ctor logs first (spec 4.3).
+    /// </summary>
+    public partial class ThisAddIn
+    {
+        static ThisAddIn()
+        {
+            Logger.Startup("=== OMNIX.Word ThisAddIn: static ctor reached (pid " + System.Diagnostics.Process.GetCurrentProcess().Id + ") ===");
+        }
+
+        internal WordHostAdapter Adapter { get; private set; }
+        internal WordTaskPaneService Panes { get; private set; }
+
+        internal static AiGateway SharedGateway;
+        internal static ChatHistoryStore SharedHistory;
+
+        private void ThisAddIn_Startup(object sender, System.EventArgs e)
+        {
+            Logger.Startup("ThisAddIn_Startup begin — Word version: " + SafeVersion());
+
+            AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+            System.Threading.Tasks.TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+
+            if (Application == null)
+            {
+                Logger.Startup("FATAL: Word Application object is null — add-in stays passive.");
+                return;
+            }
+
+            Adapter = new WordHostAdapter(Application,
+                () => SettingsManager.Instance.Settings.ContextMaxChars);
+
+            EnsureSharedServices();
+
+            Panes = new WordTaskPaneService(this, Adapter);
+            Panes.AttachEvents();
+            Logger.Startup("ThisAddIn_Startup complete");
+        }
+
+        internal static void EnsureSharedServices()
+        {
+            if (SharedGateway == null)
+            {
+                SharedHistory = new ChatHistoryStore();
+                var registry = new ProviderRegistry();
+                SharedGateway = new AiGateway(registry);
+                SharedGateway.ProbeLocalAsync();
+            }
+        }
+
+        private static void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)
+        {
+            Logger.Error("startup-debug", "AppDomain.UnhandledException", e.ExceptionObject as Exception);
+        }
+
+        private static void OnUnobservedTaskException(object sender, System.Threading.Tasks.UnobservedTaskExceptionEventArgs e)
+        {
+            Logger.Error("startup-debug", "TaskScheduler.UnobservedTaskException", e.Exception);
+            e.SetObserved();
+        }
+
+        private string SafeVersion()
+        {
+            try { return Application.Version; } catch { return "?"; }
+        }
+
+        private void ThisAddIn_Shutdown(object sender, System.EventArgs e)
+        {
+            Logger.Startup("ThisAddIn_Shutdown");
+            if (Panes != null) Panes.DetachEvents();
+        }
+
+        protected override Office.IRibbonExtensibility CreateRibbonExtensibilityObject()
+        {
+            Logger.Startup("CreateRibbonExtensibilityObject -> OmnixRibbon");
+            return new OmnixRibbon(this);
+        }
+
+        #region VSTO generated code
+
+        private void InternalStartup()
+        {
+            this.Startup += new System.EventHandler(ThisAddIn_Startup);
+            this.Shutdown += new System.EventHandler(ThisAddIn_Shutdown);
+        }
+
+        #endregion
+    }
+}

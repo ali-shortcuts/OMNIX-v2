@@ -1,0 +1,43 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- OMNIX Light theme — optimized for a 360px docked task pane -->
+    <Color x:Key="C.Background">#FFFFFF</Color>
+    <Color x:Key="C.Surface">#F5F6FA</Color>
+    <Color x:Key="C.Foreground">#1B1D23</Color>
+    <Color x:Key="C.ForegroundDim">#6B7080</Color>
+    <Color x:Key="C.Accent">#7C5CFF</Color>
+    <Color x:Key="C.AccentForeground">#FFFFFF</Color>
+    <Color x:Key="C.Border">#E1E4EC</Color>
+    <Color x:Key="C.BubbleUser">#7C5CFF</Color>
+    <Color x:Key="C.BubbleUserForeground">#FFFFFF</Color>
+    <Color x:Key="C.BubbleAi">#F0F1F7</Color>
+    <Color x:Key="C.BubbleAiForeground">#1B1D23</Color>
+    <Color x:Key="C.CodeBackground">#F2F3F8</Color>
+    <Color x:Key="C.CodeKeyword">#8250DF</Color>
+    <Color x:Key="C.CodeString">#0A7D33</Color>
+    <Color x:Key="C.CodeComment">#8B8FA3</Color>
+    <Color x:Key="C.CodeNumber">#B35900</Color>
+    <Color x:Key="C.Link">#5A43D6</Color>
+    <Color x:Key="C.Danger">#C62828</Color>
+    <Color x:Key="C.Success">#0A7D33</Color>
+
+    <SolidColorBrush x:Key="B.Background" Color="{DynamicResource C.Background}" />
+    <SolidColorBrush x:Key="B.Surface" Color="{DynamicResource C.Surface}" />
+    <SolidColorBrush x:Key="B.Foreground" Color="{DynamicResource C.Foreground}" />
+    <SolidColorBrush x:Key="B.ForegroundDim" Color="{DynamicResource C.ForegroundDim}" />
+    <SolidColorBrush x:Key="B.Accent" Color="{DynamicResource C.Accent}" />
+    <SolidColorBrush x:Key="B.AccentForeground" Color="{DynamicResource C.AccentForeground}" />
+    <SolidColorBrush x:Key="B.Border" Color="{DynamicResource C.Border}" />
+    <SolidColorBrush x:Key="B.BubbleUser" Color="{DynamicResource C.BubbleUser}" />
+    <SolidColorBrush x:Key="B.BubbleUserForeground" Color="{DynamicResource C.BubbleUserForeground}" />
+    <SolidColorBrush x:Key="B.BubbleAi" Color="{DynamicResource C.BubbleAi}" />
+    <SolidColorBrush x:Key="B.BubbleAiForeground" Color="{DynamicResource C.BubbleAiForeground}" />
+    <SolidColorBrush x:Key="B.CodeBackground" Color="{DynamicResource C.CodeBackground}" />
+    <SolidColorBrush x:Key="B.CodeKeyword" Color="{DynamicResource C.CodeKeyword}" />
+    <SolidColorBrush x:Key="B.CodeString" Color="{DynamicResource C.CodeString}" />
+    <SolidColorBrush x:Key="B.CodeComment" Color="{DynamicResource C.CodeComment}" />
+    <SolidColorBrush x:Key="B.CodeNumber" Color="{DynamicResource C.CodeNumber}" />
+    <SolidColorBrush x:Key="B.Link" Color="{DynamicResource C.Link}" />
+    <SolidColorBrush x:Key="B.Danger" Color="{DynamicResource C.Danger}" />
+    <SolidColorBrush x:Key="B.Success" Color="{DynamicResource C.Success}" />
+</ResourceDictionary>

@@ -1,0 +1,32 @@
+# ---------- Visual Studio / MSBuild ----------
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.binlog
+*.log
+build/logs/
+
+# ---------- NuGet ----------
+packages/
+*.nupkg
+
+# ---------- Build outputs / packaging ----------
+installer/payload/
+installer/Output/
+build/cert/
+!build/cert/.gitkeep
+dist/
+
+# ---------- OS / editors ----------
+Thumbs.db
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# ---------- Local secrets (never commit keys) ----------
+*.pfx
+*.pfx.bak
+settings.dat

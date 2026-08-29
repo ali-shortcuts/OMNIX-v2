@@ -1,0 +1,177 @@
+<UserControl x:Class="OMNIX.Core.Ui.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d"
+             d:DesignWidth="360" d:DesignHeight="700"
+             Background="{DynamicResource B.Background}">
+
+    <UserControl.Resources>
+        <Style x:Key="SetButton" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource B.Surface}" />
+            <Setter Property="Foreground" Value="{DynamicResource B.Foreground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource B.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="8,3" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.85" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SetAccent" TargetType="Button" BasedOn="{StaticResource SetButton}">
+            <Setter Property="Background" Value="{DynamicResource B.Accent}" />
+            <Setter Property="Foreground" Value="{DynamicResource B.AccentForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource B.Accent}" />
+        </Style>
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Foreground" Value="{DynamicResource B.ForegroundDim}" />
+            <Setter Property="Margin" Value="0,8,0,2" />
+        </Style>
+        <Style x:Key="Input" TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource B.Surface}" />
+            <Setter Property="Foreground" Value="{DynamicResource B.Foreground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource B.Border}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource B.Foreground}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="4,3" />
+        </Style>
+        <Style x:Key="Secret" TargetType="PasswordBox">
+            <Setter Property="Background" Value="{DynamicResource B.Surface}" />
+            <Setter Property="Foreground" Value="{DynamicResource B.Foreground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource B.Border}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="4,3" />
+        </Style>
+        <Style x:Key="Combo" TargetType="ComboBox">
+            <Setter Property="Background" Value="{DynamicResource B.Surface}" />
+            <Setter Property="Foreground" Value="{DynamicResource B.Foreground}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="4,3" />
+        </Style>
+        <Style x:Key="Radio" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource B.Foreground}" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Margin" Value="0,2,0,2" />
+        </Style>
+        <Style x:Key="Section" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource B.Accent}" />
+            <Setter Property="Margin" Value="0,14,0,2" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="10,6">
+        <StackPanel>
+
+            <!-- ============ Provider ============ -->
+            <TextBlock Text="{DynamicResource S.Settings.Provider}" Style="{StaticResource Section}" />
+            <ComboBox x:Name="ProviderCombo" Style="{StaticResource Combo}"
+                      DisplayMemberPath="DisplayName" Margin="0,4,0,0"
+                      SelectionChanged="OnProviderChanged" />
+
+            <TextBlock Text="{DynamicResource S.Settings.Model}" Style="{StaticResource FieldLabel}" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ComboBox x:Name="ModelCombo" Style="{StaticResource Combo}" IsEditable="True" />
+                <Button x:Name="LoadModelsButton" Grid.Column="1" Style="{StaticResource SetButton}"
+                        Content="{DynamicResource S.Settings.LoadModels}" Margin="4,0,0,0" Click="OnLoadModels" />
+            </Grid>
+
+            <TextBlock Text="{DynamicResource S.Settings.ApiKey}" Style="{StaticResource FieldLabel}" />
+            <PasswordBox x:Name="ApiKeyBox" Style="{StaticResource Secret}" />
+            <TextBlock x:Name="KeyStateText" Text="{DynamicResource S.Settings.ApiKeyStored}"
+                       FontSize="10" Foreground="{DynamicResource B.Success}" Margin="0,2,0,0" />
+
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                <Button x:Name="TestButton" Style="{StaticResource SetAccent}"
+                        Content="{DynamicResource S.Settings.TestConnection}" Click="OnTestConnection" />
+            </StackPanel>
+            <TextBlock x:Name="TestResultText" FontSize="11" Margin="0,6,0,0"
+                       Foreground="{DynamicResource B.ForegroundDim}" TextWrapping="Wrap" />
+
+            <!-- ============ Local AI ============ -->
+            <TextBlock Text="{DynamicResource S.Settings.LocalStatus}" Style="{StaticResource Section}" />
+            <Grid Margin="0,2,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="LocalStatusText" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{DynamicResource B.ForegroundDim}" />
+                <Button x:Name="ProbeButton" Grid.Column="1" Style="{StaticResource SetButton}"
+                        Content="{DynamicResource S.Settings.ProbeNow}" Click="OnProbeLocal" />
+            </Grid>
+            <CheckBox x:Name="PreferLocalCheck" Foreground="{DynamicResource B.Foreground}"
+                      FontSize="11.5" Margin="0,6,0,0"
+                      Content="{DynamicResource S.Settings.PreferLocal}" />
+
+            <!-- ============ Custom provider ============ -->
+            <TextBlock Text="{DynamicResource S.Settings.CustomProvider}" Style="{StaticResource Section}" />
+            <TextBlock Text="{DynamicResource S.Settings.CustomName}" Style="{StaticResource FieldLabel}" />
+            <TextBox x:Name="CustomNameBox" Style="{StaticResource Input}" />
+            <TextBlock Text="{DynamicResource S.Settings.CustomBaseUrl}" Style="{StaticResource FieldLabel}" />
+            <TextBox x:Name="CustomBaseUrlBox" Style="{StaticResource Input}" />
+
+            <!-- ============ Privacy ============ -->
+            <TextBlock Text="{DynamicResource S.Settings.PrivacyMode}" Style="{StaticResource Section}" />
+            <RadioButton x:Name="PrivacyLocalOnly" Style="{StaticResource Radio}"
+                         GroupName="OmnixPrivacy" Content="{DynamicResource S.Settings.Privacy.LocalOnly}" />
+            <RadioButton x:Name="PrivacyCloudAllowed" Style="{StaticResource Radio}"
+                         GroupName="OmnixPrivacy" Content="{DynamicResource S.Settings.Privacy.CloudAllowed}" />
+            <RadioButton x:Name="PrivacyAsk" Style="{StaticResource Radio}"
+                         GroupName="OmnixPrivacy" Content="{DynamicResource S.Settings.Privacy.AskBeforeSending}" />
+
+            <!-- ============ Appearance ============ -->
+            <TextBlock Text="{DynamicResource S.Settings.Appearance}" Style="{StaticResource Section}" />
+            <ComboBox x:Name="ThemeCombo" Style="{StaticResource Combo}" SelectionChanged="OnThemeChanged">
+                <ComboBoxItem Content="{DynamicResource S.Settings.Theme.System}" Tag="System" />
+                <ComboBoxItem Content="{DynamicResource S.Settings.Theme.Light}" Tag="Light" />
+                <ComboBoxItem Content="{DynamicResource S.Settings.Theme.Dark}" Tag="Dark" />
+            </ComboBox>
+            <TextBlock Text="{DynamicResource S.Settings.Language}" Style="{StaticResource FieldLabel}" />
+            <ComboBox x:Name="LanguageCombo" Style="{StaticResource Combo}">
+                <ComboBoxItem Content="English" Tag="en" />
+                <ComboBoxItem Content="فارسی (coming soon)" Tag="fa" IsEnabled="False" />
+            </ComboBox>
+
+            <!-- ============ Limits ============ -->
+            <TextBlock Text="{DynamicResource S.Settings.HistoryLimits}" Style="{StaticResource Section}" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="70" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="70" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{DynamicResource S.Settings.History.Messages}" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="MaxMessagesBox" Grid.Column="1" Style="{StaticResource Input}" Margin="0,4,6,0" />
+                <TextBlock Text="{DynamicResource S.Settings.History.Days}" Grid.Column="2" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="MaxDaysBox" Grid.Column="3" Style="{StaticResource Input}" Margin="0,4,0,0" />
+            </Grid>
+
+            <Button x:Name="SaveButton" Style="{StaticResource SetAccent}" Content="Save"
+                    Click="OnSave" Margin="0,16,0,12" HorizontalAlignment="Left" />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

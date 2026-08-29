@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OMNIX ribbon for Excel (spec Section 3, Layer 2 + decision from Section 4.4).
+  The tab is placed consciously right after the Home tab (insertAfterMso="TabHome").
+-->
+<customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui" onLoad="Ribbon_Load">
+  <ribbon>
+    <tabs>
+      <tab id="OmnixTab" label="OMNIX" insertAfterMso="TabHome" keytip="OX">
+        <group id="OmnixGroupAssistant" label="AI Assistant" autoScale="false">
+          <button id="OmnixOpenWorkspace"
+                  label="Open Workspace"
+                  size="large"
+                  getScreentip="GetScreentipOpen"
+                  onAction="OnOpenWorkspace"
+                  getVisible="GetVisible" />
+        </group>
+        <group id="OmnixGroupTools" label="OMNIX" autoScale="false">
+          <button id="OmnixSettingsButton"
+                  label="Settings"
+                  size="large"
+                  onAction="OnOpenSettings"
+                  getVisible="GetVisible" />
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>
