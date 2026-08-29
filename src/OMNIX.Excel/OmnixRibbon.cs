@@ -24,7 +24,7 @@ namespace OMNIX.Excel
 
         public string GetCustomUI(string ribbonID)
         {
-            Logging.Logger.Startup("GetCustomUI ribbonID=" + ribbonID);
+            OMNIX.Core.Logging.Logger.Startup("GetCustomUI ribbonID=" + ribbonID);
             if (!string.Equals(ribbonID, "Microsoft.Excel.Workbook", StringComparison.Ordinal))
                 return null;
             return LoadRibbonXml();
@@ -37,7 +37,7 @@ namespace OMNIX.Excel
             {
                 if (stream == null)
                 {
-                    Logging.Logger.Startup("OmnixRibbon.xml embedded resource NOT FOUND — manifest resources: " + string.Join(", ", asm.GetManifestResourceNames()));
+                    OMNIX.Core.Logging.Logger.Startup("OmnixRibbon.xml embedded resource NOT FOUND — manifest resources: " + string.Join(", ", asm.GetManifestResourceNames()));
                     return null;
                 }
                 using (var reader = new StreamReader(stream))
@@ -66,12 +66,12 @@ namespace OMNIX.Excel
         {
             try
             {
-                Logging.Logger.Startup("Ribbon: OnOpenWorkspace");
+                OMNIX.Core.Logging.Logger.Startup("Ribbon: OnOpenWorkspace");
                 _addIn.Panes.ToggleActive();
             }
             catch (Exception ex)
             {
-                Logging.Logger.Error("ui", "OnOpenWorkspace failed", ex);
+                OMNIX.Core.Logging.Logger.Error("ui", "OnOpenWorkspace failed", ex);
             }
         }
 
@@ -79,12 +79,12 @@ namespace OMNIX.Excel
         {
             try
             {
-                Logging.Logger.Startup("Ribbon: OnOpenSettings");
+                OMNIX.Core.Logging.Logger.Startup("Ribbon: OnOpenSettings");
                 _addIn.Panes.ShowSettings();
             }
             catch (Exception ex)
             {
-                Logging.Logger.Error("ui", "OnOpenSettings failed", ex);
+                OMNIX.Core.Logging.Logger.Error("ui", "OnOpenSettings failed", ex);
             }
         }
     }

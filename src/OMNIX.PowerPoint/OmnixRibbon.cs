@@ -21,7 +21,7 @@ namespace OMNIX.PowerPoint
 
         public string GetCustomUI(string ribbonID)
         {
-            Logging.Logger.Startup("GetCustomUI ribbonID=" + ribbonID);
+            OMNIX.Core.Logging.Logger.Startup("GetCustomUI ribbonID=" + ribbonID);
             if (!string.Equals(ribbonID, "Microsoft.PowerPoint.Presentation", StringComparison.Ordinal))
                 return null;
             return LoadRibbonXml();
@@ -34,7 +34,7 @@ namespace OMNIX.PowerPoint
             {
                 if (stream == null)
                 {
-                    Logging.Logger.Startup("OmnixRibbon.xml embedded resource NOT FOUND — manifest resources: " + string.Join(", ", asm.GetManifestResourceNames()));
+                    OMNIX.Core.Logging.Logger.Startup("OmnixRibbon.xml embedded resource NOT FOUND — manifest resources: " + string.Join(", ", asm.GetManifestResourceNames()));
                     return null;
                 }
                 using (var reader = new StreamReader(stream))
@@ -49,13 +49,13 @@ namespace OMNIX.PowerPoint
         public void OnOpenWorkspace(Office.IRibbonControl control)
         {
             try { _addIn.Panes.ToggleActive(); }
-            catch (Exception ex) { Logging.Logger.Error("ui", "OnOpenWorkspace failed", ex); }
+            catch (Exception ex) { OMNIX.Core.Logging.Logger.Error("ui", "OnOpenWorkspace failed", ex); }
         }
 
         public void OnOpenSettings(Office.IRibbonControl control)
         {
             try { _addIn.Panes.ShowSettings(); }
-            catch (Exception ex) { Logging.Logger.Error("ui", "OnOpenSettings failed", ex); }
+            catch (Exception ex) { OMNIX.Core.Logging.Logger.Error("ui", "OnOpenSettings failed", ex); }
         }
     }
 }
