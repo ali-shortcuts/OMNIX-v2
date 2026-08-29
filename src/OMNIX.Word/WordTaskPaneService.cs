@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Windows.Forms;
-using Word = Microsoft.Office.Interop.Word;
+using Wd = Microsoft.Office.Interop.Word;
 using Microsoft.Office.Tools;
 using OMNIX.Core.Context;
 using OMNIX.Core.Logging;
@@ -47,13 +47,13 @@ namespace OMNIX.Word
             catch { }
         }
 
-        private IntPtr KeyOf(Word.Window window)
+        private IntPtr KeyOf(Wd.Window window)
         {
             try { return (IntPtr)window.Hwnd; }
             catch { return IntPtr.Zero; }
         }
 
-        private void OnWindowActivate(Word.Document doc, Word.Window wn)
+        private void OnWindowActivate(Wd.Document doc, Wd.Window wn)
         {
             try
             {
@@ -68,7 +68,7 @@ namespace OMNIX.Word
             }
         }
 
-        private void OnWindowSelectionChange(Word.Selection sel)
+        private void OnWindowSelectionChange(Wd.Selection sel)
         {
             try
             {

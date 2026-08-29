@@ -1,5 +1,5 @@
 using System;
-using Excel = Microsoft.Office.Interop.Excel;
+using XL = Microsoft.Office.Interop.Excel;
 using Office = Microsoft.Office.Core;
 using OMNIX.Core.AiGateway;
 using OMNIX.Core.Context;

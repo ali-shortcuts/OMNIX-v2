@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Windows.Forms;
-using Excel = Microsoft.Office.Interop.Excel;
+using XL = Microsoft.Office.Interop.Excel;
 using Microsoft.Office.Tools;
 using OMNIX.Core.Context;
 using OMNIX.Core.Logging;
@@ -54,13 +54,13 @@ namespace OMNIX.Excel
             catch { }
         }
 
-        private IntPtr KeyOf(Excel.Window window)
+        private IntPtr KeyOf(XL.Window window)
         {
             try { return (IntPtr)window.Hwnd; }
             catch { return IntPtr.Zero; }
         }
 
-        private void OnWindowActivate(Excel.Workbook wb, Excel.Window wn)
+        private void OnWindowActivate(XL.Workbook wb, XL.Window wn)
         {
             try
             {
@@ -74,9 +74,9 @@ namespace OMNIX.Excel
             }
         }
 
-        private void OnWindowDeactivate(Excel.Workbook wb, Excel.Window wn) { }
+        private void OnWindowDeactivate(XL.Workbook wb, XL.Window wn) { }
 
-        private void OnSheetSelectionChange(object sh, Excel.Range target)
+        private void OnSheetSelectionChange(object sh, XL.Range target)
         {
             try
             {
@@ -88,7 +88,7 @@ namespace OMNIX.Excel
             catch { }
         }
 
-        private void OnWorkbookBeforeClose(Excel.Workbook wb, ref bool cancel)
+        private void OnWorkbookBeforeClose(XL.Workbook wb, ref bool cancel)
         {
             // Pane cleanup happens through window teardown; nothing forced here.
         }

@@ -68,7 +68,7 @@ namespace OMNIX.PowerPoint
             }
         }
 
-        private void OnWindowSelectionChange(Ppt.SlideRange sldRange)
+        private void OnWindowSelectionChange(Ppt.Selection sel)
         {
             try
             {

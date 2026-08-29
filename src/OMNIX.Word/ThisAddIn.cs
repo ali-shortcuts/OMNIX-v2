@@ -1,5 +1,5 @@
 using System;
-using Word = Microsoft.Office.Interop.Word;
+using Wd = Microsoft.Office.Interop.Word;
 using Office = Microsoft.Office.Core;
 using OMNIX.Core.AiGateway;
 using OMNIX.Core.Context;
