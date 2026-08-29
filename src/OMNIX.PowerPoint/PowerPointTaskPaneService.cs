@@ -96,7 +96,8 @@ namespace OMNIX.PowerPoint
             pane.DockPosition = Microsoft.Office.Core.MsoCTPDockPosition.msoCTPDockPositionRight;
             try { pane.Width = DefaultWidth; } catch { }
             pane.VisibleChanged += OnPaneVisibleChanged;
-            pane.WidthChanged += OnPaneWidthChanged;
+            // NOTE: Microsoft.Office.Tools.CustomTaskPane has no WidthChanged event in this VSTO runtime version;
+            // max-width clamping is disabled for now (non-critical UX nicety, not a spec requirement). OnPaneWidthChanged left as dead code for future re-wiring (e.g. a timer-based poll) if needed.
             _panes[key] = pane;
             Logger.Startup("PowerPoint task pane created for window " + key);
             return pane;
