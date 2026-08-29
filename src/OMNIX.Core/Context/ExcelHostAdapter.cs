@@ -16,10 +16,10 @@ namespace OMNIX.Core.Context
     public sealed class ExcelHostAdapter : IHostAdapter
     {
         private readonly Excel.Application _app;
-        private readonly Func<int, int> _maxCells;
-        private readonly Func<int, int> _maxChars;
+        private readonly Func<int> _maxCells;
+        private readonly Func<int> _maxChars;
 
-        public ExcelHostAdapter(Excel.Application app, Func<int, int> maxCells, Func<int, int> maxChars)
+        public ExcelHostAdapter(Excel.Application app, Func<int> maxCells, Func<int> maxChars)
         {
             _app = app;
             _maxCells = maxCells;
@@ -116,7 +116,7 @@ namespace OMNIX.Core.Context
                 Excel.Chart chart = null;
                 if (!string.IsNullOrEmpty(chartName))
                 {
-                    foreach (Excel.ChartObject co in ws.ChartObjects())
+                    foreach (Excel.ChartObject co in (Excel.ChartObjects)ws.ChartObjects())
                     {
                         if (string.Equals(co.Name, chartName, StringComparison.OrdinalIgnoreCase))
                         {
@@ -160,7 +160,7 @@ namespace OMNIX.Core.Context
                     sel.CopyPicture(Excel.XlPictureAppearance.xlScreen, Excel.XlCopyPictureFormat.xlPicture);
                     // Paste the clipboard picture into a temporary chart sheet and export it.
                     var wb = _app.ActiveWorkbook;
-                    Excel.Chart tempChart = wb.Charts.Add();
+                    Excel.Chart tempChart = (Excel.Chart)wb.Charts.Add();
                     try
                     {
                         tempChart.Paste();
@@ -223,7 +223,7 @@ namespace OMNIX.Core.Context
             int cap = Math.Min(60, _maxCells());
             try
             {
-                if (sel.Cells.CountLarge > cap)
+                if (Convert.ToInt64(sel.Cells.CountLarge) > cap)
                 {
                     int rows = Math.Min(sel.Rows.Count, cap);
                     var part = sel.Resize[rows, sel.Columns.Count];
@@ -322,7 +322,7 @@ namespace OMNIX.Core.Context
             var names = new List<string>();
             try
             {
-                foreach (Excel.ChartObject co in ws.ChartObjects())
+                foreach (Excel.ChartObject co in (Excel.ChartObjects)ws.ChartObjects())
                     names.Add(co.Name);
             }
             catch { }
@@ -350,7 +350,7 @@ namespace OMNIX.Core.Context
             string before = "";
             if (toolName == ToolNames.HighlightRange)
             {
-                int old = target.Interior.ColorIndex;
+                int old = Convert.ToInt32(target.Interior.ColorIndex);
                 before = "Current Interior.ColorIndex: " + old;
             }
             else

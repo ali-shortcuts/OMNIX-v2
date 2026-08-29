@@ -15,9 +15,9 @@ namespace OMNIX.Core.Context
     public sealed class PowerPointHostAdapter : IHostAdapter
     {
         private readonly Ppt.Application _app;
-        private readonly Func<int, int> _maxChars;
+        private readonly Func<int> _maxChars;
 
-        public PowerPointHostAdapter(Ppt.Application app, Func<int, int> maxChars)
+        public PowerPointHostAdapter(Ppt.Application app, Func<int> maxChars)
         {
             _app = app;
             _maxChars = maxChars;
@@ -40,7 +40,7 @@ namespace OMNIX.Core.Context
                 var win = _app.ActiveWindow;
                 if (win != null && win.ViewType == Ppt.PpViewType.ppViewSlide)
                 {
-                    var slide = win.View.Slide;
+                    Ppt.Slide slide = (Ppt.Slide)win.View.Slide;
                     ctx.CurrentSlideIndex = slide.SlideIndex;
                     ctx.SlideTitle = GetSlideTitle(slide);
                     ctx.NotesPreview = GetNotes(slide);
@@ -64,7 +64,7 @@ namespace OMNIX.Core.Context
             {
                 var pres = _app.ActivePresentation;
                 var win = _app.ActiveWindow;
-                var slide = win.View.Slide;
+                Ppt.Slide slide = (Ppt.Slide)win.View.Slide;
                 var sb = new StringBuilder();
                 sb.AppendLine("Slide " + slide.SlideIndex + " of " + pres.Slides.Count);
                 sb.AppendLine("Title: " + GetSlideTitle(slide));
@@ -117,7 +117,7 @@ namespace OMNIX.Core.Context
                 if (slide == null)
                 {
                     var win = _app.ActiveWindow;
-                    slide = win != null ? win.View.Slide : null;
+                    slide = win != null ? (Ppt.Slide)win.View.Slide : null;
                 }
                 if (slide == null) return null;
                 return TempImageCapture.FromExporter(path => slide.Export(path, "PNG", 1280, 720));
@@ -215,7 +215,7 @@ namespace OMNIX.Core.Context
             if (pres == null) return null;
             if (indexOneBased >= 1 && indexOneBased <= pres.Slides.Count) return pres.Slides[indexOneBased];
             var win = _app.ActiveWindow;
-            return win != null ? win.View.Slide : null;
+            return win != null ? (Ppt.Slide)win.View.Slide : null;
         }
 
         private int ActiveSlideCount()

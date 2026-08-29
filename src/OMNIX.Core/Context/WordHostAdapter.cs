@@ -14,9 +14,9 @@ namespace OMNIX.Core.Context
     public sealed class WordHostAdapter : IHostAdapter
     {
         private readonly Word.Application _app;
-        private readonly Func<int, int> _maxChars;
+        private readonly Func<int> _maxChars;
 
-        public WordHostAdapter(Word.Application app, Func<int, int> maxChars)
+        public WordHostAdapter(Word.Application app, Func<int> maxChars)
         {
             _app = app;
             _maxChars = maxChars;
@@ -110,7 +110,7 @@ namespace OMNIX.Core.Context
                         var bmp = data.GetData(System.Windows.DataFormats.Bitmap) as System.Windows.Media.Imaging.BitmapSource;
                         if (bmp != null)
                         {
-                            var enc = new Microsoft.Win32.PngBitmapEncoder();
+                            var enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
                             enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bmp));
                             using (var fs = System.IO.File.Create(path))
                                 enc.Save(fs);
@@ -187,7 +187,7 @@ namespace OMNIX.Core.Context
                 {
                     if (count++ >= 200) { sb.AppendLine("…"); break; }
                     string styleName = null;
-                    try { styleName = p.Range.ParagraphStyle != null ? p.Range.ParagraphStyle.NameLocal : null; }
+                    try { styleName = p.Range.ParagraphStyle != null ? ((Word.Style)p.Range.ParagraphStyle).NameLocal : null; }
                     catch { }
                     if (!string.IsNullOrEmpty(styleName) && styleName.StartsWith("Heading", StringComparison.OrdinalIgnoreCase) ||
                         (styleName != null && styleName.StartsWith("عنوان", StringComparison.Ordinal)))

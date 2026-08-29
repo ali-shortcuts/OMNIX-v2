@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
+using System.Linq;
 
 namespace OMNIX.Core.Ui.Markdown
 {
@@ -178,7 +179,7 @@ namespace OMNIX.Core.Ui.Markdown
         {
             var table = new Table { CellSpacing = 0, Margin = new Thickness(0, 4, 0, 6) };
             int cols = header.Length;
-            table.Columns.AddRange(EnumerableRange(cols));
+            AddColumns(table, cols);
 
             var headerRow = new TableRow { Background = TryFindBrush("B.Surface") };
             foreach (string h in header)
@@ -231,10 +232,16 @@ namespace OMNIX.Core.Ui.Markdown
             return list;
         }
 
+        private static void AddColumns(Table table, int count)
+        {
+            foreach (var col in EnumerableRange(count))
+                table.Columns.Add(col);
+        }
+
         private static Block BuildCodeBlock(string code, string lang)
         {
             var table = new Table { CellSpacing = 0, Margin = new Thickness(0, 4, 0, 6) };
-            table.Columns.AddRange(EnumerableRange(1));
+            AddColumns(table, 1);
             var row = new TableRow();
             var cell = new TableCell { Padding = new Thickness(6), Background = TryFindBrush("B.CodeBackground") };
 

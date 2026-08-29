@@ -359,7 +359,7 @@ namespace OMNIX.Core.Ui
         {
             var app = Application.Current;
             if (app == null) return Task.FromResult(default(T));
-            return app.Dispatcher.Invoke(action);
+            return Task.FromResult(app.Dispatcher.Invoke(action));
         }
     }
 }

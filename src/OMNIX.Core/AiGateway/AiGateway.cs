@@ -206,7 +206,7 @@ namespace OMNIX.Core.AiGateway
 
         private static string BuildContextText(IHostAdapter hostAdapter, OfficeContext ctx)
         {
-            var payload = ContextLimiter.BuildContextPayload(hostAdapter, ctx);
+            var payload = ContextLimiter.ContextLimiter.BuildContextPayload(hostAdapter, ctx);
             return payload;
         }
     }
