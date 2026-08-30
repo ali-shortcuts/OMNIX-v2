@@ -84,7 +84,7 @@ begin
     LogDir := ExpandConstant('{localappdata}') + '\OMNIX\logs';
     ForceDirectories(LogDir);
     Full := LogDir + '\install-debug.log';
-    SaveStringToFile(Full, FormatDateTime('yyyy-mm-dd hh:nn:ss', Now) + '  ' + Line + #13#10, True);
+    SaveStringToFile(Full, GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '  ' + Line + #13#10, True);
   except
     // never let logging break the install
   end;
