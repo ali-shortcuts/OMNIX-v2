@@ -47,7 +47,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 ; Payload: the VSTO build outputs of all three hosts merged into one folder.
-Source: "payload\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion replacesameversion
+Source: "payload\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 ; Manifest signing certificate (staged by the build scripts; optional for local dev builds)
 #if FileExists(AddBackslash(SourcePath) + "payload\OMNIX.cer")
 Source: "payload\OMNIX.cer"; DestDir: "{app}"; Flags: ignoreversion
