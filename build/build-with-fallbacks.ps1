@@ -122,6 +122,11 @@ if (-not $ok) { $ok = Invoke-Strategy3-TwoPhaseSigning }
 
 if ($ok) {
     Write-Host "`n=== BUILD SUCCEEDED (see above for which strategy worked) ==="
+    # Clean up intermediate per-attempt logs now that we've succeeded, so a
+    # LATER step's own diagnostic capture (e.g. Inno Setup) isn't buried
+    # under megabytes of stale retry output from strategies that failed
+    # along the way before the winning one succeeded.
+    Remove-Item build_output_s*.txt -ErrorAction SilentlyContinue
     exit 0
 } else {
     Write-Host "`n=== ALL THREE BUILD STRATEGIES FAILED ==="
