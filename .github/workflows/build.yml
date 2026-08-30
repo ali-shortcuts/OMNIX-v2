@@ -86,6 +86,12 @@ jobs:
           & $iscc "installer/installer.iss" 2>&1 | Tee-Object -FilePath build_output_innosetup.txt
           $code = $LASTEXITCODE
           Get-ChildItem installer/Output -ErrorAction SilentlyContinue
+          if ($code -eq 0) {
+            # Success — remove this step's own log so it never pollutes a LATER
+            # step's diagnostic capture (this exact bug hid a real Defender-step
+            # failure behind a wall of stale, successful Inno Setup output once already).
+            Remove-Item build_output_innosetup.txt -ErrorAction SilentlyContinue
+          }
           exit $code
 
       - name: Post build output to a GitHub Issue if ANY step so far failed (diagnostic — network to blob storage is restricted for the human/AI reviewing this)
