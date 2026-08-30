@@ -75,6 +75,7 @@ var
   NeedVstoX64: Boolean;
   NeedVstoX86: Boolean;
   VstoDownloaded: Boolean;
+  DownloadPage: TDownloadWizardPage;
 
 procedure InstallLog(const Line: String);
 var
