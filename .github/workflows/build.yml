@@ -126,8 +126,20 @@ jobs:
       - name: Windows Defender check with real-time protection ON (spec 2.9 — honest)
         shell: pwsh
         run: |
-          ./build/defender-check.ps1 2>&1 | Tee-Object -FilePath build_output_defender.txt
-          exit $LASTEXITCODE
+          $out = "build_output_defender.txt"
+          try {
+            & ./build/defender-check.ps1 *>&1 | Tee-Object -FilePath $out
+            $code = $LASTEXITCODE
+          } catch {
+            $msg = "EXCEPTION while invoking build/defender-check.ps1: $($_.Exception.GetType().FullName): $($_.Exception.Message)`n$($_.ScriptStackTrace)"
+            $msg | Tee-Object -FilePath $out
+            $code = 1
+          }
+          if (-not (Test-Path $out) -or (Get-Item $out).Length -eq 0) {
+            "defender-check.ps1 produced no output at all (script may have failed to parse/load) and threw no catchable exception either." | Out-File $out
+          }
+          if ($null -eq $code) { $code = 1 }
+          exit $code
 
       - name: Post build output to a GitHub Issue if the Defender check step failed (diagnostic — network to blob storage is restricted for the human/AI reviewing this)
         if: failure()

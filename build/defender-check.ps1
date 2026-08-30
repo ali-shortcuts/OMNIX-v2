@@ -54,7 +54,7 @@ try {
     $threats = Get-MpThreatDetection -ErrorAction Stop
     if ($threats) {
         Log "THREAT DETECTIONS:"
-        $threats | ForEach-Object { Log ("  " + $_.InitialDetectionTime + " " + $_.ProcessName + " " + ($_ .Resources -join ", ")) }
+        $threats | ForEach-Object { Log ("  " + $_.InitialDetectionTime + " " + $_.ProcessName + " " + ($_.Resources -join ", ")) }
     } else {
         Log "No threat detections recorded for this session."
     }
