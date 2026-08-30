@@ -137,8 +137,8 @@ jobs:
           }
           if (-not (Test-Path $out) -or (Get-Item $out).Length -eq 0) {
             "defender-check.ps1 produced no output at all (script may have failed to parse/load) and threw no catchable exception either." | Out-File $out
+            $code = 1
           }
-          if ($null -eq $code) { $code = 1 }
           exit $code
 
       - name: Post build output to a GitHub Issue if the Defender check step failed (diagnostic — network to blob storage is restricted for the human/AI reviewing this)

@@ -63,3 +63,4 @@ try {
 }
 
 Log "=== END OF DEFENDER REPORT (honest CI-level evidence; real-machine verification still required) ==="
+exit 0
