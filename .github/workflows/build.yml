@@ -70,16 +70,38 @@ jobs:
       - name: Build solution (Release, signed VSTO manifests)
         shell: pwsh
         run: |
-          msbuild $env:SOLUTION `
-            /p:Configuration=$env:CONFIGURATION `
-            /p:Platform="Any CPU" `
-            /p:SignManifests=true `
-            /p:ManifestCertificateThumbprint=${{ steps.cert.outputs.thumbprint }} `
-            /p:ManifestTimestampUrl=http://timestamp.digicert.com `
-            /p:BuildInParallel=false `
-            /bl:build/logs/build.binlog `
-            /maxcpucount:1 2>&1 | Tee-Object -FilePath build_output.txt
-          exit $LASTEXITCODE
+          # The VSTO "FindRibbons" MSBuild task loads the just-built host assembly
+          # by simple name (not by path) via a fresh AppDomain; this is a long-known,
+          # environment-dependent flake in the legacy VSTO tooling — it has failed
+          # non-deterministically (sometimes OMNIX.Excel, sometimes OMNIX.Word/PowerPoint,
+          # not tied to build order) even with parallelism off and Defender excluded.
+          # Retry the full build a few times; a transient assembly-load failure in one
+          # project does not mean the source is wrong — it means try again.
+          $maxAttempts = 4
+          $succeeded = $false
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            Write-Host "=== Build attempt $attempt of $maxAttempts ==="
+            msbuild $env:SOLUTION `
+              /p:Configuration=$env:CONFIGURATION `
+              /p:Platform="Any CPU" `
+              /p:SignManifests=true `
+              /p:ManifestCertificateThumbprint=${{ steps.cert.outputs.thumbprint }} `
+              /p:ManifestTimestampUrl=http://timestamp.digicert.com `
+              /p:BuildInParallel=false `
+              /bl:build/logs/build.binlog `
+              /maxcpucount:1 2>&1 | Tee-Object -FilePath build_output.txt
+            if ($LASTEXITCODE -eq 0) {
+              $succeeded = $true
+              Write-Host "=== Build succeeded on attempt $attempt ==="
+              break
+            }
+            Write-Host "=== Build attempt $attempt failed (exit $LASTEXITCODE) — waiting 15s before retry ==="
+            Start-Sleep -Seconds 15
+          }
+          if (-not $succeeded) {
+            Write-Host "=== All $maxAttempts build attempts failed ==="
+            exit 1
+          }
 
       - name: Post build output to a GitHub Issue if the build failed (diagnostic — network to blob storage is restricted for the human/AI reviewing this)
         if: failure()
