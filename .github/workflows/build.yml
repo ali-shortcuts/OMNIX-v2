@@ -66,8 +66,9 @@ jobs:
             /p:SignManifests=true `
             /p:ManifestCertificateThumbprint=${{ steps.cert.outputs.thumbprint }} `
             /p:ManifestTimestampUrl=http://timestamp.digicert.com `
+            /p:BuildInParallel=false `
             /bl:build/logs/build.binlog `
-            /m 2>&1 | Tee-Object -FilePath build_output.txt
+            /maxcpucount:1 2>&1 | Tee-Object -FilePath build_output.txt
           exit $LASTEXITCODE
 
       - name: Post build output to a GitHub Issue if the build failed (diagnostic — network to blob storage is restricted for the human/AI reviewing this)
