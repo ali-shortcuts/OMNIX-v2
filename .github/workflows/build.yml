@@ -30,6 +30,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Exclude workspace from Windows Defender real-time scanning during build (mitigates a transient file-lock race where the FindRibbons VSTO task reflects-loads a just-written host DLL a fraction of a second after CoreCompile writes it — the 2nd/3rd project in a multi-project VSTO solution build is the one usually hit, matching the observed OMNIX.Word/OMNIX.PowerPoint failures while OMNIX.Excel, built first, succeeded)
+        shell: pwsh
+        run: |
+          try {
+            Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE" -ErrorAction Stop
+            Write-Host "Defender exclusion added for $env:GITHUB_WORKSPACE"
+          } catch {
+            Write-Host "Could not add Defender exclusion (non-fatal): $_"
+          }
+
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
         with:
@@ -103,6 +113,16 @@ jobs:
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           & $iscc "installer/installer.iss"
           Get-ChildItem installer/Output
+
+      - name: Remove the temporary Defender build exclusion before the honest scan (spec 2.9 must run with full real-time protection, no exclusions)
+        shell: pwsh
+        run: |
+          try {
+            Remove-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE" -ErrorAction Stop
+            Write-Host "Defender exclusion removed — real-time protection is fully back on for the honest check."
+          } catch {
+            Write-Host "Could not remove Defender exclusion (non-fatal, may not have been set): $_"
+          }
 
       - name: Windows Defender check with real-time protection ON (spec 2.9 — honest)
         shell: pwsh
