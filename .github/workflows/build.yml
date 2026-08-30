@@ -67,47 +67,16 @@ jobs:
           }
           ./build/nuget.exe restore $env:SOLUTION
 
-      - name: Build solution (Release, signed VSTO manifests)
+      - name: Build solution (3 independent fallback strategies — see build/build-with-fallbacks.ps1)
         shell: pwsh
-        run: |
-          # The VSTO "FindRibbons" MSBuild task loads the just-built host assembly
-          # by simple name (not by path) via a fresh AppDomain; this is a long-known,
-          # environment-dependent flake in the legacy VSTO tooling — it has failed
-          # non-deterministically (sometimes OMNIX.Excel, sometimes OMNIX.Word/PowerPoint,
-          # not tied to build order) even with parallelism off and Defender excluded.
-          # Retry the full build a few times; a transient assembly-load failure in one
-          # project does not mean the source is wrong — it means try again.
-          $maxAttempts = 4
-          $succeeded = $false
-          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-            Write-Host "=== Build attempt $attempt of $maxAttempts ==="
-            msbuild $env:SOLUTION `
-              /p:Configuration=$env:CONFIGURATION `
-              /p:Platform="Any CPU" `
-              /p:SignManifests=true `
-              /p:ManifestCertificateThumbprint=${{ steps.cert.outputs.thumbprint }} `
-              /p:ManifestTimestampUrl=http://timestamp.digicert.com `
-              /p:BuildInParallel=false `
-              /bl:build/logs/build.binlog `
-              /maxcpucount:1 2>&1 | Tee-Object -FilePath build_output.txt
-            if ($LASTEXITCODE -eq 0) {
-              $succeeded = $true
-              Write-Host "=== Build succeeded on attempt $attempt ==="
-              break
-            }
-            Write-Host "=== Build attempt $attempt failed (exit $LASTEXITCODE) — waiting 15s before retry ==="
-            Start-Sleep -Seconds 15
-          }
-          if (-not $succeeded) {
-            Write-Host "=== All $maxAttempts build attempts failed ==="
-            exit 1
-          }
+        run: ./build/build-with-fallbacks.ps1 ${{ steps.cert.outputs.thumbprint }}
 
       - name: Post build output to a GitHub Issue if the build failed (diagnostic — network to blob storage is restricted for the human/AI reviewing this)
         if: failure()
         shell: pwsh
         run: |
-          $full = Get-Content build_output.txt -Raw
+          $full = (Get-ChildItem build_output_*.txt -ErrorAction SilentlyContinue | Sort-Object Name | Get-Content -Raw) -join "`n--- next file ---`n"
+          if (-not $full) { $full = "(no build_output_*.txt files were produced by any strategy)" }
           if ($full.Length -gt 55000) { $full = $full.Substring($full.Length - 55000) }
           $body = @{
             title = "CI build failure — run $env:GITHUB_RUN_ID"
