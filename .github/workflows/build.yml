@@ -71,7 +71,24 @@ jobs:
         shell: pwsh
         run: ./build/build-with-fallbacks.ps1 ${{ steps.cert.outputs.thumbprint }}
 
-      - name: Post build output to a GitHub Issue if the build failed (diagnostic — network to blob storage is restricted for the human/AI reviewing this)
+      - name: Stage installer payload
+        shell: pwsh
+        run: ./build/package.ps1
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Compile single-exe installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $iscc "installer/installer.iss" 2>&1 | Tee-Object -FilePath build_output_innosetup.txt
+          $code = $LASTEXITCODE
+          Get-ChildItem installer/Output -ErrorAction SilentlyContinue
+          exit $code
+
+      - name: Post build output to a GitHub Issue if ANY step so far failed (diagnostic — network to blob storage is restricted for the human/AI reviewing this)
         if: failure()
         shell: pwsh
         run: |
@@ -89,21 +106,6 @@ jobs:
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues" -Method Post -Headers $headers -Body $body -ContentType "application/json"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Stage installer payload
-        shell: pwsh
-        run: ./build/package.ps1
-
-      - name: Install Inno Setup
-        shell: pwsh
-        run: choco install innosetup -y --no-progress
-
-      - name: Compile single-exe installer (Inno Setup)
-        shell: pwsh
-        run: |
-          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          & $iscc "installer/installer.iss"
-          Get-ChildItem installer/Output
 
       - name: Remove the temporary Defender build exclusion before the honest scan (spec 2.9 must run with full real-time protection, no exclusions)
         shell: pwsh
