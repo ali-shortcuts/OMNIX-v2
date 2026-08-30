@@ -378,7 +378,8 @@ begin
   begin
     // --- 4.2 step 5: write the Addins registry per real host and per real version ---
     AllOk := True;
-    AppPathForward := StringChange(ExpandConstant('{app}'), '\', '/');
+    AppPathForward := ExpandConstant('{app}');
+    StringChange(AppPathForward, '\', '/');
     for I := 0 to VersionList.Count - 1 do
       for J := 0 to HostList.Count - 1 do
       begin
