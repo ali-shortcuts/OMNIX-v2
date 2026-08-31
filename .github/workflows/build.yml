@@ -75,6 +75,15 @@ jobs:
         shell: pwsh
         run: ./build/package.ps1
 
+      - name: Download the official Microsoft VSTO Runtime redistributable and bundle it into the payload (offline-install friendly, and avoids the fragile in-installer download-page code path)
+        shell: pwsh
+        run: |
+          $dest = "installer\payload\vstor_redist.exe"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?LinkId=157584" -OutFile $dest -UseBasicParsing
+          $size = (Get-Item $dest).Length
+          Write-Host "Downloaded vstor_redist.exe: $size bytes"
+          if ($size -lt 1000000) { throw "vstor_redist.exe looks too small ($size bytes) — download likely failed" }
+
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup -y --no-progress
@@ -103,6 +112,54 @@ jobs:
           if ($full.Length -gt 55000) { $full = $full.Substring($full.Length - 55000) }
           $body = @{
             title = "CI build failure — run $env:GITHUB_RUN_ID"
+            body  = "``````text`n$full`n``````"
+          } | ConvertTo-Json
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept        = "application/vnd.github+json"
+          }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues" -Method Post -Headers $headers -Body $body -ContentType "application/json"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Actually RUN the installer silently and verify it completes (this is the gap that let 'Runtime error at 7.72 - Could not call proc' slip through undetected - CI only compiled it before, never executed it)"
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem installer\Output\OMNIX-Setup-*.exe | Select-Object -First 1
+          if (-not $exe) { Write-Host "No installer exe found to test!"; exit 1 }
+          Write-Host "Running: $($exe.FullName) /VERYSILENT /SUPPRESSMSGBOXES /LOG=install_test.log /NORESTART"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/LOG=$PWD\install_test.log","/NORESTART" -Wait -PassThru
+          Write-Host "Installer process exit code: $($p.ExitCode)"
+          if (Test-Path install_test.log) {
+            Write-Host "--- Inno Setup /LOG output ---"
+            Get-Content install_test.log | Write-Host
+          } else {
+            Write-Host "No install_test.log was produced."
+          }
+          if ($p.ExitCode -ne 0) {
+            Write-Host "Silent install FAILED (exit $($p.ExitCode))"
+            exit 1
+          }
+          $addinDll = "$env:LOCALAPPDATA\Programs\OMNIX\OMNIX.Excel.dll"
+          if (-not (Test-Path $addinDll)) {
+            Write-Host "Install reported success but $addinDll is missing — treating as failure."
+            exit 1
+          }
+          Write-Host "Silent install verified OK — OMNIX.Excel.dll present at $addinDll"
+
+      - name: Post build output to a GitHub Issue if the silent-install test failed (diagnostic)
+        if: failure()
+        shell: pwsh
+        run: |
+          $full = ""
+          if (Test-Path install_test.log) { $full += (Get-Content install_test.log -Raw) }
+          if (Test-Path "$env:LOCALAPPDATA\OMNIX\logs\install-debug.log") {
+            $full += "`n--- install-debug.log ---`n" + (Get-Content "$env:LOCALAPPDATA\OMNIX\logs\install-debug.log" -Raw)
+          }
+          if (-not $full) { $full = "(no install_test.log or install-debug.log produced)" }
+          if ($full.Length -gt 55000) { $full = $full.Substring($full.Length - 55000) }
+          $body = @{
+            title = "CI SILENT-INSTALL failure — run $env:GITHUB_RUN_ID"
             body  = "``````text`n$full`n``````"
           } | ConvertTo-Json
           $headers = @{

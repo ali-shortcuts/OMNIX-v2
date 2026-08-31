@@ -47,10 +47,22 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 ; Payload: the VSTO build outputs of all three hosts merged into one folder.
-Source: "payload\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "payload\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: "vstor_redist.exe"
 ; Manifest signing certificate (staged by the build scripts; optional for local dev builds)
 #if FileExists(AddBackslash(SourcePath) + "payload\OMNIX.cer")
 Source: "payload\OMNIX.cer"; DestDir: "{app}"; Flags: ignoreversion
+; Also stage it to {tmp} (dontcopy = extracted at Setup startup, not permanently
+; installed) so CurStepChanged/ssInstall can find it there BEFORE {app} files
+; exist — [Files] entries only land in {app} at file-copy time, which happens
+; AFTER CurStepChanged(ssInstall) runs, not before.
+Source: "payload\OMNIX.cer"; DestDir: "{tmp}"; Flags: dontcopy
+#endif
+; Bundled VSTO Runtime redistributable (fetched at CI build time from the
+; official Microsoft URL — see .github/workflows/build.yml). Staged to {tmp}
+; only (dontcopy): it is a one-time installer for a system-wide prerequisite,
+; not something OMNIX itself needs permanently in {app}.
+#if FileExists(AddBackslash(SourcePath) + "payload\vstor_redist.exe")
+Source: "payload\vstor_redist.exe"; DestDir: "{tmp}"; Flags: dontcopy
 #endif
 
 [Icons]
@@ -74,8 +86,6 @@ var
   VersionList: TStringList;    // Office versions present: 16.0 and/or 15.0
   NeedVstoX64: Boolean;
   NeedVstoX86: Boolean;
-  VstoDownloaded: Boolean;
-  DownloadPage: TDownloadWizardPage;
 
 procedure InstallLog(const Line: String);
 var
@@ -268,15 +278,11 @@ begin
   else
     NeedVstoX64 := False;
   InstallLog('VSTO runtime needed: x86=' + B2S(NeedVstoX86) + ' x64=' + B2S(NeedVstoX64));
-
-  if NeedVstoX86 or NeedVstoX64 then
-  begin
-    // Queue the official Microsoft VSTO Runtime bootstrap (downloaded only when missing).
-    DownloadPage := CreateDownloadPage('Downloading Microsoft VSTO Runtime…',
-                                       'The VSTO Runtime is required and was not found on this system.', nil);
-    DownloadPage.Add('https://go.microsoft.com/fwlink/?LinkId=157584', 'vstor_redist.exe', '');
-    VstoDownloaded := False;
-  end;
+  // Note: the actual redistributable (vstor_redist.exe) is bundled directly in
+  // the payload (fetched from the official Microsoft URL at CI build time) and
+  // is installed later, in CurStepChanged, with Exec — no in-wizard download
+  // page is used, which avoids that whole (fragile, harder-to-diagnose-remotely)
+  // code path entirely.
 
   Hosts := '';
   for I := 0 to HostList.Count - 1 do Hosts := Hosts + HostList[I] + ' ';
@@ -293,31 +299,12 @@ begin
   Result := Result + 'Hosts to register: ' + HostsSummary() + NewLine;
   if NeedVstoX86 or NeedVstoX64 then
     Result := Result + NewLine +
-      'The Microsoft VSTO Runtime is missing and will be downloaded from Microsoft and installed.' + NewLine +
+      'The Microsoft VSTO Runtime is missing and will be installed from the bundled redistributable.' + NewLine +
       'This is the ONLY step that may ask for Administrator permission (transparent UAC).' + NewLine;
   Result := Result + NewLine +
     'Installation folder: ' + ExpandConstant('{localappdata}') + '\Programs\OMNIX (per-user, no admin needed).' + NewLine;
 end;
 
-function NextButtonClick(CurPageID: Integer): Boolean;
-begin
-  Result := True;
-  if (CurPageID = wpReady) and (NeedVstoX86 or NeedVstoX64) and (not VstoDownloaded) then
-  begin
-    DownloadPage.Show;
-    try
-      try
-        DownloadPage.Download;
-        VstoDownloaded := True;
-      except
-        SuppressibleMsgBox(AddPeriod(GetExceptionMessage), mbCriticalError, MB_OK, IDOK);
-        Result := False;
-      end;
-    finally
-      DownloadPage.Hide;
-    end;
-  end;
-end;
 
 // ============================================================
 //  Install steps — exact order of spec 4.2
