@@ -78,11 +78,18 @@ jobs:
       - name: Download the official Microsoft VSTO Runtime redistributable and bundle it into the payload (offline-install friendly, and avoids the fragile in-installer download-page code path)
         shell: pwsh
         run: |
-          $dest = "installer\payload\vstor_redist.exe"
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?LinkId=157584" -OutFile $dest -UseBasicParsing
-          $size = (Get-Item $dest).Length
-          Write-Host "Downloaded vstor_redist.exe: $size bytes"
-          if ($size -lt 1000000) { throw "vstor_redist.exe looks too small ($size bytes) — download likely failed" }
+          try {
+            $dest = "installer\payload\vstor_redist.exe"
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?LinkId=157584" -OutFile $dest -UseBasicParsing -TimeoutSec 120
+            $size = (Get-Item $dest).Length
+            Write-Host "Downloaded vstor_redist.exe: $size bytes"
+            if ($size -lt 1000000) { throw "vstor_redist.exe looks too small ($size bytes) — download likely failed" }
+            exit 0
+          } catch {
+            "EXCEPTION downloading vstor_redist.exe: $($_.Exception.GetType().FullName): $($_.Exception.Message)" | Tee-Object -FilePath build_output_vstodownload.txt
+            exit 1
+          }
 
       - name: Install Inno Setup
         shell: pwsh
