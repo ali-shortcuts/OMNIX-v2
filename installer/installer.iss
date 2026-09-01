@@ -228,12 +228,16 @@ begin
   ForceDirectories(ExpandConstant('{localappdata}') + '\OMNIX\logs');
   InstallLog('=== OMNIX setup initialized (version {#MyAppVersion}) ===');
 
-  if IsProcessRunning('excel.exe') or IsProcessRunning('winword.exe') or IsProcessRunning('powerpnt.exe') then
-  begin
-    if MsgBox('Microsoft Office is currently running.' #13#10#13#10 +
-              'Please close Excel, Word and PowerPoint before installing OMNIX, then press OK to continue.',
-              mbInformation, MB_OKCANCEL) = IDCANCEL then
-      Result := False;
+  try
+    if IsProcessRunning('excel.exe') or IsProcessRunning('winword.exe') or IsProcessRunning('powerpnt.exe') then
+    begin
+      if MsgBox('Microsoft Office is currently running.' #13#10#13#10 +
+                'Please close Excel, Word and PowerPoint before installing OMNIX, then press OK to continue.',
+                mbInformation, MB_OKCANCEL) = IDCANCEL then
+        Result := False;
+    end;
+  except
+    InstallLog('WARNING: the "is Office running" check failed and was skipped: ' + GetExceptionMessage);
   end;
 end;
 
