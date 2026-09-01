@@ -111,6 +111,7 @@ var
   I: Integer;
 begin
   Result := '';
+  if HostList = nil then exit;
   for I := 0 to HostList.Count - 1 do
   begin
     if I > 0 then Result := Result + ', ';
@@ -250,49 +251,54 @@ var
   I: Integer;
 begin
   Result := '';
-  DetectedPlatform := DetectOfficePlatform;
-  if DetectedPlatform = '' then
-  begin
-    InstallLog('OFFICE_DETECTION_ERROR: Office could not be detected.');
-    Result := 'Microsoft Office (Excel, Word or PowerPoint) was not detected on this system.';
-    exit;
+  try
+    DetectedPlatform := DetectOfficePlatform;
+    if DetectedPlatform = '' then
+    begin
+      InstallLog('OFFICE_DETECTION_ERROR: Office could not be detected.');
+      Result := 'Microsoft Office (Excel, Word or PowerPoint) was not detected on this system.';
+      exit;
+    end;
+
+    HostList := TStringList.Create;
+    VersionList := TStringList.Create;
+    if IsHostInstalled('Excel', '16.0') or IsHostInstalled('Excel', '15.0') then HostList.Add('Excel');
+    if IsHostInstalled('Word', '16.0') or IsHostInstalled('Word', '15.0') then HostList.Add('Word');
+    if IsHostInstalled('PowerPoint', '16.0') or IsHostInstalled('PowerPoint', '15.0') then HostList.Add('PowerPoint');
+    if IsHostInstalled('Excel', '16.0') or IsHostInstalled('Word', '16.0') or IsHostInstalled('PowerPoint', '16.0') then VersionList.Add('16.0');
+    if IsHostInstalled('Excel', '15.0') or IsHostInstalled('Word', '15.0') or IsHostInstalled('PowerPoint', '15.0') then VersionList.Add('15.0');
+
+    InstallLog('Hosts found: ' + HostsSummary() + ' | Versions found: 16.0=' + B2S(VersionList.IndexOf('16.0') >= 0) + ' 15.0=' + B2S(VersionList.IndexOf('15.0') >= 0));
+
+    if HostList.Count = 0 then
+    begin
+      InstallLog('OFFICE_DETECTION_ERROR: no Office host application found.');
+      Result := 'No Excel, Word or PowerPoint installation was found.';
+      exit;
+    end;
+
+    // VSTO Runtime bitness check (spec 4.1 step 3): Office x64 needs x64 VSTO runtime too.
+    NeedVstoX86 := not VstoRuntimeInstalled(HKLM32);
+    if IsWin64 and (DetectedPlatform = 'x64') then
+      NeedVstoX64 := not VstoRuntimeInstalled(HKLM64)
+    else
+      NeedVstoX64 := False;
+    InstallLog('VSTO runtime needed: x86=' + B2S(NeedVstoX86) + ' x64=' + B2S(NeedVstoX64));
+    // Note: the actual redistributable (vstor_redist.exe) is bundled directly in
+    // the payload (fetched from the official Microsoft URL at CI build time) and
+    // is installed later, in CurStepChanged, with Exec — no in-wizard download
+    // page is used, which avoids that whole (fragile, harder-to-diagnose-remotely)
+    // code path entirely.
+
+    Hosts := '';
+    for I := 0 to HostList.Count - 1 do Hosts := Hosts + HostList[I] + ' ';
+    Versions := '';
+    for I := 0 to VersionList.Count - 1 do Versions := Versions + VersionList[I] + ' ';
+    InstallLog('PrepareToInstall summary: hosts=[' + Hosts + '] versions=[' + Versions + ']');
+  except
+    InstallLog('EXCEPTION in PrepareToInstall: ' + GetExceptionMessage);
+    Result := 'OMNIX setup encountered an internal error while preparing to install: ' + GetExceptionMessage;
   end;
-
-  HostList := TStringList.Create;
-  VersionList := TStringList.Create;
-  if IsHostInstalled('Excel', '16.0') or IsHostInstalled('Excel', '15.0') then HostList.Add('Excel');
-  if IsHostInstalled('Word', '16.0') or IsHostInstalled('Word', '15.0') then HostList.Add('Word');
-  if IsHostInstalled('PowerPoint', '16.0') or IsHostInstalled('PowerPoint', '15.0') then HostList.Add('PowerPoint');
-  if IsHostInstalled('Excel', '16.0') or IsHostInstalled('Word', '16.0') or IsHostInstalled('PowerPoint', '16.0') then VersionList.Add('16.0');
-  if IsHostInstalled('Excel', '15.0') or IsHostInstalled('Word', '15.0') or IsHostInstalled('PowerPoint', '15.0') then VersionList.Add('15.0');
-
-  InstallLog('Hosts found: ' + HostsSummary() + ' | Versions found: 16.0=' + B2S(VersionList.IndexOf('16.0') >= 0) + ' 15.0=' + B2S(VersionList.IndexOf('15.0') >= 0));
-
-  if HostList.Count = 0 then
-  begin
-    InstallLog('OFFICE_DETECTION_ERROR: no Office host application found.');
-    Result := 'No Excel, Word or PowerPoint installation was found.';
-    exit;
-  end;
-
-  // VSTO Runtime bitness check (spec 4.1 step 3): Office x64 needs x64 VSTO runtime too.
-  NeedVstoX86 := not VstoRuntimeInstalled(HKLM32);
-  if IsWin64 and (DetectedPlatform = 'x64') then
-    NeedVstoX64 := not VstoRuntimeInstalled(HKLM64)
-  else
-    NeedVstoX64 := False;
-  InstallLog('VSTO runtime needed: x86=' + B2S(NeedVstoX86) + ' x64=' + B2S(NeedVstoX64));
-  // Note: the actual redistributable (vstor_redist.exe) is bundled directly in
-  // the payload (fetched from the official Microsoft URL at CI build time) and
-  // is installed later, in CurStepChanged, with Exec — no in-wizard download
-  // page is used, which avoids that whole (fragile, harder-to-diagnose-remotely)
-  // code path entirely.
-
-  Hosts := '';
-  for I := 0 to HostList.Count - 1 do Hosts := Hosts + HostList[I] + ' ';
-  Versions := '';
-  for I := 0 to VersionList.Count - 1 do Versions := Versions + VersionList[I] + ' ';
-  InstallLog('PrepareToInstall summary: hosts=[' + Hosts + '] versions=[' + Versions + ']');
 end;
 
 function UpdateReadyMemo(const Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
