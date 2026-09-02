@@ -99,7 +99,15 @@ jobs:
         shell: pwsh
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          & $iscc "installer/installer.iss" 2>&1 | Tee-Object -FilePath build_output_innosetup.txt
+          # Derive the real version from the git tag that triggered this run
+          # (e.g. refs/tags/v1.0.1 -> "1.0.1"); fall back to a dev-marker for
+          # ordinary branch pushes so the output filename never lies about
+          # which version it actually is (this is exactly what caused the
+          # v1.0.1 GitHub Release to contain a file still named ...-1.0.0.exe).
+          $ver = "0.0.0-dev"
+          if ($env:GITHUB_REF -match '^refs/tags/v(.+)$') { $ver = $Matches[1] }
+          Write-Host "Building installer version: $ver"
+          & $iscc "/DMyAppVersion=$ver" "installer/installer.iss" 2>&1 | Tee-Object -FilePath build_output_innosetup.txt
           $code = $LASTEXITCODE
           Get-ChildItem installer/Output -ErrorAction SilentlyContinue
           if ($code -eq 0) {
