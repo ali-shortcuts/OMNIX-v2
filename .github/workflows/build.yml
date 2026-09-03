@@ -183,10 +183,11 @@ jobs:
         shell: pwsh
         run: |
           $lines = ""
-          if (Test-Path install_test.log) {
-            $lines = (Get-Content install_test.log | Select-String -Pattern "VSTO|ShellExec|elevat|740|runas|UAC" | ForEach-Object { $_.Line }) -join "`n"
+          $ourLog = "$env:LOCALAPPDATA\OMNIX\logs\install-debug.log"
+          if (Test-Path $ourLog) {
+            $lines = (Get-Content $ourLog | Select-String -Pattern "VSTO|ShellExec|elevat|740|runas|UAC") -join "`n"
           }
-          if (-not $lines) { $lines = "(no matching VSTO/elevation lines found in install_test.log)" }
+          if (-not $lines) { $lines = "(no matching lines found in $ourLog — or the file itself doesn't exist: $(Test-Path $ourLog))" }
           $body = @{
             title = "TEMP VSTO diagnostic — run $env:GITHUB_RUN_ID"
             body  = "``````text`n$lines`n``````"
