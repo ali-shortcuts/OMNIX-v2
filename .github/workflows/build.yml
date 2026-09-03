@@ -54,9 +54,15 @@ jobs:
         shell: pwsh
         run: |
           ./build/create-signing-cert.ps1
-          $thumb = (Get-Content build/cert/thumbprint.txt).Trim()
+          Write-Host "--- Diagnostic: cert files present? ---"
+          Write-Host "OMNIX.cer  : $(Test-Path build/cert/OMNIX.cer)"
+          Write-Host "OMNIX.pfx  : $(Test-Path build/cert/OMNIX.pfx)"
+          Write-Host "thumbprint : $(Test-Path build/cert/thumbprint.txt)"
+          $thumb = ""
+          if (Test-Path build/cert/thumbprint.txt) { $thumb = (Get-Content build/cert/thumbprint.txt).Trim() }
           "thumbprint=$thumb" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Thumbprint: $thumb"
+          if (-not $thumb) { Write-Host "WARNING: thumbprint is EMPTY — cert creation likely failed silently upstream." }
 
       - name: NuGet restore
         shell: pwsh
@@ -73,7 +79,11 @@ jobs:
 
       - name: Stage installer payload
         shell: pwsh
-        run: ./build/package.ps1
+        run: |
+          ./build/package.ps1
+          Write-Host "--- Diagnostic: payload contents after package.ps1 ---"
+          Get-ChildItem installer\payload -ErrorAction SilentlyContinue | ForEach-Object { Write-Host ("  " + $_.Name + "  " + $_.Length + " bytes") }
+          Write-Host "OMNIX.cer in payload? $(Test-Path installer\payload\OMNIX.cer)"
 
       - name: Download the official Microsoft VSTO Runtime redistributable and bundle it into the payload (offline-install friendly, and avoids the fragile in-installer download-page code path)
         shell: pwsh

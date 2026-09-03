@@ -334,6 +334,24 @@ begin
   begin
     InstallLog('=== OMNIX install begin (version {#MyAppVersion}) ===');
 
+    // ExtractTemporaryFile is REQUIRED for any [Files] entry using the
+    // 'dontcopy' flag — that flag only means "don't permanently install to
+    // {app}"; it does NOT auto-extract to {tmp} by itself. Without this
+    // explicit call, {tmp}\vstor_redist.exe and {tmp}\OMNIX.cer would never
+    // exist even though both files are genuinely embedded in the compiled
+    // installer (this was the real, root-cause bug behind "vstor_redist.exe
+    // missing from temp" / "no OMNIX.cer found" in the v1.0.2 install log).
+    try
+      ExtractTemporaryFile('vstor_redist.exe');
+    except
+      InstallLog('NOTE: could not extract vstor_redist.exe (likely not bundled in this build): ' + GetExceptionMessage);
+    end;
+    try
+      ExtractTemporaryFile('OMNIX.cer');
+    except
+      InstallLog('NOTE: could not extract OMNIX.cer (likely not bundled in this build): ' + GetExceptionMessage);
+    end;
+
     // --- 4.2 step 2: clean previous install + DisabledItems BEFORE writing anything new ---
     RemoveAddinRegistry();
     CleanResiliencyDisabledItems();
