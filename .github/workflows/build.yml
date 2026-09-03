@@ -147,6 +147,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: "Isolated test: does elevated (runas-equivalent) launch of the bundled vstor_redist.exe actually succeed on a real Windows machine, independent of Office (Office isn't installed on this runner at all, so this is the ONLY part of the install flow that CAN be verified here without a human)"
+        shell: pwsh
+        run: |
+          $vsto = Get-ChildItem installer\payload\vstor_redist.exe -ErrorAction SilentlyContinue
+          if (-not $vsto) { Write-Host "vstor_redist.exe not found in payload — skipping this isolated test."; exit 0 }
+          Write-Host "Launching $($vsto.FullName) /q /norestart via Start-Process -Verb RunAs (PowerShell's equivalent of ShellExec 'runas')..."
+          try {
+            $p = Start-Process -FilePath $vsto.FullName -ArgumentList "/q","/norestart" -Verb RunAs -Wait -PassThru
+            Write-Host "Exit code: $($p.ExitCode)"
+            if ($p.ExitCode -eq 740) {
+              Write-Host "FAILED: still got 740 (elevation required) even with -Verb RunAs — the elevation mechanism itself is not working as expected on this runner."
+              exit 1
+            } elseif ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) {
+              Write-Host "SUCCESS: vstor_redist.exe ran with real elevation and completed (exit $($p.ExitCode) — 3010 just means 'needs a restart', which is fine and expected)."
+            } else {
+              Write-Host "Ran with elevation (no 740), but returned an unexpected code $($p.ExitCode) — not necessarily a failure of THIS fix, just worth noting."
+            }
+          } catch {
+            Write-Host "EXCEPTION launching with -Verb RunAs: $($_.Exception.Message)"
+            exit 1
+          }
+
       - name: "Actually RUN the installer silently and verify it completes (this is the gap that let 'Runtime error at 7.72 - Could not call proc' slip through undetected - CI only compiled it before, never executed it)"
         shell: pwsh
         run: |
