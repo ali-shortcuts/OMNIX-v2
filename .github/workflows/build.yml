@@ -182,15 +182,13 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $lines = ""
+          $full = ""
           $ourLog = "$env:LOCALAPPDATA\OMNIX\logs\install-debug.log"
-          if (Test-Path $ourLog) {
-            $lines = (Get-Content $ourLog | Select-String -Pattern "VSTO|ShellExec|elevat|740|runas|UAC") -join "`n"
-          }
-          if (-not $lines) { $lines = "(no matching lines found in $ourLog — or the file itself doesn't exist: $(Test-Path $ourLog))" }
+          if (Test-Path $ourLog) { $full = Get-Content $ourLog -Raw }
+          if (-not $full) { $full = "(file empty or missing)" }
           $body = @{
             title = "TEMP VSTO diagnostic — run $env:GITHUB_RUN_ID"
-            body  = "``````text`n$lines`n``````"
+            body  = "``````text`n$full`n``````"
           } | ConvertTo-Json
           $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = "application/vnd.github+json" }
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues" -Method Post -Headers $headers -Body $body -ContentType "application/json"
