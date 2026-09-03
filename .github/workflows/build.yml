@@ -178,6 +178,24 @@ jobs:
           }
           Write-Host "Silent install verified OK — OMNIX.Excel.dll present at $addinDll"
 
+      - name: "TEMP diagnostic (this round only): post VSTO Runtime status lines to an Issue regardless of pass/fail, so this can be inspected without another human download-and-test round"
+        if: always()
+        shell: pwsh
+        run: |
+          $lines = ""
+          if (Test-Path install_test.log) {
+            $lines = (Get-Content install_test.log | Select-String -Pattern "VSTO|ShellExec|elevat|740|runas|UAC" | ForEach-Object { $_.Line }) -join "`n"
+          }
+          if (-not $lines) { $lines = "(no matching VSTO/elevation lines found in install_test.log)" }
+          $body = @{
+            title = "TEMP VSTO diagnostic — run $env:GITHUB_RUN_ID"
+            body  = "``````text`n$lines`n``````"
+          } | ConvertTo-Json
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = "application/vnd.github+json" }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues" -Method Post -Headers $headers -Body $body -ContentType "application/json"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Post build output to a GitHub Issue if the silent-install test failed (diagnostic)
         if: failure()
         shell: pwsh
