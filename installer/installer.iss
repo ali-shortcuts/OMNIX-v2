@@ -362,8 +362,12 @@ begin
       VstoExe := ExpandConstant('{tmp}') + '\vstor_redist.exe';
       if FileExists(VstoExe) then
       begin
-        InstallLog('Installing VSTO Runtime (vstor_redist.exe /q /norestart)…');
-        Exec(VstoExe, '/q /norestart', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
+        InstallLog('Installing VSTO Runtime (vstor_redist.exe /q /norestart) with elevation (UAC)…');
+        if not ShellExec('runas', VstoExe, '/q /norestart', '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
+        begin
+          ResultCode := -1;
+          InstallLog('ShellExec(runas) itself failed to launch vstor_redist.exe (e.g. user declined the UAC prompt).');
+        end;
         InstallLog('VSTO Runtime installer exit code: ' + IntToStr(ResultCode));
         if NeedVstoX64 and (not VstoRuntimeInstalled(HKLM64)) then
           InstallLog('WARNING: x64 VSTO Runtime verification after install did not succeed.');
