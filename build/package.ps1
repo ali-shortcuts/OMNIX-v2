@@ -40,6 +40,12 @@ if (Test-Path $cert) {
     Write-Warning "No OMNIX.cer found — the installer will run WITHOUT manifest trust import (dev build)."
 }
 
+$verifyScript = Join-Path $root "build\post-install-verify.ps1"
+if (Test-Path $verifyScript) {
+    Copy-Item $verifyScript -Destination $payload -Force
+    Write-Host "post-install-verify.ps1 staged (automatic post-install COM verification)."
+}
+
 # Friendly post-install note shown by the installer ([Run] shellexec).
 $readmeFirst = Join-Path $payload "README-first.txt"
 @'

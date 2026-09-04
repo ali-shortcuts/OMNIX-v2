@@ -56,6 +56,13 @@ if exist "%LOCALAPPDATA%\OMNIX\logs" (
     ) else (
         echo    ^>^>^> startup-debug.log NOT FOUND — Excel never even attempted to load OMNIX.
     )
+    echo.
+    echo --- post-install-verify.log (automatic COM check done by Setup itself) ---
+    if exist "%LOCALAPPDATA%\OMNIX\logs\post-install-verify.log" (
+        type "%LOCALAPPDATA%\OMNIX\logs\post-install-verify.log"
+    ) else (
+        echo    ^>^>^> post-install-verify.log NOT FOUND — this OMNIX version predates this check, or install failed before ssPostInstall.
+    )
 ) else (
     echo    ^>^>^> LOGS FOLDER DOES NOT EXIST AT ALL.
 )

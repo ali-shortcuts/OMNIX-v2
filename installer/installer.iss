@@ -428,6 +428,27 @@ begin
     if not AllOk then
       MsgBox('Some registry keys could not be verified. Please check install-debug.log in ' +
              ExpandConstant('{localappdata}') + '\OMNIX\logs.', mbError, MB_OK);
+
+    // --- Automatic post-install verification (spec-driven request: no manual
+    // Excel menu navigation needed) — briefly launches Excel via COM
+    // automation, checks whether OMNIX genuinely appears loaded in
+    // Application.COMAddIns, and if not connected, tries to force-connect it
+    // to capture the EXACT underlying exception. Writes everything to
+    // %LOCALAPPDATA%\OMNIX\logs\post-install-verify.log automatically —
+    // the user does not have to open Excel or any menu themselves.
+    if AllOk then
+    begin
+      try
+        InstallLog('Launching automatic post-install verification (briefly opens Excel via COM, hidden)...');
+        Exec('powershell.exe',
+             '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}') + '\post-install-verify.ps1"',
+             '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        InstallLog('post-install-verify.ps1 exit code: ' + IntToStr(ResultCode) +
+                    ' (full detail in post-install-verify.log)');
+      except
+        InstallLog('EXCEPTION launching post-install-verify.ps1: ' + GetExceptionMessage);
+      end;
+    end;
   end;
 end;
 
