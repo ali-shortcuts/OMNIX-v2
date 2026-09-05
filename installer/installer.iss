@@ -166,12 +166,22 @@ procedure RemoveAddinRegistry();
 var
   I, J: Integer;
   Key: String;
+  Versions, Hosts: array of String;
 begin
-  if HostList = nil then exit;
-  for I := 0 to VersionList.Count - 1 do
-    for J := 0 to HostList.Count - 1 do
+  // Deliberately does NOT depend on the global HostList/VersionList — those
+  // are only populated during PrepareToInstall, which never runs during
+  // uninstall. Using its own fixed, complete list means this works
+  // correctly both when reinstalling (cleanup before rewrite) AND during a
+  // real uninstall (this was a real bug: uninstall silently removed NOTHING
+  // from the registry before, because HostList was nil at that point and
+  // the old nil-guard just made this whole procedure a no-op).
+  SetArrayLength(Versions, 2); Versions[0] := '16.0'; Versions[1] := '15.0';
+  SetArrayLength(Hosts, 3); Hosts[0] := 'Excel'; Hosts[1] := 'Word'; Hosts[2] := 'PowerPoint';
+
+  for I := 0 to GetArrayLength(Versions) - 1 do
+    for J := 0 to GetArrayLength(Hosts) - 1 do
     begin
-      Key := Format(RegAddinsFmt, [VersionList[I], HostList[J]]);
+      Key := Format(RegAddinsFmt, [Versions[I], Hosts[J]]);
       if RegKeyExists(HKCU, Key) then
       begin
         RegDeleteKeyIncludingSubkeys(HKCU, Key);
@@ -382,13 +392,20 @@ begin
       CertPath := ExpandConstant('{app}') + '\OMNIX.cer';
     if FileExists(CertPath) then
     begin
-      Exec(ExpandConstant('{cmd}'), '/C certutil -user -addstore ' + TrustedPubStore + ' "' + CertPath + '"',
+      // -f (force) is REQUIRED here: without it, "certutil -addstore Root"
+      // shows an interactive Windows security confirmation dialog ("Do you
+      // want to install this certificate?"). Since this Exec call uses
+      // SW_HIDE and ewWaitUntilTerminated, an unsuppressed dialog could sit
+      // hidden/behind other windows forever, making the WHOLE INSTALLER
+      // HANG silently while waiting for a click the user never sees — a
+      // real, previously undiscovered bug found on this full re-review.
+      Exec(ExpandConstant('{cmd}'), '/C certutil -f -user -addstore ' + TrustedPubStore + ' "' + CertPath + '"',
            '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      InstallLog('certutil -user -addstore TrustedPublisher exit code: ' + IntToStr(ResultCode));
-      // Self-signed chains also need the CurrentUser ROOT store (one confirmation dialog, no admin).
-      Exec(ExpandConstant('{cmd}'), '/C certutil -user -addstore ' + RootStore + ' "' + CertPath + '"',
+      InstallLog('certutil -f -user -addstore TrustedPublisher exit code: ' + IntToStr(ResultCode));
+      // Self-signed chains also need the CurrentUser ROOT store.
+      Exec(ExpandConstant('{cmd}'), '/C certutil -f -user -addstore ' + RootStore + ' "' + CertPath + '"',
            '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      InstallLog('certutil -user -addstore Root exit code: ' + IntToStr(ResultCode));
+      InstallLog('certutil -f -user -addstore Root exit code: ' + IntToStr(ResultCode));
     end
     else
       InstallLog('NOTE: no OMNIX.cer found — manifests are UNSIGNED for this build. ' +
