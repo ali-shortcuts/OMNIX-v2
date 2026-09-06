@@ -366,6 +366,20 @@ begin
     RemoveAddinRegistry();
     CleanResiliencyDisabledItems();
 
+    // Fully wipe any previous install folder before Inno's own [Files] copy
+    // phase begins right after this function returns. Overwriting files by
+    // matching name (what [Files] normally does) does NOT remove files that
+    // existed in an OLDER build but are no longer part of the current one —
+    // this is exactly how stray leftover folders/files from earlier,
+    // different OMNIX architectures were found sitting around undetected
+    // for a long time. A full wipe-then-reinstall is simpler and safer than
+    // trying to track every historical file name that might be stale.
+    if DirExists(ExpandConstant('{app}')) then
+    begin
+      InstallLog('Removing previous install folder entirely before reinstalling: ' + ExpandConstant('{app}'));
+      DelTree(ExpandConstant('{app}'), True, True, True);
+    end;
+
     // --- 4.2 step 3: VSTO runtime if missing — the only step that may raise UAC ---
     if NeedVstoX86 or NeedVstoX64 then
     begin
