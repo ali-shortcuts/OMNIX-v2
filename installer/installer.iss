@@ -88,6 +88,7 @@ var
   VersionList: TStringList;    // Office versions present: 16.0 and/or 15.0
   NeedVstoX64: Boolean;
   NeedVstoX86: Boolean;
+  VstoRestartNeeded: Boolean;
 
 procedure InstallLog(const Line: String);
 var
@@ -233,6 +234,14 @@ begin
        '/C tasklist /FI "IMAGENAME eq ' + ImageName + '" | find /I "' + ImageName + '" >nul',
        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := (ResultCode = 0);
+end;
+
+// Inno Setup calls this automatically near the end of installation. If it
+// returns True, the user is properly asked "Setup needs to restart your
+// computer" instead of silently leaving a half-registered VSTO Runtime.
+function NeedRestart(): Boolean;
+begin
+  Result := VstoRestartNeeded;
 end;
 
 function InitializeSetup(): Boolean;
@@ -394,7 +403,23 @@ begin
         end;
         InstallLog('VSTO Runtime installer exit code: ' + IntToStr(ResultCode));
         if NeedVstoX64 and (not VstoRuntimeInstalled(HKLM64)) then
-          InstallLog('WARNING: x64 VSTO Runtime verification after install did not succeed.');
+        begin
+          if ResultCode = 0 then
+          begin
+            // The installer itself reported success, but the registry marker
+            // still isn't there. This is a well-known pattern for Windows
+            // runtime installers when required files were locked/in-use
+            // (very plausible here, given how many prior partial install
+            // attempts have touched this machine) — the actual registration
+            // completes only after a restart. Ask Inno Setup to prompt for
+            // one properly, instead of silently leaving a half-finished
+            // runtime and registering the add-in anyway.
+            InstallLog('VSTO installer exit code 0 but registry still shows NOT installed — this looks like a pending-restart case. Requesting a restart.');
+            VstoRestartNeeded := True;
+          end
+          else
+            InstallLog('WARNING: x64 VSTO Runtime verification after install did not succeed.');
+        end;
       end
       else
         InstallLog('WARNING: vstor_redist.exe missing from temp — download step did not run.');
