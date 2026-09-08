@@ -69,11 +69,6 @@ namespace OMNIX.Core.AiGateway
         }
     }
 
-    /// <summary>
-    /// Provider router: local-first when requested, strict local routing in LocalOnly privacy
-    /// mode, otherwise the explicitly selected provider. Vision requests never auto-route to a
-    /// local model that is known not to support images.
-    /// </summary>
     public sealed class ProviderRouter
     {
         private readonly ProviderRegistry _registry;
@@ -255,7 +250,10 @@ namespace OMNIX.Core.AiGateway
                 case "custom":
                     var cp = settings.CustomProvider;
                     creds.BaseUrl = cp != null ? cp.BaseUrl : null;
-                    creds.Model = cp != null ? cp.Model : creds.Model;
+                    // The main Model picker writes settings.Models["custom"]. Prefer that value;
+                    // fall back to the legacy CustomProvider.Model only for older settings files.
+                    if (string.IsNullOrWhiteSpace(creds.Model))
+                        creds.Model = cp != null ? cp.Model : null;
                     creds.ApiKey = SettingsManager.Instance.GetApiKey("custom");
                     break;
             }
