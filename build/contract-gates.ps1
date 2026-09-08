@@ -39,9 +39,9 @@ function Require-NotContains([string]$relative, [string]$needle, [string]$reason
 # ---------------------------------------------------------------------------
 # 1) Native Office three-host architecture must remain present.
 # ---------------------------------------------------------------------------
-foreach ($host in @('Excel','Word','PowerPoint')) {
-    Require-Contains "src/OMNIX.$host/ThisAddIn.cs" 'CreateRibbonExtensibilityObject' "$host must expose the OMNIX Ribbon through the VSTO host."
-    Require-Contains "src/OMNIX.$host/OmnixRibbon.xml" 'OMNIX' "$host must keep an OMNIX Ribbon definition."
+foreach ($officeHost in @('Excel','Word','PowerPoint')) {
+    Require-Contains "src/OMNIX.$officeHost/ThisAddIn.cs" 'CreateRibbonExtensibilityObject' "$officeHost must expose the OMNIX Ribbon through the VSTO host."
+    Require-Contains "src/OMNIX.$officeHost/OmnixRibbon.xml" 'OMNIX' "$officeHost must keep an OMNIX Ribbon definition."
 }
 
 Require-Contains 'build/post-install-verify.ps1' 'Excel.Application' 'Installer verification must cover Excel.'
@@ -101,7 +101,7 @@ Require-Contains 'src/OMNIX.Core/Ui/Views/SettingsView.xaml.cs' 'Uri.UriSchemeHt
 # ---------------------------------------------------------------------------
 if ($failures.Count -gt 0) {
     Write-Host 'OMNIX CONTRACT GATE: FAIL' -ForegroundColor Red
-    foreach ($f in $failures) { Write-Host " - $f" -ForegroundColor Red }
+    foreach ($failure in $failures) { Write-Host " - $failure" -ForegroundColor Red }
     exit 1
 }
 
