@@ -9,6 +9,8 @@
 # - Creates temporary blank Office files in memory and closes them without saving.
 # - Does not alter Trust Center, Office Resiliency, registry policy, or security settings.
 # - Does not click unrelated UI controls.
+# - Workspace proof uses deterministic UI Automation IDs exposed by the OMNIX WPF UI; it never
+#   accepts the already-visible Ribbon tab itself as evidence that the task pane opened.
 
 [CmdletBinding()]
 param(
@@ -93,6 +95,17 @@ function Find-UiElementByExactName($root, [string]$name) {
     }
 }
 
+function Find-UiElementByAutomationId($root, [string]$automationId) {
+    if ($null -eq $root) { return $null }
+    try {
+        $condition = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $automationId)
+        return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+    } catch {
+        return $null
+    }
+}
+
 function Find-UiElementByNameFragment($root, [string[]]$fragments) {
     if ($null -eq $root) { return $null }
     try {
@@ -111,6 +124,17 @@ function Find-UiElementByNameFragment($root, [string[]]$fragments) {
         }
     } catch { }
     return $null
+}
+
+function Test-UiElementVisible($element) {
+    if ($null -eq $element) { return $false }
+    try {
+        if ([bool]$element.Current.IsOffscreen) { return $false }
+        $rect = $element.Current.BoundingRectangle
+        return ($rect.Width -ge 20 -and $rect.Height -ge 10)
+    } catch {
+        return $false
+    }
 }
 
 function Activate-UiElement($element) {
@@ -150,7 +174,9 @@ function Test-HostUi($host) {
         OpenWorkspaceButtonFound = $false
         OpenWorkspaceInvoked = $false
         WorkspaceEvidenceFound = $false
-        WorkspaceEvidence = $null
+        WorkspaceEvidenceAutomationId = $null
+        WorkspaceEvidenceName = $null
+        WorkspaceEvidenceVisible = $false
         Error = $null
         DurationMs = 0
         Pass = $false
@@ -196,26 +222,22 @@ function Test-HostUi($host) {
             Start-Sleep -Milliseconds $WorkspaceDelayMs
         }
 
-        # A custom task pane can expose different control types across Office builds. Instead of
-        # requiring one fragile class name, require a user-facing OMNIX workspace signal after the
-        # Open Workspace command: chat label, input placeholder, or an OMNIX pane element.
-        $workspace = Find-UiElementByExactName $root 'Chat'
+        # Fail-closed workspace proof. The task pane must expose one of our explicit WPF UIA IDs.
+        # A generic element named "OMNIX" is deliberately NOT accepted because that could simply
+        # be the Ribbon tab that was already present before Open Workspace was invoked.
+        $workspace = Find-UiElementByAutomationId $root 'OMNIX.ChatInput'
         if ($null -eq $workspace) {
-            $workspace = Find-UiElementByNameFragment $root @(
-                'Ask about this document',
-                'OMNIX AI',
-                'New Chat'
-            )
+            $workspace = Find-UiElementByAutomationId $root 'OMNIX.WorkspaceRoot'
         }
-        if ($null -eq $workspace -and $result.OpenWorkspaceInvoked) {
-            # Last fallback: look for another OMNIX-named element after invocation. This does not
-            # by itself prove a pane exists unless the Open Workspace command was successfully invoked.
-            $workspace = Find-UiElementByNameFragment $root @('OMNIX')
+        if ($null -eq $workspace) {
+            $workspace = Find-UiElementByExactName $root 'OMNIX chat input'
         }
 
         if ($workspace) {
-            $result.WorkspaceEvidenceFound = $true
-            try { $result.WorkspaceEvidence = [string]$workspace.Current.Name } catch { $result.WorkspaceEvidence = 'UI element found' }
+            $result.WorkspaceEvidenceVisible = Test-UiElementVisible $workspace
+            try { $result.WorkspaceEvidenceAutomationId = [string]$workspace.Current.AutomationId } catch { }
+            try { $result.WorkspaceEvidenceName = [string]$workspace.Current.Name } catch { }
+            $result.WorkspaceEvidenceFound = [bool]$result.WorkspaceEvidenceVisible
         }
 
         $result.Pass = [bool](
