@@ -65,12 +65,27 @@ Require-Contains 'tools/real-office-ui-acceptance.ps1' 'RibbonTabFound' 'UI gate
 Require-Contains 'tools/real-office-ui-acceptance.ps1' 'OpenWorkspaceInvoked' 'UI gate must actually invoke Open Workspace, not only discover registration.'
 Require-Contains 'tools/real-office-ui-acceptance.ps1' 'WorkspaceEvidenceFound' 'UI gate must prove workspace UI appeared.'
 
-# 2) Installer must not erase shared Office recovery/security state.
+# 2) Installer must not erase shared Office recovery/security state or broadly alter trust stores.
 Require-NotContains 'installer/installer.iss' 'CleanResiliencyDisabledItems' 'Do not globally clear Office DisabledItems.'
 Require-NotContains 'installer/installer.iss' "Root + '\CrashingAddinList'" 'Do not delete shared Office crashing-addin state.'
 Require-NotContains 'installer/installer.iss' 'RegDeleteValue(HKCU, Key' 'Opaque DisabledItems values may belong to unrelated add-ins.'
 Require-Contains 'installer/installer.iss' 'PreserveOfficeResiliencyState' 'Installer must preserve shared Office Resiliency state.'
 Require-NotContains 'installer/installer.iss' 'and False then' 'Do not silently disable the VSTO prerequisite path.'
+Require-PowerShellParses 'build/classify-dev-cert.ps1'
+Require-Contains 'build/classify-dev-cert.ps1' 'isSelfSigned' 'Installer trust helper must distinguish self-signed development certificates from CA-signed production certificates.'
+Require-Contains 'installer/installer.iss' 'classify-dev-cert.ps1' 'Installer must classify the public cert before any development trust-store import.'
+Require-Contains 'installer/installer.iss' 'CA/non-self-signed publisher certificate detected: no OMNIX trust-store modification performed.' 'Production certificates must rely on the normal Windows trust chain.'
+Require-Contains 'installer/installer.iss' 'dev-cert-thumbprint.txt' 'Development trust removal must be bound to the exact thumbprint imported by OMNIX.'
+Require-NotContains 'installer/installer.iss' 'delstore ' + 'TrustedPublisher + '' OMNIX''' 'Do not delete certificates by a broad OMNIX name match.'
+Require-NotContains 'installer/installer.iss' 'delstore ' + 'RootStore + '' OMNIX''' 'Do not delete Root certificates by a broad OMNIX name match.'
+
+# Private signing material must stay out of the repository payload and logs.
+Require-PowerShellParses 'build/create-signing-cert.ps1'
+Require-Contains 'build/create-signing-cert.ps1' 'KeyExportPolicy NonExportable' 'Development private key must remain non-exportable in CurrentUser certificate store.'
+Require-NotContains 'build/create-signing-cert.ps1' 'Export-PfxCertificate' 'Do not export development private keys to PFX.'
+Require-NotContains 'build/create-signing-cert.ps1' 'omnix-dev-only' 'No hard-coded PFX password is allowed.'
+Require-Contains 'build/package.ps1' 'Private signing key file(s) were found' 'Packaging must fail closed if PFX files appear.'
+Require-Contains 'build/package.ps1' 'payloadPrivateKeys' 'Installer payload must reject private signing keys.'
 
 # 3) AI Gateway/privacy/local-first/failover.
 Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'ProviderRouter' 'UI/provider routing must remain behind the AI Gateway.'
