@@ -15,10 +15,10 @@ namespace OMNIX.Core.AiGateway.Adapters
     /// Hugging Face Inference Providers adapter.
     ///
     /// Hugging Face exposes an OpenAI-compatible router at router.huggingface.co/v1 and a live
-    /// /models catalog containing architecture/provider metadata. OMNIX uses that live metadata to
-    /// put models with a currently-free provider route first and to identify Vision-capable models.
-    /// The provider also grants small monthly experimentation credits to free accounts; OMNIX labels
-    /// that honestly and never promises unlimited free inference.
+    /// /models catalog containing architecture/provider metadata. When the catalog marks a live
+    /// provider route is_free=true, OMNIX exposes the exact model:provider route first rather than
+    /// merely sorting the base model (which could otherwise route to a paid fastest provider).
+    /// Account-level monthly free credits remain separate and are never described as unlimited.
     /// </summary>
     public sealed class HuggingFaceAdapter : IProviderAdapter
     {
@@ -28,7 +28,7 @@ namespace OMNIX.Core.AiGateway.Adapters
         private readonly HttpClient _catalogClient;
         private ProviderCredentials _creds;
         private HashSet<string> _visionModels;
-        private HashSet<string> _currentlyFreeModels;
+        private HashSet<string> _currentlyFreeRoutes;
 
         public HuggingFaceAdapter()
         {
@@ -43,7 +43,7 @@ namespace OMNIX.Core.AiGateway.Adapters
                 DefaultModel = "openai/gpt-oss-120b:fastest",
                 RequiresApiKey = true,
                 AccessProfile = ProviderAccessProfile.FreeCreditsAvailable,
-                AccessNotes = "Free accounts currently receive small monthly Inference Providers credits. Models/routes marked free in the live catalog are prioritized when available.",
+                AccessNotes = "Free accounts currently receive small monthly Inference Providers credits. Exact live routes marked free by the provider catalog are listed first when available.",
                 Notes = "OpenAI-compatible Hugging Face router across many inference providers. Availability, pricing and free promotions are discovered dynamically."
             };
         }
@@ -97,49 +97,59 @@ namespace OMNIX.Core.AiGateway.Adapters
 
                     string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                     var root = JObject.Parse(json);
-                    var all = new List<string>();
-                    var free = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var baseModels = new List<string>();
+                    var freeRoutes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     var vision = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                     foreach (var m in root["data"] ?? new JArray())
                     {
                         string id = (string)m["id"];
                         if (string.IsNullOrWhiteSpace(id)) continue;
-                        all.Add(id);
+                        baseModels.Add(id);
 
+                        bool visionCapable = false;
                         try
                         {
                             var modalities = m.SelectToken("architecture.input_modalities") as JArray;
-                            if (modalities != null && modalities.Any(x =>
-                                string.Equals((string)x, "image", StringComparison.OrdinalIgnoreCase)))
-                                vision.Add(id);
+                            visionCapable = modalities != null && modalities.Any(x =>
+                                string.Equals((string)x, "image", StringComparison.OrdinalIgnoreCase));
+                            if (visionCapable) vision.Add(id);
                         }
                         catch { }
 
                         try
                         {
                             var providers = m["providers"] as JArray;
-                            if (providers != null && providers.Any(p =>
-                                string.Equals((string)p["status"], "live", StringComparison.OrdinalIgnoreCase) &&
-                                (bool?)p["is_free"] == true))
-                                free.Add(id);
+                            if (providers == null) continue;
+                            foreach (var provider in providers)
+                            {
+                                if (!string.Equals((string)provider["status"], "live", StringComparison.OrdinalIgnoreCase) ||
+                                    (bool?)provider["is_free"] != true)
+                                    continue;
+
+                                string providerId = (string)provider["provider"];
+                                if (string.IsNullOrWhiteSpace(providerId)) continue;
+                                string route = id + ":" + providerId;
+                                freeRoutes.Add(route);
+                                if (visionCapable) vision.Add(route);
+                            }
                         }
                         catch { }
                     }
 
                     _visionModels = vision;
-                    _currentlyFreeModels = free;
+                    _currentlyFreeRoutes = freeRoutes;
 
-                    // Keep the user's configured/default route selectable even if the live catalog
-                    // temporarily omits that exact policy suffix (e.g. :fastest).
-                    if (!all.Any(x => string.Equals(x, Model, StringComparison.OrdinalIgnoreCase)))
-                        all.Add(Model);
+                    var ordered = new List<string>();
+                    ordered.AddRange(freeRoutes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+                    ordered.AddRange(baseModels.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
 
-                    return all
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .OrderByDescending(x => free.Contains(x))
-                        .ThenBy(x => x, StringComparer.OrdinalIgnoreCase)
-                        .ToList();
+                    // Keep the configured/default route selectable even if the live catalog
+                    // temporarily omits the exact policy suffix (for example :fastest).
+                    if (!ordered.Any(x => string.Equals(x, Model, StringComparison.OrdinalIgnoreCase)))
+                        ordered.Add(Model);
+
+                    return ordered.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 }
             }
             catch (HttpRequestException ex)
@@ -170,9 +180,7 @@ namespace OMNIX.Core.AiGateway.Adapters
 
         public bool IsCurrentModelCurrentlyFree()
         {
-            string baseId = StripRoutingSuffix(Model);
-            return _currentlyFreeModels != null &&
-                   (_currentlyFreeModels.Contains(Model) || _currentlyFreeModels.Contains(baseId));
+            return _currentlyFreeRoutes != null && _currentlyFreeRoutes.Contains(Model);
         }
 
         private static string StripRoutingSuffix(string model)
