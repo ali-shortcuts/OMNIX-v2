@@ -12,7 +12,7 @@ This document is a maintenance record, not a permanent pricing promise. Cloud pr
 | Groq | `groq` | Cloud | Yes | Free Plan currently published with model-specific limits | `openai/gpt-oss-120b` | Model-dependent | https://console.groq.com/docs/quickstart / https://console.groq.com/keys |
 | OpenRouter | `openrouter` | Cloud | Yes | `openrouter/free` + live `:free` variants | `openrouter/free` | Model-dependent; free router supports capability routing | https://openrouter.ai/docs / https://openrouter.ai/settings/keys |
 | Mistral AI | `mistral` | Cloud | Yes | Studio Free mode currently available with limited usage/rate limits | `mistral-small-latest` | Model-dependent | https://docs.mistral.ai/getting-started/quickstarts/developer/first-api-request / https://console.mistral.ai/ |
-| Cerebras | `cerebras` | Cloud | Yes | $0 Free tier currently documented with lower model-specific limits | `gpt-oss-120b` | Text-only in this OMNIX build | https://inference-docs.cerebras.ai/quickstart / https://cloud.cerebras.ai/ |
+| Cerebras | `cerebras` | Cloud | Yes | Free trial credits currently advertised; continued usage is account/plan dependent | `gpt-oss-120b` | Text-only in this OMNIX build | https://www.cerebras.ai/inference / https://cloud.cerebras.ai/ |
 | Custom OpenAI-compatible | `custom` | User endpoint | Optional | Defined entirely by endpoint owner | user configured | Probe-dependent | User configured; OMNIX does not invent a setup URL |
 
 ## Free-first behavior
@@ -21,7 +21,7 @@ This document is a maintenance record, not a permanent pricing promise. Cloud pr
 - `Local Only` privacy mode blocks cloud sends.
 - OpenRouter model discovery places `openrouter/free` first, then currently detected zero-price / `:free` model ids, then other models.
 - OMNIX does not automatically convert a provider failure into a paid request.
-- Cloud free-tier labels are informational. A `429` remains a quota/rate-limit error; a provider-policy failure remains a provider/privacy error.
+- Cloud free-tier/free-trial labels are informational. A `429` remains a quota/rate-limit error; a provider-policy failure remains a provider/privacy error.
 
 ## Secrets and privacy
 
@@ -41,5 +41,6 @@ Provider code compiling is not enough for release. Before OMNIX v3 is considered
 5. Vision request on a Vision-capable provider/model.
 6. Local-only request with the Internet disconnected and a local model running.
 7. OpenRouter `openrouter/free` request and at least one live `:free` model when available.
+8. Custom provider once without an API key (local/no-auth endpoint) and once with an API key (authenticated OpenAI-compatible endpoint).
 
 Do not mark an unexecuted provider test PASS.
