@@ -59,6 +59,11 @@ Require-Contains 'build/post-install-verify.ps1' 'Excel.Application' 'Installer 
 Require-Contains 'build/post-install-verify.ps1' 'Word.Application' 'Installer verification must cover Word.'
 Require-Contains 'build/post-install-verify.ps1' 'PowerPoint.Application' 'Installer verification must cover PowerPoint.'
 Require-PowerShellParses 'tools/real-office-acceptance.ps1'
+Require-PowerShellParses 'tools/real-office-ui-acceptance.ps1'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' 'OFFICE-UI-REAL-001' 'Release evidence must include a real Ribbon/workspace UI test.'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' 'RibbonTabFound' 'UI gate must verify the OMNIX Ribbon tab itself.'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' 'OpenWorkspaceInvoked' 'UI gate must actually invoke Open Workspace, not only discover registration.'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' 'WorkspaceEvidenceFound' 'UI gate must prove workspace UI appeared.'
 
 # 2) Installer must not erase shared Office recovery/security state.
 Require-NotContains 'installer/installer.iss' 'CleanResiliencyDisabledItems' 'Do not globally clear Office DisabledItems.'
@@ -123,6 +128,23 @@ Require-Contains 'src/OMNIX.Core/Settings/SettingsManager.cs' 'ProtectedData.Unp
 Require-Contains 'src/OMNIX.Core/Ui/Views/SettingsView.xaml.cs' 'AllowedOfficialHosts' 'Provider setup pages need a hard official-host allowlist.'
 Require-Contains 'src/OMNIX.Core/Ui/Views/SettingsView.xaml.cs' 'Uri.UriSchemeHttps' 'Provider setup links must require HTTPS.'
 Require-Contains 'src/OMNIX.Core/Ui/Views/SettingsView.xaml.cs' 'huggingface.co' 'Hugging Face setup/docs links must stay limited to official hosts.'
+
+# 8) Release must be evidence-driven and fail closed.
+Require-PowerShellParses 'tools/release-readiness.ps1'
+Require-Contains 'tools/release-readiness.ps1' 'OMNIX-RELEASE-READINESS-001' 'Final release needs a single sanitized readiness artifact.'
+Require-Contains 'tools/release-readiness.ps1' 'OFFICE-PERSISTENCE-REAL-001' 'Final release must consume real two-launch Office persistence evidence.'
+Require-Contains 'tools/release-readiness.ps1' 'OFFICE-UI-REAL-001' 'Final release must consume real Ribbon/workspace UI evidence.'
+Require-Contains 'tools/release-readiness.ps1' 'PROVIDERS-RUNTIME-001' 'Final release must consume real provider runtime evidence.'
+Require-Contains 'tools/release-readiness.ps1' 'Get-AuthenticodeSignature' 'Production readiness must inspect the actual installer signature.'
+Require-Contains 'tools/release-readiness.ps1' 'self-signed' 'Production release must reject a self-signed installer unless explicitly running a development-only gate.'
+Require-Contains 'tools/release-readiness.ps1' 'Get-FileHash -Algorithm SHA256' 'Release evidence must bind to the exact installer bytes.'
+Require-Contains 'tools/release-readiness.ps1' 'At least one local AI runtime' 'Offline/local AI must be proven before final release.'
+
+# 9) VSTO fallback builds must never turn unsigned manifests into a false PASS.
+Require-Contains 'build/build-with-fallbacks.ps1' 'Refusing to treat unsigned VSTO manifests as success' 'Fallback build must fail closed when Mage signing is unavailable.'
+Require-Contains 'build/build-with-fallbacks.ps1' '-AppManifest' 'Deployment manifest must be updated after re-signing the application manifest.'
+Require-Contains 'build/build-with-fallbacks.ps1' '-CertHash' 'Fallback signing must use the actual certificate/private key from the Windows certificate store.'
+Require-NotContains 'build/build-with-fallbacks.ps1' 'still installable via vstolocal' 'Do not claim unsigned manifests are a valid release fallback.'
 
 if ($failures.Count -gt 0) {
     Write-Host 'OMNIX CONTRACT GATE: FAIL' -ForegroundColor Red
