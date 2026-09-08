@@ -67,11 +67,16 @@ Require-NotContains 'installer/installer.iss' 'RegDeleteValue(HKCU, Key' 'Opaque
 Require-Contains 'installer/installer.iss' 'PreserveOfficeResiliencyState' 'Installer must preserve shared Office Resiliency state.'
 Require-NotContains 'installer/installer.iss' 'and False then' 'Do not silently disable the VSTO prerequisite path.'
 
-# 3) AI Gateway/privacy/local-first.
+# 3) AI Gateway/privacy/local-first/failover.
 Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'ProviderRouter' 'UI/provider routing must remain behind the AI Gateway.'
 Require-Contains 'src/OMNIX.Core/AiGateway/PrivacyGate.cs' 'PrivacyMode.LocalOnly' 'Local-only privacy mode must remain enforced.'
 Require-Contains 'src/OMNIX.Core/AiGateway/PrivacyGate.cs' 'ResolveAvailableLocal' 'PreferLocalWhenAvailable must be functional.'
 Require-Contains 'src/OMNIX.Core/Errors/OmnixErrors.cs' 'PRIVACY_BLOCKED' 'Privacy-policy failures need their own categorized error.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'FindBestFailoverCandidate' 'Repeated provider failures need a vetted failover suggestion path.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'privacyMode == PrivacyMode.LocalOnly' 'LocalOnly must never suggest a cloud failover.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'SettingsManager.Instance.HasApiKey' 'Cloud failover suggestions requiring credentials must exclude unconfigured providers.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'ProviderAccessProfile.FreeModelsAvailable' 'Failover ranking should prefer genuine free-model routes before paid/account-dependent cloud routes.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'This is a suggestion only' 'Failover must remain user-controlled; OMNIX must not silently move Office data between cloud providers.'
 
 # 4) Provider portfolio: local + researched free-capable cloud + custom.
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new GeminiAdapter()' 'Gemini must remain available.'
