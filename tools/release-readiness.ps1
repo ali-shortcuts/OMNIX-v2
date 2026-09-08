@@ -64,8 +64,8 @@ function Test-OfficePersistence($report) {
             $r = @($rows | Where-Object { [int]$_.Round -eq $round }) | Select-Object -First 1
             if ($null -eq $r) { $errors.Add("$name persistence round $round is missing."); continue }
             if (-not [bool]$r.Pass) { $errors.Add("$name persistence round $round failed.") }
-            if (-not [bool]$r.AddinFound) { $errors.Add("$name round $round: OMNIX add-in not found.") }
-            if (-not [bool]$r.FinalConnect) { $errors.Add("$name round $round: OMNIX Connect=False.") }
+            if (-not [bool]$r.AddinFound) { $errors.Add("$name round ${round}: OMNIX add-in not found.") }
+            if (-not [bool]$r.FinalConnect) { $errors.Add("$name round ${round}: OMNIX Connect=False.") }
         }
     }
     return $errors
@@ -83,10 +83,10 @@ function Test-OfficeUi($report) {
         $r = @($report.Results | Where-Object { $_.Host -eq $name -and $_.Installed }) | Select-Object -First 1
         if ($null -eq $r) { $errors.Add("$name UI evidence is missing or host was not installed."); continue }
         if (-not [bool]$r.Pass) { $errors.Add("$name UI acceptance failed.") }
-        if (-not [bool]$r.RibbonTabFound) { $errors.Add("$name: OMNIX Ribbon tab was not found.") }
-        if (-not [bool]$r.OpenWorkspaceButtonFound) { $errors.Add("$name: Open Workspace button was not found.") }
-        if (-not [bool]$r.OpenWorkspaceInvoked) { $errors.Add("$name: Open Workspace was not invoked.") }
-        if (-not [bool]$r.WorkspaceEvidenceFound) { $errors.Add("$name: workspace UI evidence was not found.") }
+        if (-not [bool]$r.RibbonTabFound) { $errors.Add("${name}: OMNIX Ribbon tab was not found.") }
+        if (-not [bool]$r.OpenWorkspaceButtonFound) { $errors.Add("${name}: Open Workspace button was not found.") }
+        if (-not [bool]$r.OpenWorkspaceInvoked) { $errors.Add("${name}: Open Workspace was not invoked.") }
+        if (-not [bool]$r.WorkspaceEvidenceFound) { $errors.Add("${name}: workspace UI evidence was not found.") }
     }
     return $errors
 }
