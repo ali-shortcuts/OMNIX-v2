@@ -40,7 +40,6 @@ namespace OMNIX.Core.AiGateway
                     "Switch to a local AI provider (Ollama / LM Studio) or change Privacy Mode in Settings.");
             }
 
-            // AskBeforeSending
             if (_sessionApproved) return;
 
             if (CloudConfirmationCallback == null)
@@ -77,8 +76,9 @@ namespace OMNIX.Core.AiGateway
     }
 
     /// <summary>
-    /// Provider router (spec Layer 5): priority = available Local AI &gt; selected cloud.
-    /// Local availability is probed in the background; results are shown in Settings.
+    /// Provider router: local-first when the user enabled PreferLocalWhenAvailable,
+    /// strict local routing in LocalOnly privacy mode, otherwise the explicitly selected provider.
+    /// Vision requests never auto-route to a local model that is known not to support images.
     /// </summary>
     public sealed class ProviderRouter
     {
@@ -115,32 +115,33 @@ namespace OMNIX.Core.AiGateway
         {
             var settings = SettingsManager.Instance.Settings;
 
-            // Local-only privacy forces local.
             if (settings.Privacy == PrivacyMode.LocalOnly)
             {
-                var local = _registry.GetFirstAvailableLocal();
-                if (local == null)
-                    throw new OmnixException(ErrorCode.PRIVACY_BLOCKED,
-                        Localization.Strings.T("S.Privacy.LocalOnlyBlocked").Replace("{0}", "selected cloud provider"),
-                        "PrivacyMode=LocalOnly and no local AI is reachable.",
-                        "Start Ollama or LM Studio, or switch Privacy Mode in Settings.");
-                if (needsVision && local.Info.Vision == VisionSupport.No)
+                var local = ResolveAvailableLocal(settings.PreferredLocalProviderId, needsVision);
+                if (local != null) return local;
+
+                if (needsVision && AnyLocalAvailable())
                 {
-                    // Fall through to vision error below by checking adapter at send time.
+                    throw new OmnixException(ErrorCode.MODEL_ERROR,
+                        "Privacy Mode is Local Only, but no available local model is currently Vision-capable.",
+                        "ProviderRouter.Resolve: local providers are reachable, needsVision=true, none reports vision support.",
+                        "Load a multimodal local model in Ollama/LM Studio, or use text-only context.");
                 }
-                return local;
+
+                throw new OmnixException(ErrorCode.PRIVACY_BLOCKED,
+                    Localization.Strings.T("S.Privacy.LocalOnlyBlocked").Replace("{0}", "selected cloud provider"),
+                    "PrivacyMode=LocalOnly and no compatible local AI is reachable.",
+                    "Start Ollama or LM Studio, or switch Privacy Mode in Settings.");
             }
 
-            // Prefer local when available (Phase 9.3) — unless the user's selected provider IS local.
             if (settings.PreferLocalWhenAvailable)
             {
-                var local = _registry.GetFirstAvailableLocal();
-                if (local != null &&
-                    !string.Equals(selectedProviderId, local.Info.Id, StringComparison.OrdinalIgnoreCase) &&
-                    string.IsNullOrEmpty(settings.SelectedProviderId) == false)
+                var local = ResolveAvailableLocal(settings.PreferredLocalProviderId, needsVision);
+                if (local != null)
                 {
-                    // Only auto-prefer local when the selection is unset or the same family;
-                    // an explicit user selection wins (documented behavior).
+                    Logger.Gateway("ProviderRouter: using available local provider '" + local.Info.Id +
+                                   "' because PreferLocalWhenAvailable=true (needsVision=" + needsVision + ").");
+                    return local;
                 }
             }
 
@@ -150,6 +151,44 @@ namespace OMNIX.Core.AiGateway
                     "Provider '" + selectedProviderId + "' is not registered.",
                     "ProviderRouter.Resolve", "Pick a provider in Settings.");
             return chosen;
+        }
+
+        private IProviderAdapter ResolveAvailableLocal(string preferredId, bool needsVision)
+        {
+            IProviderAdapter preferred = _registry.Get(preferredId);
+            if (IsCompatibleAvailableLocal(preferred, needsVision)) return preferred;
+
+            foreach (var candidate in _registry.All.Where(x => x.Info.Kind == ProviderKind.Local))
+            {
+                if (preferred != null && string.Equals(candidate.Info.Id, preferred.Info.Id, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (IsCompatibleAvailableLocal(candidate, needsVision)) return candidate;
+            }
+            return null;
+        }
+
+        private bool IsCompatibleAvailableLocal(IProviderAdapter provider, bool needsVision)
+        {
+            if (provider == null || provider.Info.Kind != ProviderKind.Local) return false;
+            if (!_registry.IsLocalAvailable(provider.Info.Id)) return false;
+            if (!needsVision) return true;
+
+            try
+            {
+                provider.Configure(BuildCredentials(provider.Info.Id));
+                return provider.SupportsVisionNow();
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool AnyLocalAvailable()
+        {
+            foreach (var p in _registry.All.Where(x => x.Info.Kind == ProviderKind.Local))
+                if (_registry.IsLocalAvailable(p.Info.Id)) return true;
+            return false;
         }
 
         public ProviderCredentials BuildCredentials(string providerId)
@@ -177,6 +216,7 @@ namespace OMNIX.Core.AiGateway
                     break;
                 case "lmstudio":
                     creds.BaseUrl = "http://localhost:1234/v1";
+                    if (string.IsNullOrEmpty(creds.Model)) creds.Model = _registry.GetLocalModelHint("lmstudio");
                     break;
                 case "custom":
                     var cp = settings.CustomProvider;
