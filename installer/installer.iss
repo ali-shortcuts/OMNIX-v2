@@ -453,9 +453,9 @@ begin
   begin
     AllOk := not PrerequisiteFailed;
 
-    ; Development certificate trust is allowed only after files have been copied and only when
-    ; the bundled public certificate is actually self-signed. A CA-signed production publisher
-    ; certificate relies on the normal Windows chain and is never inserted into CurrentUser Root.
+    // Development certificate trust is allowed only after files have been copied and only when
+    // the bundled public certificate is actually self-signed. A CA-signed production publisher
+    // certificate relies on the normal Windows chain and is never inserted into CurrentUser Root.
     CertPath := ExpandConstant('{app}') + '\OMNIX.cer';
     CertClassifier := ExpandConstant('{app}') + '\classify-dev-cert.ps1';
     CertMarker := ExpandConstant('{app}') + '\dev-cert-thumbprint.txt';
@@ -570,8 +570,8 @@ begin
     PreserveOfficeResiliencyState();
     InstallLog('=== OMNIX uninstall: OMNIX-owned registration removed; Office Resiliency preserved ===');
 
-    ; Remove only the exact self-signed development certificate thumbprint recorded by this
-    ; installer. Production/CA certificates are never root-imported by OMNIX and are never removed.
+    // Remove only the exact self-signed development certificate thumbprint recorded by this
+    // installer. Production/CA certificates are never root-imported by OMNIX and are never removed.
     CertMarker := ExpandConstant('{app}') + '\dev-cert-thumbprint.txt';
     DevThumbprint := '';
     if FileExists(CertMarker) and LoadStringFromFile(CertMarker, DevThumbprint) then
