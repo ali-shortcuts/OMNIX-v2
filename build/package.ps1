@@ -1,12 +1,9 @@
 # ============================================================================
 # package.ps1 — stages the VSTO build outputs of all three hosts into
 # installer/payload/ so Inno Setup can compile the single-exe installer.
-# Layout (spec: ONE folder the installer copies):
-#   installer/payload/OMNIX.Excel.vsto + OMNIX.Excel.dll + OMNIX.Excel.dll.manifest
-#   installer/payload/OMNIX.Word.vsto   + ...
-#   installer/payload/OMNIX.PowerPoint.vsto + ...
-#   installer/payload/OMNIX.Core.dll, Newtonsoft.Json.dll, shared manifests
-#   installer/payload/OMNIX.cer (signing cert for TrustedPublisher import)
+#
+# Security rule: only the PUBLIC OMNIX.cer may be staged. A private signing key
+# (PFX) must never enter installer/payload or the release artifact.
 # ============================================================================
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -32,18 +29,36 @@ foreach ($h in $hosts) {
     }
 }
 
+# Reject accidental private-key leakage before packaging.
+$pfxFiles = @(Get-ChildItem (Join-Path $root "build\cert") -Filter "*.pfx" -File -ErrorAction SilentlyContinue)
+if ($pfxFiles.Count -gt 0) {
+    throw "Private signing key file(s) were found under build/cert. OMNIX packaging is fail-closed: remove PFX files and keep the private key in the Windows certificate store."
+}
+
 $cert = Join-Path $root "build\cert\OMNIX.cer"
 if (Test-Path $cert) {
     Copy-Item $cert -Destination $payload -Force
-    Write-Host "OMNIX.cer staged (signed install)."
+    Write-Host "OMNIX.cer staged (public certificate only)."
 } else {
-    Write-Warning "No OMNIX.cer found — the installer will run WITHOUT manifest trust import (dev build)."
+    Write-Warning "No OMNIX.cer found — the installer will run without the development certificate trust helper."
 }
 
 $verifyScript = Join-Path $root "build\post-install-verify.ps1"
 if (Test-Path $verifyScript) {
     Copy-Item $verifyScript -Destination $payload -Force
     Write-Host "post-install-verify.ps1 staged (automatic post-install COM verification)."
+}
+
+$certClassifier = Join-Path $root "build\classify-dev-cert.ps1"
+if (Test-Path $certClassifier) {
+    Copy-Item $certClassifier -Destination $payload -Force
+    Write-Host "classify-dev-cert.ps1 staged (self-signed dev-cert detection; production certs are never root-imported)."
+}
+
+# Defensive payload check: no PFX/private-key files may be embedded in setup.
+$payloadPrivateKeys = @(Get-ChildItem $payload -Recurse -Filter "*.pfx" -File -ErrorAction SilentlyContinue)
+if ($payloadPrivateKeys.Count -gt 0) {
+    throw "Private key detected in installer payload. Packaging aborted."
 }
 
 # Friendly post-install note shown by the installer ([Run] shellexec).
@@ -63,6 +78,5 @@ cloud provider, OMNIX asks you once. "Local Only" keeps data on this PC.
 Logs: %LOCALAPPDATA%\OMNIX\logs\
 '@ | Set-Content -Path $readmeFirst -Encoding UTF8
 
-Write-Host "Staged $copied files into $payload"
-
+Write-Host "Staged $copied Office/VSTO files into $payload"
 Get-ChildItem $payload | ForEach-Object { Write-Host ("  " + $_.Name) }
