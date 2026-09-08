@@ -14,16 +14,14 @@ namespace OMNIX.Core.Ui
 {
     /// <summary>
     /// Settings page: provider dropdown, DPAPI-protected API key, dynamic models,
-    /// categorized connection diagnostics, official provider setup links, local AI probing,
-    /// Privacy Mode, appearance and history limits.
+    /// categorized diagnostics, verified official provider setup links, explicit free-tier
+    /// information, local AI probing, Privacy Mode, appearance and history limits.
     /// </summary>
     public partial class SettingsView : UserControl
     {
         private WorkspaceController _controller;
         private bool _loading;
 
-        // Provider pages are product metadata, but still enforce a hard HTTPS host allowlist
-        // before shell-opening anything. Custom provider BaseUrl is never opened by this code.
         private static readonly string[] AllowedOfficialHosts =
         {
             "ai.google.dev",
@@ -31,6 +29,14 @@ namespace OMNIX.Core.Ui
             "groq.com",
             "console.groq.com",
             "openrouter.ai",
+            "mistral.ai",
+            "www.mistral.ai",
+            "docs.mistral.ai",
+            "console.mistral.ai",
+            "cerebras.ai",
+            "www.cerebras.ai",
+            "inference-docs.cerebras.ai",
+            "cloud.cerebras.ai",
             "ollama.com",
             "docs.ollama.com",
             "lmstudio.ai"
@@ -65,16 +71,14 @@ namespace OMNIX.Core.Ui
                 {
                     ProviderCombo.SelectedItem = selected.Info;
                     UpdateProviderUi(selected.Info);
+                    TestResultText.Text = BuildProviderSummary(selected.Info);
                 }
 
                 string model;
                 ModelCombo.Text = settings.Models != null && settings.Models.TryGetValue(settings.SelectedProviderId ?? "", out model) ? model : "";
 
                 ApiKeyBox.Clear();
-                if (selected == null)
-                {
-                    KeyStateText.Visibility = Visibility.Collapsed;
-                }
+                if (selected == null) KeyStateText.Visibility = Visibility.Collapsed;
 
                 var cp = settings.CustomProvider;
                 CustomNameBox.Text = cp != null ? cp.Name : "";
@@ -143,7 +147,34 @@ namespace OMNIX.Core.Ui
             ProviderLinkNote.Visibility = hasOfficialLink ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        // ------------------------------------------------------------- handlers
+        private static string BuildProviderSummary(ProviderInfo info)
+        {
+            if (info == null) return string.Empty;
+            string access;
+            switch (info.AccessProfile)
+            {
+                case ProviderAccessProfile.LocalNoCost:
+                    access = "Access: Local / no cloud token charge.";
+                    break;
+                case ProviderAccessProfile.FreeTierAvailable:
+                    access = "Access: Free tier/mode currently available; provider limits apply.";
+                    break;
+                case ProviderAccessProfile.FreeModelsAvailable:
+                    access = "Access: Free models currently available; provider capacity/limits can change.";
+                    break;
+                case ProviderAccessProfile.CustomEndpoint:
+                    access = "Access: Defined by your custom endpoint.";
+                    break;
+                default:
+                    access = "Access: Depends on provider/account.";
+                    break;
+            }
+
+            string text = access;
+            if (!string.IsNullOrWhiteSpace(info.AccessNotes)) text += "\n" + info.AccessNotes;
+            if (!string.IsNullOrWhiteSpace(info.Notes)) text += "\n" + info.Notes;
+            return text;
+        }
 
         private void OnProviderChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -158,7 +189,8 @@ namespace OMNIX.Core.Ui
 
             ApiKeyBox.Clear();
             UpdateProviderUi(info);
-            TestResultText.Text = info.Notes ?? string.Empty;
+            TestResultText.SetResourceReference(TextBlock.ForegroundProperty, "B.ForegroundDim");
+            TestResultText.Text = BuildProviderSummary(info);
         }
 
         private void OnGetApiKey(object sender, RoutedEventArgs e)
@@ -228,9 +260,13 @@ namespace OMNIX.Core.Ui
                         return;
                     }
                     string current = ModelCombo.Text;
-                    ModelCombo.ItemsSource = models.Take(200).ToList();
+                    ModelCombo.ItemsSource = models.Take(300).ToList();
                     if (!string.IsNullOrEmpty(current) && models.Contains(current)) ModelCombo.Text = current;
+
                     TestResultText.Text = models.Count + " models loaded.";
+                    if (info.AccessProfile == ProviderAccessProfile.FreeModelsAvailable)
+                        TestResultText.Text += " Free options are prioritized at the top of the list.";
+                    TestResultText.Text += "\n" + BuildProviderSummary(info);
                 }
             }
             catch (OmnixException ex)
@@ -261,8 +297,6 @@ namespace OMNIX.Core.Ui
                 adapter.Configure(gateway.Router.BuildCredentials(info.Id));
                 using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
                 {
-                    // Use the throwing model-list probe here rather than adapters' bool-only
-                    // TestConnectionAsync wrappers, so AUTH/NETWORK/PROVIDER errors stay visible.
                     var models = await adapter.ListModelsAsync(cts.Token);
                     bool ok = models != null && models.Count > 0;
                     TestResultText.Text = ok ? Localization.Strings.T("S.Settings.TestOk")
@@ -276,6 +310,8 @@ namespace OMNIX.Core.Ui
                         TestResultText.Text += "\n" + Localization.Strings.T("S.Settings.VisionUnknown");
                     else if (ok)
                         TestResultText.Text += "\n" + Localization.Strings.T("S.Settings.VisionNotSupported");
+
+                    if (ok) TestResultText.Text += "\n" + BuildProviderSummary(info);
                 }
             }
             catch (OmnixException ex)
@@ -306,11 +342,7 @@ namespace OMNIX.Core.Ui
             if (gateway == null) return;
             ProbeButton.IsEnabled = false;
             LocalStatusText.Text = "Probing local AI…";
-            try
-            {
-                await gateway.ProbeLocalAsync();
-            }
-            catch { }
+            try { await gateway.ProbeLocalAsync(); } catch { }
             UpdateLocalStatusText();
             ProbeButton.IsEnabled = true;
         }
@@ -339,7 +371,6 @@ namespace OMNIX.Core.Ui
             SaveGeneralFields();
             SettingsManager.Instance.Save();
             if (_controller != null) _controller.SaveSettingsFromUi();
-
             var info = ProviderCombo.SelectedItem as ProviderInfo;
             if (info != null) UpdateProviderUi(info);
         }
