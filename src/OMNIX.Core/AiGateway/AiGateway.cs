@@ -18,7 +18,7 @@ namespace OMNIX.Core.AiGateway
 {
     /// <summary>
     /// Layer 5 — AI Gateway: the single entry point between UI and providers.
-    /// Responsibilities: privacy enforcement, provider routing, retry/failover,
+    /// Responsibilities: privacy enforcement, provider routing, retry/failover suggestions,
     /// whitelisted Office tool loop, Vision attachment routing and untrusted-data wrapping.
     /// The UI never talks to a provider directly.
     /// </summary>
@@ -41,6 +41,11 @@ namespace OMNIX.Core.AiGateway
         public ProviderRouter Router { get { return _router; } }
         public PrivacyGate Privacy { get { return _privacy; } }
 
+        /// <summary>
+        /// Raised after repeated provider failures when OMNIX can identify a genuinely usable
+        /// alternative. This is a suggestion only: OMNIX never silently moves Office data from
+        /// one cloud provider to another. The UI/user remains in control of the switch.
+        /// </summary>
         public event Action<IProviderAdapter> SuggestFailover;
 
         public Task ProbeLocalAsync()
@@ -97,8 +102,15 @@ namespace OMNIX.Core.AiGateway
                     if (_failover.ShouldSuggestFailover)
                     {
                         var handler = SuggestFailover;
-                        var next = NextCandidate(provider);
-                        if (handler != null && next != null) handler(next);
+                        var next = FindBestFailoverCandidate(provider, req.HasImages);
+                        if (handler != null && next != null)
+                        {
+                            Logger.Gateway("Failover suggestion: current=" + provider.Info.Id +
+                                           " candidate=" + next.Info.Id +
+                                           " privacy=" + SettingsManager.Instance.Settings.Privacy +
+                                           " needsVision=" + req.HasImages);
+                            handler(next);
+                        }
                     }
                     throw;
                 }
@@ -164,15 +176,96 @@ namespace OMNIX.Core.AiGateway
             return final;
         }
 
-        private IProviderAdapter NextCandidate(IProviderAdapter current)
+        /// <summary>
+        /// Chooses a failover SUGGESTION, not an automatic destination. Priority is:
+        /// compatible local AI first, then configured cloud providers whose current access profile
+        /// includes a free tier/model/credit allowance, then other configured cloud providers.
+        /// LocalOnly privacy mode never suggests a cloud provider. Providers that require an API
+        /// key are excluded when no key is stored. Vision-incompatible candidates are excluded.
+        /// </summary>
+        private IProviderAdapter FindBestFailoverCandidate(IProviderAdapter current, bool needsVision)
         {
-            var local = _registry.GetFirstAvailableLocal();
-            if (local != null && !string.Equals(local.Info.Id, current.Info.Id, StringComparison.OrdinalIgnoreCase))
-                return local;
+            var settings = SettingsManager.Instance.Settings;
+            var candidates = new List<IProviderAdapter>();
 
-            return _registry.All.FirstOrDefault(p =>
-                p.Info.Kind == ProviderKind.Cloud &&
-                !string.Equals(p.Info.Id, current.Info.Id, StringComparison.OrdinalIgnoreCase));
+            foreach (var provider in _registry.All)
+            {
+                if (provider == null || provider.Info == null) continue;
+                if (current != null && string.Equals(provider.Info.Id, current.Info.Id, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!IsFailoverCandidateUsable(provider, needsVision, settings.Privacy))
+                    continue;
+                candidates.Add(provider);
+            }
+
+            return candidates
+                .OrderBy(p => FailoverRank(p.Info))
+                .ThenBy(p => p.Info.DisplayName ?? p.Info.Id, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+        }
+
+        private bool IsFailoverCandidateUsable(IProviderAdapter provider, bool needsVision, PrivacyMode privacyMode)
+        {
+            if (provider.Info.Kind == ProviderKind.Local)
+            {
+                // Fixed local runtimes participate only after a successful availability probe.
+                if (string.Equals(provider.Info.Id, "ollama", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(provider.Info.Id, "lmstudio", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!_registry.IsLocalAvailable(provider.Info.Id)) return false;
+                }
+            }
+            else
+            {
+                if (privacyMode == PrivacyMode.LocalOnly) return false;
+
+                // Cloud adapters that declare a required key are not useful suggestions until the
+                // user has configured that key. Custom is special: its key is optional, but the
+                // endpoint itself must be configured.
+                if (string.Equals(provider.Info.Id, "custom", StringComparison.OrdinalIgnoreCase))
+                {
+                    var cp = SettingsManager.Instance.Settings.CustomProvider;
+                    if (cp == null || string.IsNullOrWhiteSpace(cp.BaseUrl)) return false;
+                }
+                else if (provider.Info.RequiresApiKey && !SettingsManager.Instance.HasApiKey(provider.Info.Id))
+                {
+                    return false;
+                }
+            }
+
+            try
+            {
+                provider.Configure(_router.BuildCredentials(provider.Info.Id));
+                if (needsVision && !provider.SupportsVisionNow()) return false;
+            }
+            catch
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static int FailoverRank(ProviderInfo info)
+        {
+            if (info == null) return 99;
+            if (info.Kind == ProviderKind.Local) return 0;
+
+            switch (info.AccessProfile)
+            {
+                case ProviderAccessProfile.FreeModelsAvailable:
+                    return 1;
+                case ProviderAccessProfile.FreeTierAvailable:
+                    return 2;
+                case ProviderAccessProfile.FreeCreditsAvailable:
+                    return 3;
+                case ProviderAccessProfile.AccountDependent:
+                    return 5;
+                case ProviderAccessProfile.CustomEndpoint:
+                    return 6;
+                default:
+                    return 7;
+            }
         }
 
         public static string BuildSystemPrompt(IHostAdapter hostAdapter, OfficeContext context)
