@@ -71,6 +71,12 @@ namespace OMNIX.Core.Errors
             return new OmnixException(ErrorCode.PROVIDER_ERROR, Strings.T("Err.Provider"),
                 details, Strings.T("Err.ProviderFix"));
         }
+
+        public static OmnixException PrivacyBlocked(string details)
+        {
+            return new OmnixException(ErrorCode.PRIVACY_BLOCKED, Strings.T("Err.ProviderPrivacy"),
+                details, Strings.T("Err.ProviderPrivacyFix"));
+        }
     }
 
     /// <summary>
