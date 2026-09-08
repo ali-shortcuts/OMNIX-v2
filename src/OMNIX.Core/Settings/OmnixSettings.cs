@@ -29,7 +29,7 @@ namespace OMNIX.Core.Settings
 
     /// <summary>
     /// POCO settings. API keys are NEVER stored here in plain text — SettingsManager keeps them
-    /// DPAPI-protected in a separate dictionary (Ironclad Rule 6).
+    /// DPAPI-protected in a separate dictionary.
     /// </summary>
     public sealed class OmnixSettings
     {
@@ -38,33 +38,21 @@ namespace OMNIX.Core.Settings
         public PrivacyMode Privacy { get; set; }
         public ThemeMode Theme { get; set; }
         public string UiLanguage { get; set; }
-
-        /// <summary>Id of the provider the user selected in Settings.</summary>
         public string SelectedProviderId { get; set; }
-
-        /// <summary>Preferred local provider when Local AI is available (ollama / lmstudio).</summary>
         public string PreferredLocalProviderId { get; set; }
-
-        /// <summary>Model per provider id (model names are NOT secrets).</summary>
         public Dictionary<string, string> Models { get; set; }
-
         public CustomProviderConfig CustomProvider { get; set; }
-
-        /// <summary>Chat history cap (Layer 8): never grow unbounded.</summary>
         public int HistoryMaxMessages { get; set; }
         public int HistoryMaxAgeDays { get; set; }
-
-        /// <summary>Context Limiter caps (Layer 4).</summary>
         public int ContextMaxCells { get; set; }
         public int ContextMaxChars { get; set; }
         public int ContextMaxTokens { get; set; }
-
         public bool PreferLocalWhenAvailable { get; set; }
 
         public static OmnixSettings CreateDefaults()
         {
             var s = new OmnixSettings();
-            s.SchemaVersion = 2;
+            s.SchemaVersion = 3;
             s.Privacy = PrivacyMode.AskBeforeSending;
             s.Theme = ThemeMode.System;
             s.UiLanguage = "en";
@@ -72,9 +60,11 @@ namespace OMNIX.Core.Settings
             s.PreferredLocalProviderId = "ollama";
             s.Models = new Dictionary<string, string>
             {
-                { "gemini", "gemini-3.6-flash" },
+                { "gemini", "gemini-3.8-flash" },
                 { "groq", "openai/gpt-oss-120b" },
-                { "openrouter", "openrouter/auto" },
+                { "openrouter", "openrouter/free" },
+                { "mistral", "mistral-small-latest" },
+                { "cerebras", "gpt-oss-120b" },
                 { "ollama", "" },
                 { "lmstudio", "" },
                 { "custom", "gpt-4o-mini" }
