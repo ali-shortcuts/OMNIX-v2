@@ -10,7 +10,7 @@ namespace OMNIX.PowerPoint
 {
     /// <summary>
     /// Per-window task pane management for PowerPoint. Every presentation window gets
-    /// its own pane/chat/context, docked right at a compact default width.
+    /// its own pane/chat/context/provider state, docked right at a compact default width.
     /// </summary>
     public sealed class PowerPointTaskPaneService
     {
@@ -91,7 +91,7 @@ namespace OMNIX.PowerPoint
             object window = _addIn.Application.ActiveWindow;
             if (window == null) return null;
 
-            var controller = new WorkspaceController(_adapter, ThisAddIn.SharedGateway, ThisAddIn.SharedHistory);
+            var controller = new WorkspaceController(_adapter, ThisAddIn.SharedHistory);
             _controllers[key] = controller;
 
             var hostControl = new TaskPaneHostControl(controller.View);
