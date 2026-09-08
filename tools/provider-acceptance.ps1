@@ -11,6 +11,7 @@
 #   OMNIX_GROQ_API_KEY
 #   OMNIX_OPENROUTER_API_KEY
 #   OMNIX_MISTRAL_API_KEY
+#   OMNIX_HUGGINGFACE_API_KEY
 #   OMNIX_CEREBRAS_API_KEY
 #   OMNIX_CUSTOM_API_KEY              (optional)
 #   OMNIX_CUSTOM_BASE_URL             (optional)
@@ -247,6 +248,7 @@ $results.Add((Test-GeminiProvider))
 $results.Add((Test-OpenAiProvider -Name 'Groq' -BaseUrl 'https://api.groq.com/openai/v1' -Model 'openai/gpt-oss-120b' -ApiKey (Get-EnvSecret 'OMNIX_GROQ_API_KEY') -RequiresKey $true))
 $results.Add((Test-OpenAiProvider -Name 'OpenRouter' -BaseUrl 'https://openrouter.ai/api/v1' -Model 'openrouter/free' -ApiKey (Get-EnvSecret 'OMNIX_OPENROUTER_API_KEY') -RequiresKey $true -ExtraHeaders @{ 'X-Title' = 'OMNIX Provider Acceptance' }))
 $results.Add((Test-OpenAiProvider -Name 'Mistral AI' -BaseUrl 'https://api.mistral.ai/v1' -Model 'mistral-small-latest' -ApiKey (Get-EnvSecret 'OMNIX_MISTRAL_API_KEY') -RequiresKey $true))
+$results.Add((Test-OpenAiProvider -Name 'Hugging Face' -BaseUrl 'https://router.huggingface.co/v1' -Model 'openai/gpt-oss-120b:fastest' -ApiKey (Get-EnvSecret 'OMNIX_HUGGINGFACE_API_KEY') -RequiresKey $true))
 $results.Add((Test-OpenAiProvider -Name 'Cerebras' -BaseUrl 'https://api.cerebras.ai/v1' -Model 'gpt-oss-120b' -ApiKey (Get-EnvSecret 'OMNIX_CEREBRAS_API_KEY') -RequiresKey $true))
 
 $customBase = [Environment]::GetEnvironmentVariable('OMNIX_CUSTOM_BASE_URL', 'Process')
