@@ -146,8 +146,7 @@ namespace OMNIX.Core.Settings
                 changed = true;
             }
 
-            // v2 -> v3: add free-tier providers and move only OMNIX-owned previous defaults.
-            // A user-entered/custom model id is never replaced here.
+            // v2 -> v3: add researched cloud providers and update OMNIX-owned old defaults only.
             if (Settings.SchemaVersion < 3)
             {
                 string model;
@@ -169,12 +168,30 @@ namespace OMNIX.Core.Settings
                 changed = true;
             }
 
+            // v3 -> v4: add Hugging Face Inference Providers. Existing users keep every prior
+            // provider/model/API-key choice; this migration only introduces the new model slot.
+            if (Settings.SchemaVersion < 4)
+            {
+                if (!Settings.Models.ContainsKey("huggingface") ||
+                    string.IsNullOrWhiteSpace(Settings.Models["huggingface"]))
+                    Settings.Models["huggingface"] = "openai/gpt-oss-120b:fastest";
+
+                EnsureCommonDefaults();
+                Settings.SchemaVersion = 4;
+                changed = true;
+            }
+
             return changed;
         }
 
         private void EnsureCommonDefaults()
         {
+            if (!Settings.Models.ContainsKey("gemini")) Settings.Models["gemini"] = "gemini-3.8-flash";
             if (!Settings.Models.ContainsKey("groq")) Settings.Models["groq"] = "openai/gpt-oss-120b";
+            if (!Settings.Models.ContainsKey("openrouter")) Settings.Models["openrouter"] = "openrouter/free";
+            if (!Settings.Models.ContainsKey("mistral")) Settings.Models["mistral"] = "mistral-small-latest";
+            if (!Settings.Models.ContainsKey("huggingface")) Settings.Models["huggingface"] = "openai/gpt-oss-120b:fastest";
+            if (!Settings.Models.ContainsKey("cerebras")) Settings.Models["cerebras"] = "gpt-oss-120b";
             if (!Settings.Models.ContainsKey("ollama")) Settings.Models["ollama"] = "";
             if (!Settings.Models.ContainsKey("lmstudio")) Settings.Models["lmstudio"] = "";
             if (!Settings.Models.ContainsKey("custom")) Settings.Models["custom"] = "gpt-4o-mini";
