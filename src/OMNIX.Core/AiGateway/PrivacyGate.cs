@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,19 +11,15 @@ namespace OMNIX.Core.AiGateway
     /// <summary>
     /// Layer 7.5 — Privacy Mode enforced IN THE GATEWAY (not in the UI): before every cloud
     /// provider call the gateway checks the setting. LocalOnly + Cloud => request refused with a
-    /// clear message. AskBeforeSending => explicit user confirmation via callback
-    /// (with "don't ask again this session"). Default on first install: AskBeforeSending.
+    /// clear message. AskBeforeSending => explicit user confirmation via callback.
     /// </summary>
     public sealed class PrivacyGate
     {
-        /// <summary>UI supplies this: (providerDisplayName) => Task&lt;(allowed, rememberSession)&gt;.</summary>
         public Func<string, Task<Tuple<bool, bool>>> CloudConfirmationCallback { get; set; }
-
         private volatile bool _sessionApproved;
 
         public void ResetSession() { _sessionApproved = false; }
 
-        /// <summary>Throws PRIVACY_BLOCKED if the request may not proceed. Local providers always pass.</summary>
         public async Task EnsureAllowedAsync(IProviderAdapter provider)
         {
             if (provider == null || provider.Info.Kind == ProviderKind.Local) return;
@@ -63,7 +58,6 @@ namespace OMNIX.Core.AiGateway
             Logger.Gateway("PrivacyGate: cloud send approved (rememberSession=" + remember + ")");
         }
 
-        /// <summary>Synchronous variant used by tests/diagnostics only.</summary>
         public void EnsureAllowedForLocal(IProviderAdapter provider)
         {
             if (provider == null || provider.Info.Kind == ProviderKind.Local) return;
@@ -76,9 +70,9 @@ namespace OMNIX.Core.AiGateway
     }
 
     /// <summary>
-    /// Provider router: local-first when the user enabled PreferLocalWhenAvailable,
-    /// strict local routing in LocalOnly privacy mode, otherwise the explicitly selected provider.
-    /// Vision requests never auto-route to a local model that is known not to support images.
+    /// Provider router: local-first when requested, strict local routing in LocalOnly privacy
+    /// mode, otherwise the explicitly selected provider. Vision requests never auto-route to a
+    /// local model that is known not to support images.
     /// </summary>
     public sealed class ProviderRouter
     {
@@ -89,7 +83,6 @@ namespace OMNIX.Core.AiGateway
             _registry = registry;
         }
 
-        /// <summary>Probes local providers (Ollama 11434 / LM Studio 1234) with a short timeout.</summary>
         public async Task ProbeLocalProvidersAsync()
         {
             foreach (var p in _registry.All.Where(x => x.Info.Kind == ProviderKind.Local))
@@ -209,6 +202,12 @@ namespace OMNIX.Core.AiGateway
                     break;
                 case "openrouter":
                     creds.ApiKey = SettingsManager.Instance.GetApiKey("openrouter");
+                    break;
+                case "mistral":
+                    creds.ApiKey = SettingsManager.Instance.GetApiKey("mistral");
+                    break;
+                case "cerebras":
+                    creds.ApiKey = SettingsManager.Instance.GetApiKey("cerebras");
                     break;
                 case "ollama":
                     creds.BaseUrl = "http://localhost:11434";
