@@ -64,6 +64,18 @@ namespace OMNIX.Core.AiGateway
             string trimmed = body ?? "";
             if (trimmed.Length > 800) trimmed = trimmed.Substring(0, 800);
 
+            // OpenRouter may return a normal HTTP error when the account's privacy/data-policy
+            // restrictions disallow every available endpoint for the selected model. This is not
+            // an Internet failure, not a bad API key, and not necessarily a missing model.
+            if (string.Equals(providerName, "OpenRouter", StringComparison.OrdinalIgnoreCase) &&
+                (trimmed.IndexOf("No endpoints available matching your guardrail restrictions and data policy", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 trimmed.IndexOf("openrouter.ai/settings/privacy", StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                return OmnixException.PrivacyBlocked(
+                    "OpenRouter could not route this request under the account's current guardrail/privacy data policy. HTTP " +
+                    statusCode + ". Body: " + trimmed);
+            }
+
             switch (statusCode)
             {
                 case 401:
