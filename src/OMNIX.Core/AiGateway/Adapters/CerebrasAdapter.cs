@@ -8,9 +8,9 @@ using OMNIX.Core.Storage;
 namespace OMNIX.Core.AiGateway.Adapters
 {
     /// <summary>
-    /// Cerebras Inference cloud adapter. The public API is OpenAI-compatible and the provider
-    /// currently documents a Free tier with model-specific rate limits. OMNIX treats it as
-    /// text-only until a selected model is explicitly verified for image input.
+    /// Cerebras Inference cloud adapter. The public API is OpenAI-compatible. Current official
+    /// pricing advertises a free trial/credits for new accounts rather than an unlimited permanent
+    /// free API tier, so OMNIX labels this provider conservatively and never promises free usage.
     /// </summary>
     public sealed class CerebrasAdapter : IProviderAdapter
     {
@@ -23,13 +23,13 @@ namespace OMNIX.Core.AiGateway.Adapters
             Info = new ProviderInfo
             {
                 Id = "cerebras",
-                DisplayName = "Cerebras — Free tier available",
+                DisplayName = "Cerebras — free trial available",
                 Kind = ProviderKind.Cloud,
                 Vision = VisionSupport.No,
                 DefaultModel = "gpt-oss-120b",
                 RequiresApiKey = true,
-                AccessProfile = ProviderAccessProfile.FreeTierAvailable,
-                AccessNotes = "Cerebras currently documents a $0 Free tier with lower model-specific rate limits. Limits can change and are account-specific.",
+                AccessProfile = ProviderAccessProfile.AccountDependent,
+                AccessNotes = "Cerebras currently advertises free trial credits for new accounts; continued API usage and limits depend on the account/plan.",
                 Notes = "Very fast OpenAI-compatible inference. Current OMNIX integration is text-only."
             };
         }
