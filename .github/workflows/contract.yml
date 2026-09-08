@@ -1,0 +1,23 @@
+name: architecture-contract
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: OMNIX anti-drift contract
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enforce OMNIX architecture and safety contract
+        shell: pwsh
+        run: ./build/contract-gates.ps1
