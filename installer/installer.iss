@@ -194,7 +194,7 @@ var
 begin
   Result := False;
 
-  ; First prefer explicit host/version registry evidence.
+  // First prefer explicit host/version registry evidence.
   if RegKeyExists(HKCU, 'Software\Microsoft\Office\' + Version + '\' + Host) or
      RegKeyExists(HKLM64, 'SOFTWARE\Microsoft\Office\' + Version + '\' + Host) or
      RegKeyExists(HKLM32, 'SOFTWARE\Microsoft\Office\' + Version + '\' + Host) then
@@ -203,7 +203,7 @@ begin
     exit;
   end;
 
-  ; Executable/App Paths fallback is only valid for the detected Office version.
+  // Executable/App Paths fallback is only valid for the detected Office version.
   if CompareText(DetectedOfficeVersion, Version) <> 0 then exit;
 
   Exe := HostExeName(Host);
@@ -275,9 +275,9 @@ end;
 
 procedure PreserveOfficeResiliencyState();
 begin
-  ; Office Resiliency entries are shared security/recovery state. Values in
-  ; DisabledItems are opaque binary records and may belong to unrelated add-ins.
-  ; OMNIX must not globally delete them or CrashingAddinList/DoNotDisableAddinList.
+  // Office Resiliency entries are shared security/recovery state. Values in
+  // DisabledItems are opaque binary records and may belong to unrelated add-ins.
+  // OMNIX must not globally delete them or CrashingAddinList/DoNotDisableAddinList.
   InstallLog('Office Resiliency state preserved unchanged (no global DisabledItems cleanup).');
 end;
 
@@ -417,8 +417,8 @@ begin
       InstallLog('NOTE: OMNIX.cer was not extracted/bundled: ' + GetExceptionMessage);
     end;
 
-    ; Remove only previous OMNIX-owned registration. Never mutate shared Office
-    ; Resiliency state to force-enable the add-in.
+    // Remove only previous OMNIX-owned registration. Never mutate shared Office
+    // Resiliency state to force-enable the add-in.
     RemoveAddinRegistry();
     PreserveOfficeResiliencyState();
 
@@ -428,8 +428,8 @@ begin
       DelTree(ExpandConstant('{app}'), True, True, True);
     end;
 
-    ; Install the official Microsoft VSTO runtime only when the expected runtime
-    ; marker is absent. Do not hide prerequisite failure behind a successful setup.
+    // Install the official Microsoft VSTO runtime only when the expected runtime
+    // marker is absent. Do not hide prerequisite failure behind a successful setup.
     if NeedVstoX86 or NeedVstoX64 then
     begin
       VstoExe := ExpandConstant('{tmp}') + '\vstor_redist.exe';
@@ -465,9 +465,9 @@ begin
       end;
     end;
 
-    ; Development/self-signed manifests may require CurrentUser trust. Production
-    ; releases must replace this with a real signing chain; the release gate must
-    ; not claim production trust from this temporary certificate.
+    // Development/self-signed manifests may require CurrentUser trust. Production
+    // releases must replace this with a real signing chain; the release gate must
+    // not claim production trust from this temporary certificate.
     CertPath := ExpandConstant('{tmp}') + '\OMNIX.cer';
     if not FileExists(CertPath) then CertPath := ExpandConstant('{app}') + '\OMNIX.cer';
     if FileExists(CertPath) then
@@ -513,7 +513,7 @@ begin
         end;
       end;
 
-    ; If a prerequisite restart is pending, defer COM acceptance until after reboot.
+    // If a prerequisite restart is pending, defer COM acceptance until after reboot.
     if AllOk and (not VstoRestartNeeded) then
     begin
       try
