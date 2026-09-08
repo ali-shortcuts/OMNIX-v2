@@ -390,7 +390,8 @@ var
   Key, Manifest, ReadBack, AppPathForward: String;
   AllOk: Boolean;
   ResultCode, CertClassResult: Integer;
-  VstoExe, CertPath, CertClassifier, CertMarker, DevThumbprint: String;
+  VstoExe, CertPath, CertClassifier, CertMarker, DevThumbprintText: String;
+  DevThumbprintRaw: AnsiString;
   RuntimeStillMissing: Boolean;
 begin
   if CurStep = ssInstall then
@@ -469,9 +470,11 @@ begin
 
       if CertClassResult = 0 then
       begin
-        DevThumbprint := '';
-        if LoadStringFromFile(CertMarker, DevThumbprint) then DevThumbprint := Trim(DevThumbprint);
-        if DevThumbprint = '' then
+        DevThumbprintRaw := '';
+        DevThumbprintText := '';
+        if LoadStringFromFile(CertMarker, DevThumbprintRaw) then
+          DevThumbprintText := Trim(DevThumbprintRaw);
+        if DevThumbprintText = '' then
         begin
           InstallLog('CERTIFICATE_ERROR: self-signed development certificate classifier returned no thumbprint.');
           AllOk := False;
@@ -480,12 +483,12 @@ begin
         begin
           Exec(ExpandConstant('{cmd}'), '/C certutil -f -user -addstore ' + TrustedPubStore + ' "' + CertPath + '"',
                '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-          InstallLog('Development TrustedPublisher import exit code: ' + IntToStr(ResultCode) + ' thumbprint=' + DevThumbprint);
+          InstallLog('Development TrustedPublisher import exit code: ' + IntToStr(ResultCode) + ' thumbprint=' + DevThumbprintText);
           if ResultCode <> 0 then AllOk := False;
 
           Exec(ExpandConstant('{cmd}'), '/C certutil -f -user -addstore ' + RootStore + ' "' + CertPath + '"',
                '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-          InstallLog('Development CurrentUser Root import exit code: ' + IntToStr(ResultCode) + ' thumbprint=' + DevThumbprint);
+          InstallLog('Development CurrentUser Root import exit code: ' + IntToStr(ResultCode) + ' thumbprint=' + DevThumbprintText);
           if ResultCode <> 0 then AllOk := False;
         end;
       end
@@ -562,7 +565,8 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ResultCode: Integer;
-  CertMarker, DevThumbprint: String;
+  CertMarker, DevThumbprintText: String;
+  DevThumbprintRaw: AnsiString;
 begin
   if CurUninstallStep = usUninstall then
   begin
@@ -573,16 +577,17 @@ begin
     // Remove only the exact self-signed development certificate thumbprint recorded by this
     // installer. Production/CA certificates are never root-imported by OMNIX and are never removed.
     CertMarker := ExpandConstant('{app}') + '\dev-cert-thumbprint.txt';
-    DevThumbprint := '';
-    if FileExists(CertMarker) and LoadStringFromFile(CertMarker, DevThumbprint) then
+    DevThumbprintRaw := '';
+    DevThumbprintText := '';
+    if FileExists(CertMarker) and LoadStringFromFile(CertMarker, DevThumbprintRaw) then
     begin
-      DevThumbprint := Trim(DevThumbprint);
-      if DevThumbprint <> '' then
+      DevThumbprintText := Trim(DevThumbprintRaw);
+      if DevThumbprintText <> '' then
       begin
-        Exec(ExpandConstant('{cmd}'), '/C certutil -user -delstore ' + TrustedPubStore + ' "' + DevThumbprint + '"',
+        Exec(ExpandConstant('{cmd}'), '/C certutil -user -delstore ' + TrustedPubStore + ' "' + DevThumbprintText + '"',
              '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
         InstallLog('Development TrustedPublisher removal exit code: ' + IntToStr(ResultCode));
-        Exec(ExpandConstant('{cmd}'), '/C certutil -user -delstore ' + RootStore + ' "' + DevThumbprint + '"',
+        Exec(ExpandConstant('{cmd}'), '/C certutil -user -delstore ' + RootStore + ' "' + DevThumbprintText + '"',
              '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
         InstallLog('Development CurrentUser Root removal exit code: ' + IntToStr(ResultCode));
       end;
