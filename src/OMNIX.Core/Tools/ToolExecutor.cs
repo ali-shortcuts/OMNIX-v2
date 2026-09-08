@@ -59,13 +59,12 @@ namespace OMNIX.Core.Tools
                 {
                     var args = ToolArguments.Parse(call.ArgumentsJson);
                     byte[] png = adapter.CaptureChartAsImage(args.Get("chart", ""));
-                    if (png == null) return ToolResult.Fail("No chart found to capture.");
-                    // The image cannot be fed back through this text channel; it is offered to the user in chat.
+                    if (png == null || png.Length == 0) return ToolResult.Fail("No chart found to capture.");
                     return new ToolResult
                     {
                         Success = true,
-                        ContentForModel = "Chart image captured (" + png.Length + " bytes). Tell the user you captured it and to use the 'Attach image' button for visual analysis.",
-                        UiNote = "Chart captured",
+                        ContentForModel = "OMNIX captured the requested Excel chart. The PNG attached to this tool-result message is the visual source; analyze that image directly and combine it with the structured Office context.",
+                        UiNote = "Chart captured for Vision",
                         CapturedPng = png
                     };
                 }
@@ -75,12 +74,12 @@ namespace OMNIX.Core.Tools
                     int slide = 0;
                     int.TryParse(args.Get("slide", "0"), out slide);
                     byte[] png = adapter.CaptureSlideAsImage(slide);
-                    if (png == null) return ToolResult.Fail("No slide available to capture.");
+                    if (png == null || png.Length == 0) return ToolResult.Fail("No slide available to capture.");
                     return new ToolResult
                     {
                         Success = true,
-                        ContentForModel = "Slide image captured (" + png.Length + " bytes). Tell the user you captured it and to use the 'Attach image' button for visual analysis.",
-                        UiNote = "Slide captured",
+                        ContentForModel = "OMNIX captured the requested PowerPoint slide. The PNG attached to this tool-result message is the visual source; inspect the image directly and combine it with slide text/notes context.",
+                        UiNote = "Slide captured for Vision",
                         CapturedPng = png
                     };
                 }
