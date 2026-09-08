@@ -8,9 +8,10 @@ using OMNIX.Core.AiGateway.Adapters;
 namespace OMNIX.Core.AiGateway
 {
     /// <summary>
-    /// Provider registry. Runtime/provider behavior lives behind adapters; provider-owned setup
-    /// URLs and maintained default-model hints are centralized here so the UI never hard-codes
-    /// random links or silently keeps long-deprecated defaults.
+    /// Provider registry. Provider-owned setup URLs, access/cost hints and maintained default
+    /// model ids are centralized here. Cloud free-tier metadata is informational: OMNIX still
+    /// loads live model lists and surfaces provider quota/rate-limit errors instead of promising
+    /// that a cloud provider will remain free forever.
     /// </summary>
     public sealed class ProviderRegistry
     {
@@ -26,6 +27,8 @@ namespace OMNIX.Core.AiGateway
                 new GeminiAdapter(),
                 new GroqAdapter(),
                 new OpenRouterAdapter(),
+                new MistralAdapter(),
+                new CerebrasAdapter(),
                 new CustomOpenAiCompatibleAdapter()
             };
             _localAvailability = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -38,46 +41,80 @@ namespace OMNIX.Core.AiGateway
                 "https://ai.google.dev/gemini-api/docs",
                 "https://ai.google.dev/gemini-api/docs/get-started",
                 "https://aistudio.google.com/apikey",
-                "gemini-3.6-flash");
+                "gemini-3.8-flash",
+                ProviderAccessProfile.FreeTierAvailable,
+                "Gemini Developer API currently offers free-tier usage for supported models; limits and regional availability apply.");
 
             SetMetadata("groq",
                 "https://groq.com/",
                 "https://console.groq.com/docs/quickstart",
                 "https://console.groq.com/keys",
-                "openai/gpt-oss-120b");
+                "openai/gpt-oss-120b",
+                ProviderAccessProfile.FreeTierAvailable,
+                "Groq currently publishes Free Plan rate limits for supported models. Quotas are account/model specific.");
 
             SetMetadata("openrouter",
                 "https://openrouter.ai/",
                 "https://openrouter.ai/docs",
                 "https://openrouter.ai/settings/keys",
-                "openrouter/auto");
+                "openrouter/free",
+                ProviderAccessProfile.FreeModelsAvailable,
+                "OpenRouter exposes a free-model router plus individual :free model variants. Free capacity and available models can change.");
 
-            SetMetadata("ollama", "https://ollama.com/", "https://docs.ollama.com/", null, null);
-            SetMetadata("lmstudio", "https://lmstudio.ai/", "https://lmstudio.ai/docs", null, null);
+            SetMetadata("mistral",
+                "https://mistral.ai/",
+                "https://docs.mistral.ai/getting-started/quickstarts/developer/first-api-request",
+                "https://console.mistral.ai/",
+                "mistral-small-latest",
+                ProviderAccessProfile.FreeTierAvailable,
+                "Mistral Studio currently enables Free mode with limited usage/rate limits and no credit card required.");
+
+            SetMetadata("cerebras",
+                "https://www.cerebras.ai/",
+                "https://inference-docs.cerebras.ai/quickstart",
+                "https://cloud.cerebras.ai/",
+                "gpt-oss-120b",
+                ProviderAccessProfile.FreeTierAvailable,
+                "Cerebras currently documents a $0 Free tier with lower, model-specific rate limits.");
+
+            SetMetadata("ollama", "https://ollama.com/", "https://docs.ollama.com/", null, null,
+                ProviderAccessProfile.LocalNoCost,
+                "Runs locally on this PC. Provider usage is not metered by OMNIX; model/resource costs are the user's local hardware resources.");
+
+            SetMetadata("lmstudio", "https://lmstudio.ai/", "https://lmstudio.ai/docs", null, null,
+                ProviderAccessProfile.LocalNoCost,
+                "Runs locally on this PC through the LM Studio local server.");
+
+            var custom = Get("custom");
+            if (custom != null)
+            {
+                custom.Info.AccessProfile = ProviderAccessProfile.CustomEndpoint;
+                custom.Info.AccessNotes = "Cost, privacy, authentication and limits are defined entirely by the user-configured endpoint.";
+            }
 
             var gemini = Get("gemini");
             if (gemini != null)
-                gemini.Info.Notes = "Vision-capable Gemini provider. Free-tier availability and limits depend on the current Google account/region.";
+                gemini.Info.Notes = "Vision-capable Gemini provider. Models are loaded dynamically; free-tier availability depends on the Google account/region.";
 
             var groq = Get("groq");
             if (groq != null)
-                groq.Info.Notes = "Fast GroqCloud inference. Available models and account limits are loaded dynamically.";
+                groq.Info.Notes = "Fast GroqCloud inference. Available models and Free Plan limits are loaded/validated at runtime where possible.";
 
             var openRouter = Get("openrouter");
             if (openRouter != null)
-                openRouter.Info.Notes = "Multi-provider router. Endpoint availability can be constrained by account privacy/data-policy settings.";
-
-            // Custom provider URLs are intentionally NOT supplied by OMNIX. User-entered BaseUrl
-            // is an API endpoint, not a trusted provider setup page, and is never opened as a link.
+                openRouter.Info.Notes = "Multi-provider router. openrouter/free and :free variants are prioritized in the model list; account privacy policy can restrict routing.";
         }
 
-        private void SetMetadata(string id, string website, string docs, string apiKey, string defaultModel)
+        private void SetMetadata(string id, string website, string docs, string apiKey, string defaultModel,
+            ProviderAccessProfile accessProfile, string accessNotes)
         {
             var provider = Get(id);
             if (provider == null) return;
             provider.Info.OfficialWebsiteUrl = website;
             provider.Info.DocumentationUrl = docs;
             provider.Info.ApiKeyUrl = apiKey;
+            provider.Info.AccessProfile = accessProfile;
+            provider.Info.AccessNotes = accessNotes;
             if (!string.IsNullOrWhiteSpace(defaultModel)) provider.Info.DefaultModel = defaultModel;
         }
 
