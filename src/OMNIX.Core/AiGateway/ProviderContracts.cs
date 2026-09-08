@@ -30,7 +30,8 @@ namespace OMNIX.Core.AiGateway
         FreeTierAvailable = 2,
         FreeModelsAvailable = 3,
         AccountDependent = 4,
-        CustomEndpoint = 5
+        CustomEndpoint = 5,
+        FreeCreditsAvailable = 6
     }
 
     public sealed class ProviderInfo
