@@ -61,6 +61,11 @@ Require-Contains 'tools/real-office-ui-acceptance.ps1' 'OFFICE-UI-REAL-001' 'Rea
 Require-Contains 'tools/real-office-ui-acceptance.ps1' 'RibbonTabFound' 'UI gate must find the actual OMNIX Ribbon tab.'
 Require-Contains 'tools/real-office-ui-acceptance.ps1' 'OpenWorkspaceInvoked' 'UI gate must invoke Open Workspace.'
 Require-Contains 'tools/real-office-ui-acceptance.ps1' 'WorkspaceEvidenceFound' 'UI gate must detect the task pane/workspace.'
+Require-Contains 'src/OMNIX.Core/Ui/Views/WorkspaceView.xaml' 'OMNIX.WorkspaceRoot' 'Workspace must expose a deterministic UI Automation identity.'
+Require-Contains 'src/OMNIX.Core/Ui/Views/ChatView.xaml' 'OMNIX.ChatInput' 'Chat input must expose a deterministic UI Automation identity.'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' 'Find-UiElementByAutomationId' 'UI acceptance must use deterministic AutomationId lookup.'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' "Find-UiElementByAutomationId $root 'OMNIX.ChatInput'" 'Workspace proof must target the actual chat input, not a generic OMNIX label.'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' 'Test-UiElementVisible' 'Workspace evidence must also be visibly rendered.'
 
 # 2. Installer must preserve Office recovery/security state.
 Require-NotContains 'installer/installer.iss' 'CleanResiliencyDisabledItems' 'Do not globally clear Office DisabledItems.'
