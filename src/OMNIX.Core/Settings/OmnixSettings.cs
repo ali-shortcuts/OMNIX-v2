@@ -65,15 +65,15 @@ namespace OMNIX.Core.Settings
         {
             var s = new OmnixSettings();
             s.SchemaVersion = 1;
-            s.Privacy = PrivacyMode.AskBeforeSending;   // spec Layer 7.5: conservative default
-            s.Theme = ThemeMode.System;                  // user decision
-            s.UiLanguage = "en";                         // spec 10.7: English default
+            s.Privacy = PrivacyMode.AskBeforeSending;
+            s.Theme = ThemeMode.System;
+            s.UiLanguage = "en";
             s.SelectedProviderId = "gemini";
             s.PreferredLocalProviderId = "ollama";
             s.Models = new Dictionary<string, string>
             {
-                { "gemini", "gemini-2.0-flash" },
-                { "groq", "llama-3.3-70b-versatile" },
+                { "gemini", "gemini-3.6-flash" },
+                { "groq", "openai/gpt-oss-120b" },
                 { "openrouter", "openrouter/auto" },
                 { "ollama", "" },
                 { "lmstudio", "" },
