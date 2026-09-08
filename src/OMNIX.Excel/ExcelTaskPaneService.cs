@@ -106,7 +106,7 @@ namespace OMNIX.Excel
             object window = ActiveWindowObject();
             if (window == null) return null;
 
-            var controller = new WorkspaceController(_adapter, ThisAddIn.SharedGateway, ThisAddIn.SharedHistory);
+            var controller = new WorkspaceController(_adapter, ThisAddIn.SharedHistory);
             _controllers[key] = controller;
 
             var hostControl = new TaskPaneHostControl(controller.View);
@@ -183,10 +183,6 @@ namespace OMNIX.Excel
                 controller.View.ShowSettingsTab();
         }
 
-        /// <summary>
-        /// Deterministically releases per-window controllers and task panes at Office shutdown.
-        /// This prevents stale WPF/controller references from surviving longer than the host.
-        /// </summary>
         public void DisposeAll()
         {
             if (_disposed) return;
