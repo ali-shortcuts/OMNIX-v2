@@ -84,6 +84,7 @@
     <Compile Include="AiGateway\Adapters\CustomOpenAiCompatibleAdapter.cs" />
     <Compile Include="AiGateway\Adapters\GeminiAdapter.cs" />
     <Compile Include="AiGateway\Adapters\GroqAdapter.cs" />
+    <Compile Include="AiGateway\Adapters\HuggingFaceAdapter.cs" />
     <Compile Include="AiGateway\Adapters\LmStudioAdapter.cs" />
     <Compile Include="AiGateway\Adapters\MistralAdapter.cs" />
     <Compile Include="AiGateway\Adapters\OllamaAdapter.cs" />
