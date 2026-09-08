@@ -4,26 +4,26 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Media;
 using OMNIX.Core.AiGateway;
 using OMNIX.Core.Context;
-using OMNIX.Core.ContextLimiter;
 using OMNIX.Core.Errors;
 using OMNIX.Core.Logging;
-using OMNIX.Core.Security;
 using OMNIX.Core.Settings;
 using OMNIX.Core.Storage;
 using OMNIX.Core.Tools;
 using OMNIX.Core.Ui.Dialogs;
-using OMNIX.Core.Ui.Markdown;
 using OMNIX.Core.Util;
 
 namespace OMNIX.Core.Ui
 {
     /// <summary>
-    /// Per-window controller: one instance per Office document window (spec Section 5 —
-    /// "هر پنجرهٔ باز، Task Pane و Context مخصوص به خودش را دارد"). Owns the WorkspaceView,
-    /// the chat history of THIS document, the context bar, streaming and cancellation.
+    /// Per-window controller: every Office document window owns its own WorkspaceView, AI Gateway,
+    /// provider adapters, privacy-session approval, cancellation token and conversation state.
+    ///
+    /// The per-window gateway is intentional: provider adapters keep request configuration in
+    /// memory. Sharing one mutable adapter/gateway across two Office windows can race credentials,
+    /// model selection and AskBeforeSending callbacks. Isolation prevents one document window from
+    /// borrowing another window's provider state or cloud-consent session.
     /// </summary>
     public sealed class WorkspaceController : IDisposable
     {
@@ -36,28 +36,38 @@ namespace OMNIX.Core.Ui
         private List<ChatTurn> _turns = new List<ChatTurn>();
         private string _docKey = "unnamed";
         private bool _busy;
+        private bool _disposed;
 
         public WorkspaceView View { get; private set; }
-
         public AiGateway.AiGateway Gateway { get { return _gateway; } }
         public ProviderRegistry GatewayRegistry { get { return _gateway.Registry; } }
 
-        public WorkspaceController(IHostAdapter adapter, AiGateway.AiGateway gateway, ChatHistoryStore historyStore)
+        public WorkspaceController(IHostAdapter adapter, ChatHistoryStore historyStore)
         {
+            if (adapter == null) throw new ArgumentNullException("adapter");
+            if (historyStore == null) throw new ArgumentNullException("historyStore");
+
             _adapter = adapter;
-            _gateway = gateway;
             _historyStore = historyStore;
+
+            // Per-workspace registry/adapters/gateway: no mutable provider state is shared between
+            // two open documents. Local runtime discovery is asynchronous and never blocks pane UI.
+            _gateway = new AiGateway.AiGateway(new ProviderRegistry());
+            ObserveBackground(_gateway.ProbeLocalAsync(), "initial local provider probe");
+
             _toolExecutor = new ToolExecutor();
             _toolExecutor.WriteConfirmation = preview =>
                 Application.Current != null
                     ? RunOnUiThread(() => OmnixDialogs.ConfirmWritePreview(preview))
                     : Task.FromResult(false);
 
+            // This callback now belongs only to THIS workspace's PrivacyGate, so "remember for this
+            // session" cannot silently approve a different document window.
             _gateway.Privacy.CloudConfirmationCallback = providerName =>
                 RunOnUiThread(() =>
                 {
-                    var t = OmnixDialogs.ConfirmCloudSend(providerName, _adapter.ReadContext().ContextBarText);
-                    return t;
+                    var ctx = _adapter.ReadContext();
+                    return OmnixDialogs.ConfirmCloudSend(providerName, ctx.ContextBarText);
                 });
 
             View = new WorkspaceView(this);
@@ -71,10 +81,14 @@ namespace OMNIX.Core.Ui
 
         public void RefreshContextBar(bool initial = false)
         {
+            if (_disposed) return;
             try
             {
                 var ctx = _adapter.ReadContext();
-                string newKey = DocKeySanitizer.Sanitize(ctx.DocumentName ?? "unnamed");
+                string newKey = DocKeySanitizer.StableKey(
+                    ctx.Host.ToString(),
+                    ctx.DocumentPath,
+                    ctx.DocumentName);
 
                 bool docChanged = !string.Equals(newKey, _docKey, StringComparison.OrdinalIgnoreCase);
                 _docKey = newKey;
@@ -83,6 +97,7 @@ namespace OMNIX.Core.Ui
                 {
                     _turns = _historyStore.Load(_docKey);
                     View.Chat.ReloadMessages(_turns);
+                    if (docChanged) _gateway.Privacy.ResetSession();
                 }
 
                 View.Chat.SetContextText(ctx.ContextBarText);
@@ -100,30 +115,29 @@ namespace OMNIX.Core.Ui
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
             CancelActiveRequest();
+            _gateway.Privacy.ResetSession();
+            _gateway.Privacy.CloudConfirmationCallback = null;
             Theming.ThemeManager.Instance.ThemeChanged -= OnThemeChanged;
+            try { if (_cts != null) _cts.Dispose(); } catch { }
+            _cts = null;
         }
 
         private void OnThemeChanged()
         {
-            try
-            {
-                Theming.ThemeManager.Instance.ApplyTo(View);
-            }
-            catch { }
+            if (_disposed) return;
+            try { Theming.ThemeManager.Instance.ApplyTo(View); } catch { }
         }
 
         // ------------------------------------------------------------------ chat actions
 
         public async void SendMessage(string text, ImageAttachment image)
         {
-            if (_busy) return;
+            if (_disposed || _busy) return;
             text = (text ?? "").Trim();
             if (text.Length == 0 && image == null) return;
-            if (_adapter.ReadContext().IsEmpty && string.IsNullOrEmpty(SettingsManager.Instance.GetApiKey(SettingsManager.Instance.Settings.SelectedProviderId)))
-            {
-                // Nothing fatal — the gateway will report a categorized error anyway.
-            }
 
             _busy = true;
             View.Chat.SetBusy(true);
@@ -134,10 +148,8 @@ namespace OMNIX.Core.Ui
                 Text = text,
                 TimestampUtc = DateTime.UtcNow
             };
-            if (image != null)
-            {
+            if (image != null && image.PngBytes != null && image.PngBytes.Length > 0)
                 userTurn.Images = new List<ImageAttachment> { image };
-            }
 
             _turns.Add(userTurn);
             View.Chat.AppendTurn(userTurn);
@@ -152,9 +164,12 @@ namespace OMNIX.Core.Ui
             var bubble = View.Chat.AppendTurn(assistantTurn);
             bubble.AppendText("…");
 
+            if (_cts != null)
+            {
+                try { _cts.Dispose(); } catch { }
+            }
             _cts = new CancellationTokenSource();
             var ct = _cts.Token;
-            int deltaCount = 0;
             var sb = new System.Text.StringBuilder();
 
             try
@@ -171,11 +186,11 @@ namespace OMNIX.Core.Ui
                     _adapter,
                     delta =>
                     {
-                        deltaCount++;
                         var app = Application.Current;
-                        if (app == null) return;
+                        if (app == null || _disposed) return;
                         app.Dispatcher.BeginInvoke(new Action(delegate
                         {
+                            if (_disposed) return;
                             sb.Append(delta);
                             bubble.ReplaceText(sb.ToString());
                         }));
@@ -183,11 +198,8 @@ namespace OMNIX.Core.Ui
                     _toolExecutor,
                     ct).ConfigureAwait(true);
 
-                // A tool round may have produced the final text already — replace cleanly.
-                if (!string.IsNullOrEmpty(response.Text) && sb.Length == 0)
-                {
+                if (response != null && !string.IsNullOrEmpty(response.Text) && sb.Length == 0)
                     sb.Append(response.Text);
-                }
 
                 assistantTurn.Text = sb.Length > 0 ? sb.ToString() : Localization.Strings.T("S.Chat.Cancelled");
                 bubble.ReplaceText(assistantTurn.Text);
@@ -215,8 +227,12 @@ namespace OMNIX.Core.Ui
             finally
             {
                 _busy = false;
-                View.Chat.SetBusy(false);
-                _cts = null;
+                if (!_disposed) View.Chat.SetBusy(false);
+                if (_cts != null)
+                {
+                    try { _cts.Dispose(); } catch { }
+                    _cts = null;
+                }
             }
         }
 
@@ -227,35 +243,33 @@ namespace OMNIX.Core.Ui
 
         private void CancelActiveRequest()
         {
-            try
-            {
-                if (_cts != null)
-                {
-                    _cts.Cancel();
-                }
-            }
-            catch { }
+            try { if (_cts != null) _cts.Cancel(); } catch { }
         }
 
         public void NewChat()
         {
+            if (_disposed) return;
             CancelActiveRequest();
             _turns = new List<ChatTurn>();
+            _gateway.Privacy.ResetSession();
             View.Chat.ReloadMessages(_turns);
             View.Chat.SetStatus(Localization.Strings.T("S.Chat.NewSession"));
         }
 
         public void ClearChat()
         {
+            if (_disposed) return;
             CancelActiveRequest();
             _turns = new List<ChatTurn>();
             _historyStore.Delete(_docKey);
+            _gateway.Privacy.ResetSession();
             View.Chat.ReloadMessages(_turns);
             View.Chat.SetStatus(Localization.Strings.T("S.Chat.Cleared"));
         }
 
         public void CopyLastAnswer()
         {
+            if (_disposed) return;
             var last = _turns.LastOrDefault(t => t.Role == ChatRole.Assistant && !string.IsNullOrEmpty(t.Text));
             if (last == null)
             {
@@ -272,33 +286,30 @@ namespace OMNIX.Core.Ui
 
         public void RetryLast()
         {
-            var lastUser = _turns.LastOrDefault(t => t.Role == ChatRole.User);
-            if (lastUser == null)
+            if (_disposed) return;
+            int idx = _turns.FindLastIndex(t => t.Role == ChatRole.User);
+            if (idx < 0)
             {
                 View.Chat.SetStatus(Localization.Strings.T("S.Chat.RetryEmpty"));
                 return;
             }
 
-            // Remove trailing turns after (and including) the last assistant answer, keep the user question.
-            int idx = _turns.FindLastIndex(t => t.Role == ChatRole.User);
-            if (idx >= 0)
-            {
-                var resend = _turns[idx];
-                _turns = _turns.Take(idx).ToList();
-                View.Chat.ReloadMessages(_turns);
-                ImageAttachment img = resend.HasImages ? resend.Images[0] : null;
-                SendMessage(resend.Text, img);
-            }
+            var resend = _turns[idx];
+            _turns = _turns.Take(idx).ToList();
+            View.Chat.ReloadMessages(_turns);
+            ImageAttachment img = resend.HasImages ? resend.Images.FirstOrDefault(i => i != null && i.PngBytes != null && i.PngBytes.Length > 0) : null;
+            SendMessage(resend.Text, img);
         }
 
         public void AttachImageFromDocument()
         {
+            if (_disposed) return;
             try
             {
                 byte[] png = _adapter.CaptureCurrentViewAsImage();
                 if (png == null || png.Length == 0)
                 {
-                    View.Chat.SetStatus(Localization.Strings.T("S.Chat.NothingToCopy"));
+                    View.Chat.SetStatus("No capturable Office view is available.");
                     return;
                 }
                 View.Chat.SetPendingImage(new ImageAttachment
@@ -321,6 +332,7 @@ namespace OMNIX.Core.Ui
 
         public void AttachImageFromDisk()
         {
+            if (_disposed) return;
             try
             {
                 var dlg = new System.Windows.Forms.OpenFileDialog
@@ -329,6 +341,14 @@ namespace OMNIX.Core.Ui
                     Filter = "Images (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp"
                 };
                 if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+
+                var info = new System.IO.FileInfo(dlg.FileName);
+                if (info.Length > 20L * 1024L * 1024L)
+                {
+                    View.Chat.SetStatus("Image is too large (maximum 20 MB).\nChoose a smaller image.");
+                    return;
+                }
+
                 byte[] bytes = System.IO.File.ReadAllBytes(dlg.FileName);
                 View.Chat.SetPendingImage(new ImageAttachment
                 {
@@ -346,7 +366,9 @@ namespace OMNIX.Core.Ui
 
         public void SaveSettingsFromUi()
         {
+            if (_disposed) return;
             SettingsManager.Instance.Save();
+            _gateway.Privacy.ResetSession();
             View.Chat.SetStatus(Localization.Strings.T("S.Settings.Saved"));
         }
 
@@ -360,6 +382,13 @@ namespace OMNIX.Core.Ui
             var app = Application.Current;
             if (app == null) return Task.FromResult(default(T));
             return Task.FromResult(app.Dispatcher.Invoke(action));
+        }
+
+        private static async void ObserveBackground(Task task, string operation)
+        {
+            if (task == null) return;
+            try { await task.ConfigureAwait(false); }
+            catch (Exception ex) { Logger.Error("gateway", "Background " + operation + " failed", ex); }
         }
     }
 }
