@@ -6,8 +6,9 @@ using Newtonsoft.Json.Linq;
 namespace OMNIX.Core.Tools
 {
     /// <summary>
-    /// Layer 7 — the EXACT tool whitelist from the master spec. No tool outside this list may
-    /// be executed, ever (spec: "هیچ ابزاری خارج از این لیست بدون تصویب صریح این سند اضافه نشود").
+    /// Layer 7 — approved OMNIX v3 tool whitelist. Read tools expose bounded Office context only;
+    /// write tools require explicit user preview/confirmation. No shell, registry, arbitrary file,
+    /// process, or unrestricted system tool exists.
     /// </summary>
     public static class ToolNames
     {
@@ -17,6 +18,7 @@ namespace OMNIX.Core.Tools
         public const string ReadPresentation = "read_presentation";
         public const string CaptureChartAsImage = "capture_chart_as_image";
         public const string CaptureSlideAsImage = "capture_slide_as_image";
+        public const string CaptureCurrentViewAsImage = "capture_current_view_as_image";
 
         // write (user confirmation + native Office undo)
         public const string WriteToCell = "write_to_cell";
@@ -28,7 +30,8 @@ namespace OMNIX.Core.Tools
 
         private static readonly HashSet<string> Whitelist = new HashSet<string>(StringComparer.Ordinal)
         {
-            ReadSelection, ReadDocument, ReadPresentation, CaptureChartAsImage, CaptureSlideAsImage,
+            ReadSelection, ReadDocument, ReadPresentation,
+            CaptureChartAsImage, CaptureSlideAsImage, CaptureCurrentViewAsImage,
             WriteToCell, InsertFormula, RewriteSelectedText, InsertSlide, AddSpeakerNotes, HighlightRange
         };
 
@@ -117,7 +120,6 @@ namespace OMNIX.Core.Tools
             if (idx < 0) return null;
 
             int start = idx + marker.Length;
-            // skip to end of line
             while (start < reply.Length && reply[start] != '\n') start++;
             int end = reply.IndexOf("```", start, StringComparison.Ordinal);
             if (end < 0) return null;
