@@ -25,14 +25,14 @@ function Read-RepoFile([string]$relative) {
 function Require-Contains([string]$relative, [string]$needle, [string]$reason) {
     $text = Read-RepoFile $relative
     if ($text -notlike "*$needle*") {
-        $failures.Add("$relative: missing required contract '$needle' — $reason")
+        $failures.Add("${relative}: missing required contract '$needle' — $reason")
     }
 }
 
 function Require-NotContains([string]$relative, [string]$needle, [string]$reason) {
     $text = Read-RepoFile $relative
     if ($text -like "*$needle*") {
-        $failures.Add("$relative: forbidden regression '$needle' — $reason")
+        $failures.Add("${relative}: forbidden regression '$needle' — $reason")
     }
 }
 
