@@ -33,6 +33,8 @@ namespace OMNIX.Core.Ui
             "www.mistral.ai",
             "docs.mistral.ai",
             "console.mistral.ai",
+            "huggingface.co",
+            "www.huggingface.co",
             "cerebras.ai",
             "www.cerebras.ai",
             "inference-docs.cerebras.ai",
@@ -162,6 +164,9 @@ namespace OMNIX.Core.Ui
                 case ProviderAccessProfile.FreeModelsAvailable:
                     access = "Access: Free models currently available; provider capacity/limits can change.";
                     break;
+                case ProviderAccessProfile.FreeCreditsAvailable:
+                    access = "Access: Limited free credits/trial currently available; not unlimited free usage.";
+                    break;
                 case ProviderAccessProfile.CustomEndpoint:
                     access = "Access: Defined by your custom endpoint.";
                     break;
@@ -269,6 +274,8 @@ namespace OMNIX.Core.Ui
                     TestResultText.Text = models.Count + " models loaded.";
                     if (info.AccessProfile == ProviderAccessProfile.FreeModelsAvailable)
                         TestResultText.Text += " Free options are prioritized at the top of the list.";
+                    if (string.Equals(info.Id, "huggingface", StringComparison.OrdinalIgnoreCase))
+                        TestResultText.Text += " Any currently-free provider routes reported by the live Hugging Face catalog are prioritized.";
                     TestResultText.Text += "\n" + BuildProviderSummary(info);
                 }
             }
@@ -300,13 +307,9 @@ namespace OMNIX.Core.Ui
                 adapter.Configure(gateway.Router.BuildCredentials(info.Id));
                 using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
                 {
-                    // Keep the first probe throwing so AUTH/NETWORK/PROVIDER errors remain categorized.
                     var models = await adapter.ListModelsAsync(cts.Token);
                     bool ok = models != null && models.Count > 0;
 
-                    // Custom provider has one additional job: its TestConnection implementation
-                    // performs the small Vision capability probe and persists the result. We call it
-                    // only after the categorized model-list probe already succeeded.
                     if (ok && string.Equals(info.Id, "custom", StringComparison.OrdinalIgnoreCase))
                         ok = await adapter.TestConnectionAsync(cts.Token);
 
@@ -391,8 +394,6 @@ namespace OMNIX.Core.Ui
             var info = ProviderCombo.SelectedItem as ProviderInfo;
             var settings = SettingsManager.Instance.Settings;
 
-            // Update the Custom fields before any API-key persistence so a Test/Load Models action
-            // cannot save the new key while leaving an old Base URL on disk.
             if (settings.CustomProvider != null)
             {
                 settings.CustomProvider.Name = CustomNameBox.Text.Trim();
@@ -409,8 +410,6 @@ namespace OMNIX.Core.Ui
                     SettingsManager.Instance.SetApiKey(info.Id, key.Trim());
             }
 
-            // Persist provider/model/custom endpoint changes even when the user did not enter a new
-            // API key (important for local/no-auth Custom endpoints and Load Models/Test Connection).
             SettingsManager.Instance.Save();
         }
 
