@@ -77,8 +77,24 @@ namespace OMNIX.PowerPoint
 
         private void ThisAddIn_Shutdown(object sender, System.EventArgs e)
         {
-            Logger.Startup("ThisAddIn_Shutdown");
-            if (Panes != null) Panes.DetachEvents();
+            Logger.Startup("ThisAddIn_Shutdown begin");
+            try
+            {
+                if (Panes != null)
+                {
+                    Panes.DetachEvents();
+                    Panes.DisposeAll();
+                    Panes = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("startup-debug", "PowerPoint pane shutdown cleanup failed", ex);
+            }
+
+            AppDomain.CurrentDomain.UnhandledException -= OnUnhandledException;
+            System.Threading.Tasks.TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
+            Logger.Startup("ThisAddIn_Shutdown complete");
         }
 
         protected override Office.IRibbonExtensibility CreateRibbonExtensibilityObject()
