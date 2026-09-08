@@ -71,11 +71,11 @@ namespace OMNIX.Core.AiGateway
 
             SetMetadata("cerebras",
                 "https://www.cerebras.ai/",
-                "https://inference-docs.cerebras.ai/quickstart",
+                "https://www.cerebras.ai/inference",
                 "https://cloud.cerebras.ai/",
                 "gpt-oss-120b",
-                ProviderAccessProfile.FreeTierAvailable,
-                "Cerebras currently documents a $0 Free tier with lower, model-specific rate limits.");
+                ProviderAccessProfile.AccountDependent,
+                "Cerebras currently advertises free trial credits for new accounts; continued usage is account/plan dependent rather than guaranteed free API access.");
 
             SetMetadata("ollama", "https://ollama.com/", "https://docs.ollama.com/", null, null,
                 ProviderAccessProfile.LocalNoCost,
