@@ -28,6 +28,15 @@ namespace OMNIX.Core.AiGateway
         public string DefaultModel { get; set; }
         public bool RequiresApiKey { get; set; }
         public string Notes { get; set; }
+
+        /// <summary>
+        /// Official provider-owned HTTPS pages only. These are product metadata, not user input.
+        /// Settings uses ApiKeyUrl for the optional "Get API Key" action and still validates
+        /// the scheme/host before opening the user's default browser.
+        /// </summary>
+        public string OfficialWebsiteUrl { get; set; }
+        public string DocumentationUrl { get; set; }
+        public string ApiKeyUrl { get; set; }
     }
 
     /// <summary>
