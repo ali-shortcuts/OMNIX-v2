@@ -14,7 +14,7 @@ namespace OMNIX.Core.Ui
 {
     /// <summary>
     /// Settings page: provider dropdown, DPAPI-protected API key, dynamic models,
-    /// categorized diagnostics, verified official provider setup links, explicit free-tier
+    /// categorized diagnostics, verified official provider setup links, explicit access/free-tier
     /// information, local AI probing, Privacy Mode, appearance and history limits.
     /// </summary>
     public partial class SettingsView : UserControl
@@ -165,8 +165,11 @@ namespace OMNIX.Core.Ui
                 case ProviderAccessProfile.CustomEndpoint:
                     access = "Access: Defined by your custom endpoint.";
                     break;
+                case ProviderAccessProfile.AccountDependent:
+                    access = "Access: Account/plan dependent; see the provider's current terms.";
+                    break;
                 default:
-                    access = "Access: Depends on provider/account.";
+                    access = "Access: Unknown until provider/account details are checked.";
                     break;
             }
 
@@ -297,8 +300,16 @@ namespace OMNIX.Core.Ui
                 adapter.Configure(gateway.Router.BuildCredentials(info.Id));
                 using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
                 {
+                    // Keep the first probe throwing so AUTH/NETWORK/PROVIDER errors remain categorized.
                     var models = await adapter.ListModelsAsync(cts.Token);
                     bool ok = models != null && models.Count > 0;
+
+                    // Custom provider has one additional job: its TestConnection implementation
+                    // performs the small Vision capability probe and persists the result. We call it
+                    // only after the categorized model-list probe already succeeded.
+                    if (ok && string.Equals(info.Id, "custom", StringComparison.OrdinalIgnoreCase))
+                        ok = await adapter.TestConnectionAsync(cts.Token);
+
                     TestResultText.Text = ok ? Localization.Strings.T("S.Settings.TestOk")
                                              : Localization.Strings.T("S.Settings.TestFailed");
                     TestResultText.SetResourceReference(TextBlock.ForegroundProperty,
@@ -379,6 +390,15 @@ namespace OMNIX.Core.Ui
         {
             var info = ProviderCombo.SelectedItem as ProviderInfo;
             var settings = SettingsManager.Instance.Settings;
+
+            // Update the Custom fields before any API-key persistence so a Test/Load Models action
+            // cannot save the new key while leaving an old Base URL on disk.
+            if (settings.CustomProvider != null)
+            {
+                settings.CustomProvider.Name = CustomNameBox.Text.Trim();
+                settings.CustomProvider.BaseUrl = CustomBaseUrlBox.Text.Trim();
+            }
+
             if (info != null)
             {
                 settings.SelectedProviderId = info.Id;
@@ -389,11 +409,9 @@ namespace OMNIX.Core.Ui
                     SettingsManager.Instance.SetApiKey(info.Id, key.Trim());
             }
 
-            if (settings.CustomProvider != null)
-            {
-                settings.CustomProvider.Name = CustomNameBox.Text.Trim();
-                settings.CustomProvider.BaseUrl = CustomBaseUrlBox.Text.Trim();
-            }
+            // Persist provider/model/custom endpoint changes even when the user did not enter a new
+            // API key (important for local/no-auth Custom endpoints and Load Models/Test Connection).
+            SettingsManager.Instance.Save();
         }
 
         private void SaveGeneralFields()
