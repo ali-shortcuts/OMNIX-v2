@@ -28,6 +28,7 @@ namespace OMNIX.Core.AiGateway
                 new GroqAdapter(),
                 new OpenRouterAdapter(),
                 new MistralAdapter(),
+                new HuggingFaceAdapter(),
                 new CerebrasAdapter(),
                 new CustomOpenAiCompatibleAdapter()
             };
@@ -43,7 +44,7 @@ namespace OMNIX.Core.AiGateway
                 "https://aistudio.google.com/apikey",
                 "gemini-3.8-flash",
                 ProviderAccessProfile.FreeTierAvailable,
-                "Gemini Developer API currently offers free-tier usage for supported models; limits and regional availability apply.");
+                "Gemini Developer API currently offers free-tier usage for supported models; limits, data-use terms and regional availability apply.");
 
             SetMetadata("groq",
                 "https://groq.com/",
@@ -59,27 +60,35 @@ namespace OMNIX.Core.AiGateway
                 "https://openrouter.ai/settings/keys",
                 "openrouter/free",
                 ProviderAccessProfile.FreeModelsAvailable,
-                "OpenRouter exposes a free-model router plus individual :free model variants. Free capacity and available models can change.");
+                "OpenRouter exposes openrouter/free plus individual :free model variants. Free capacity, model inventory and provider privacy compatibility can change.");
 
             SetMetadata("mistral",
                 "https://mistral.ai/",
-                "https://docs.mistral.ai/getting-started/quickstarts/developer/first-api-request",
+                "https://docs.mistral.ai/getting-started/quickstarts/studio/activate-and-generate-api-key",
                 "https://console.mistral.ai/",
                 "mistral-small-latest",
                 ProviderAccessProfile.FreeTierAvailable,
-                "Mistral Studio currently enables Free mode with limited usage/rate limits and no credit card required.");
+                "Mistral Studio currently enables Free mode with limited included usage/rate limits and no credit card required for Free mode.");
+
+            SetMetadata("huggingface",
+                "https://huggingface.co/",
+                "https://huggingface.co/docs/inference-providers/index",
+                "https://huggingface.co/settings/tokens",
+                "openai/gpt-oss-120b:fastest",
+                ProviderAccessProfile.FreeCreditsAvailable,
+                "Hugging Face currently gives free users small monthly Inference Providers credits. The live model catalog can also mark temporary provider routes as free.");
 
             SetMetadata("cerebras",
                 "https://www.cerebras.ai/",
                 "https://www.cerebras.ai/inference",
                 "https://cloud.cerebras.ai/",
                 "gpt-oss-120b",
-                ProviderAccessProfile.AccountDependent,
-                "Cerebras currently advertises free trial credits for new accounts; continued usage is account/plan dependent rather than guaranteed free API access.");
+                ProviderAccessProfile.FreeCreditsAvailable,
+                "Cerebras currently advertises free trial credits for new accounts. Continued usage is account/plan dependent rather than a permanent unlimited free tier.");
 
             SetMetadata("ollama", "https://ollama.com/", "https://docs.ollama.com/", null, null,
                 ProviderAccessProfile.LocalNoCost,
-                "Runs locally on this PC. Provider usage is not metered by OMNIX; model/resource costs are the user's local hardware resources.");
+                "Runs locally on this PC. Provider usage is not metered by OMNIX; model/resource cost is the user's local hardware usage.");
 
             SetMetadata("lmstudio", "https://lmstudio.ai/", "https://lmstudio.ai/docs", null, null,
                 ProviderAccessProfile.LocalNoCost,
@@ -98,7 +107,7 @@ namespace OMNIX.Core.AiGateway
 
             var groq = Get("groq");
             if (groq != null)
-                groq.Info.Notes = "Fast GroqCloud inference. Available models and Free Plan limits are loaded/validated at runtime where possible.";
+                groq.Info.Notes = "Fast GroqCloud inference. Available models and account limits are loaded/validated at runtime where possible.";
 
             var openRouter = Get("openrouter");
             if (openRouter != null)
