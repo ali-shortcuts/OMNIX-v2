@@ -85,7 +85,12 @@ namespace OMNIX.Core.AiGateway
 
         public async Task ProbeLocalProvidersAsync()
         {
-            foreach (var p in _registry.All.Where(x => x.Info.Kind == ProviderKind.Local))
+            // Only fixed, known local runtimes participate in background auto-discovery.
+            // A Custom endpoint is classified at Configure-time and is validated only when the
+            // user selects/tests it, preventing stale Custom state from being auto-routed later.
+            foreach (var p in _registry.All.Where(x =>
+                string.Equals(x.Info.Id, "ollama", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.Info.Id, "lmstudio", StringComparison.OrdinalIgnoreCase)))
             {
                 try
                 {
@@ -110,8 +115,6 @@ namespace OMNIX.Core.AiGateway
 
             if (settings.Privacy == PrivacyMode.LocalOnly)
             {
-                // A user-selected Custom endpoint may itself be a loopback local model server.
-                // Treat that as local rather than forcing the user to leave Local Only mode.
                 var selectedCustomLocal = ResolveSelectedLoopbackCustom(selectedProviderId, needsVision);
                 if (selectedCustomLocal != null) return selectedCustomLocal;
 
