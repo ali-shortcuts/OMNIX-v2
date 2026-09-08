@@ -46,6 +46,10 @@
     <sys:String x:Key="S.Settings.Model">Model</sys:String>
     <sys:String x:Key="S.Settings.ApiKey">API Key</sys:String>
     <sys:String x:Key="S.Settings.ApiKeyStored">Stored encrypted (DPAPI)</sys:String>
+    <sys:String x:Key="S.Settings.GetApiKey">Get API Key</sys:String>
+    <sys:String x:Key="S.Settings.ProviderDocs">Provider docs</sys:String>
+    <sys:String x:Key="S.Settings.OfficialLinkOnly">Opens the provider's verified official website.</sys:String>
+    <sys:String x:Key="S.Settings.NoApiKeyRequired">No API key required for this provider.</sys:String>
     <sys:String x:Key="S.Settings.LoadModels">Load models</sys:String>
     <sys:String x:Key="S.Settings.TestConnection">Test connection</sys:String>
     <sys:String x:Key="S.Settings.TestOk">Connection OK</sys:String>
