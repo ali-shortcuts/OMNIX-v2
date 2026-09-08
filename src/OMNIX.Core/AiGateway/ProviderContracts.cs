@@ -19,6 +19,19 @@ namespace OMNIX.Core.AiGateway
         DependsOnModel
     }
 
+    /// <summary>
+    /// Cost/access metadata is informational only. OMNIX never assumes that a cloud request is
+    /// permanently free because quotas, regions and provider policies can change.
+    /// </summary>
+    public enum ProviderAccessProfile
+    {
+        LocalNoCost,
+        FreeTierAvailable,
+        FreeModelsAvailable,
+        AccountDependent,
+        CustomEndpoint
+    }
+
     public sealed class ProviderInfo
     {
         public string Id { get; set; }
@@ -28,6 +41,8 @@ namespace OMNIX.Core.AiGateway
         public string DefaultModel { get; set; }
         public bool RequiresApiKey { get; set; }
         public string Notes { get; set; }
+        public ProviderAccessProfile AccessProfile { get; set; }
+        public string AccessNotes { get; set; }
 
         /// <summary>
         /// Official provider-owned HTTPS pages only. These are product metadata, not user input.
@@ -41,8 +56,7 @@ namespace OMNIX.Core.AiGateway
 
     /// <summary>
     /// Layer 6 contract: every provider (local or cloud) presents the SAME input/output shape.
-    /// The UI never talks to a provider directly — only the AI Gateway calls this interface
-    /// (spec Section 3, Layer 5).
+    /// The UI never talks to a provider directly — only the AI Gateway calls this interface.
     /// </summary>
     public interface IProviderAdapter
     {
@@ -56,8 +70,8 @@ namespace OMNIX.Core.AiGateway
         Task<bool> TestConnectionAsync(CancellationToken ct);
 
         /// <summary>
-        /// Sends a chat request. Streaming deltas (word by word) are reported through onDelta.
-        /// Implementations MUST honor ct (real cancellation of the HTTP request, spec Section 5).
+        /// Sends a chat request. Streaming deltas are reported through onDelta.
+        /// Implementations MUST honor ct (real cancellation of the HTTP request).
         /// </summary>
         Task<ChatResponse> SendAsync(ChatRequest request, Action<string> onDelta, CancellationToken ct);
 
@@ -73,9 +87,6 @@ namespace OMNIX.Core.AiGateway
             string trimmed = body ?? "";
             if (trimmed.Length > 800) trimmed = trimmed.Substring(0, 800);
 
-            // OpenRouter may return a normal HTTP error when the account's privacy/data-policy
-            // restrictions disallow every available endpoint for the selected model. This is not
-            // an Internet failure, not a bad API key, and not necessarily a missing model.
             if (string.Equals(providerName, "OpenRouter", StringComparison.OrdinalIgnoreCase) &&
                 (trimmed.IndexOf("No endpoints available matching your guardrail restrictions and data policy", StringComparison.OrdinalIgnoreCase) >= 0 ||
                  trimmed.IndexOf("openrouter.ai/settings/privacy", StringComparison.OrdinalIgnoreCase) >= 0))
@@ -95,7 +106,7 @@ namespace OMNIX.Core.AiGateway
                 case 408:
                     return OmnixException.Timeout(providerName + " returned HTTP 408.");
                 case 429:
-                    return OmnixException.Provider(providerName + " returned HTTP 429 — rate limit / daily quota reached. Body: " + trimmed);
+                    return OmnixException.Provider(providerName + " returned HTTP 429 — rate limit / quota reached. Body: " + trimmed);
                 default:
                     return OmnixException.Provider(providerName + " returned HTTP " + statusCode + ". Body: " + trimmed);
             }
