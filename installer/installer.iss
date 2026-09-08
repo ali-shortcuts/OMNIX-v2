@@ -1,19 +1,12 @@
 ; ============================================================================
-; OMNIX — installer.iss (Inno Setup 6.3+)
-; Spec compliance: Section 4.1 (detection), 4.2 (install steps), 4.4 (honest notes),
-; Phase 2 milestone, Phase 19 (three-host installer), Phase 21 (clean uninstall).
+; OMNIX — production-oriented per-user installer (Inno Setup 6.3+)
 ;
-; Key properties:
-;   * Per-user install, NO Administrator required for the main flow
-;     (only the VSTO Runtime bootstrap may raise a transparent UAC).
-;   * Detects the REAL Office bitness (ClickToRun Platform value, MSI path fallback).
-;   * Registers add-ins ONLY for hosts that actually exist on this system
-;     and for every Office version found (16.0 and/or 15.0).
-;   * Cleans previous installs + Office Resiliency/DisabledItems BEFORE writing anything.
-;   * Imports the manifest signing certificate into CurrentUser\TrustedPublisher
-;     (and CurrentUser\Root for self-signed chains) — no admin needed.
-;   * Writes every step to %LOCALAPPDATA%\OMNIX\logs\install-debug.log and verifies
-;     the registry values by reading them back (spec 4.2 step 6).
+; Safety / correctness rules:
+;   * Detect Office before registration; never guess a host that is not present.
+;   * Register only OMNIX-owned add-in keys.
+;   * NEVER clear Office Resiliency/DisabledItems/CrashingAddinList globally.
+;   * Never bypass Office/Windows policy. User-authorized install only.
+;   * Verify all installed Office hosts after registration and log exact failures.
 ; ============================================================================
 
 #define MyAppName "OMNIX"
@@ -48,21 +41,14 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; Payload: the VSTO build outputs of all three hosts merged into one folder.
+; Three VSTO hosts + shared core + scripts staged by the build pipeline.
 Source: "payload\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: "vstor_redist.exe"
-; Manifest signing certificate (staged by the build scripts; optional for local dev builds)
+
 #if FileExists(AddBackslash(SourcePath) + "payload\OMNIX.cer")
 Source: "payload\OMNIX.cer"; DestDir: "{app}"; Flags: ignoreversion
-; Also stage it to {tmp} (dontcopy = extracted at Setup startup, not permanently
-; installed) so CurStepChanged/ssInstall can find it there BEFORE {app} files
-; exist — [Files] entries only land in {app} at file-copy time, which happens
-; AFTER CurStepChanged(ssInstall) runs, not before.
 Source: "payload\OMNIX.cer"; DestDir: "{tmp}"; Flags: dontcopy
 #endif
-; Bundled VSTO Runtime redistributable (fetched at CI build time from the
-; official Microsoft URL — see .github/workflows/build.yml). Staged to {tmp}
-; only (dontcopy): it is a one-time installer for a system-wide prerequisite,
-; not something OMNIX itself needs permanently in {app}.
+
 #if FileExists(AddBackslash(SourcePath) + "payload\vstor_redist.exe")
 Source: "payload\vstor_redist.exe"; DestDir: "{tmp}"; Flags: dontcopy
 #endif
@@ -74,21 +60,20 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Type: filesandordirs; Name: "{app}"
 
 [Code]
-// ============================================================
-//  Constants / state
-// ============================================================
 const
   RegAddinsFmt    = 'Software\Microsoft\Office\%0:s\%1:s\Addins\OMNIX';
   TrustedPubStore = 'TrustedPublisher';
   RootStore       = 'Root';
 
 var
-  DetectedPlatform: String;    // 'x64' or 'x86'
-  HostList:    TStringList;    // hosts actually installed: Excel, Word, PowerPoint
-  VersionList: TStringList;    // Office versions present: 16.0 and/or 15.0
+  DetectedPlatform: String;
+  DetectedOfficeVersion: String;
+  HostList: TStringList;
+  VersionList: TStringList;
   NeedVstoX64: Boolean;
   NeedVstoX86: Boolean;
   VstoRestartNeeded: Boolean;
+  PrerequisiteFailed: Boolean;
 
 procedure InstallLog(const Line: String);
 var
@@ -100,7 +85,6 @@ begin
     Full := LogDir + '\install-debug.log';
     SaveStringToFile(Full, GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '  ' + Line + #13#10, True);
   except
-    // never let logging break the install
   end;
 end;
 
@@ -122,60 +106,158 @@ begin
   end;
 end;
 
-// ============================================================
-//  Office detection (spec 4.1) — real bitness, never a guess
-// ============================================================
+function HostExeName(const Host: String): String;
+begin
+  if CompareText(Host, 'Excel') = 0 then Result := 'EXCEL.EXE'
+  else if CompareText(Host, 'Word') = 0 then Result := 'WINWORD.EXE'
+  else if CompareText(Host, 'PowerPoint') = 0 then Result := 'POWERPNT.EXE'
+  else Result := '';
+end;
+
 function DetectOfficePlatform: String;
 var
   S: String;
 begin
   Result := '';
-  // 1) Click-to-Run (Office 2013+): HKLM\SOFTWARE\Microsoft\Office\ClickToRun\Configuration -> Platform
+
   if RegQueryStringValue(HKLM64, 'SOFTWARE\Microsoft\Office\ClickToRun\Configuration', 'Platform', S) then
-    Result := S
+    Result := Lowercase(S)
   else if RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\Office\ClickToRun\Configuration', 'Platform', S) then
-    Result := S
-  else begin
-    // 2) MSI fallback: check real install folders
-    if DirExists('C:\Program Files\Microsoft Office') or
-       DirExists('C:\Program Files\Microsoft Office\root') then
-      Result := 'x64'
-    else if DirExists('C:\Program Files (x86)\Microsoft Office') then
-      Result := 'x86';
-  end;
+    Result := Lowercase(S)
+  else if FileExists(ExpandConstant('{pf64}\Microsoft Office\root\Office16\EXCEL.EXE')) or
+          FileExists(ExpandConstant('{pf64}\Microsoft Office\root\Office16\WINWORD.EXE')) or
+          FileExists(ExpandConstant('{pf64}\Microsoft Office\root\Office16\POWERPNT.EXE')) then
+    Result := 'x64'
+  else if FileExists(ExpandConstant('{pf32}\Microsoft Office\root\Office16\EXCEL.EXE')) or
+          FileExists(ExpandConstant('{pf32}\Microsoft Office\root\Office16\WINWORD.EXE')) or
+          FileExists(ExpandConstant('{pf32}\Microsoft Office\root\Office16\POWERPNT.EXE')) then
+    Result := 'x86'
+  else if DirExists(ExpandConstant('{pf64}\Microsoft Office')) then
+    Result := 'x64'
+  else if DirExists(ExpandConstant('{pf32}\Microsoft Office')) then
+    Result := 'x86';
+
   InstallLog('Office platform detected: ' + Result);
 end;
 
-function IsHostInstalled(const Host: String; const Version: String): Boolean;
+function VersionFromClientVersion(const S: String): String;
+var
+  P, Major: Integer;
+  M: String;
 begin
-  Result := RegKeyExists(HKCU, 'Software\Microsoft\Office\' + Version + '\' + Host);
+  Result := '';
+  P := Pos('.', S);
+  if P > 1 then M := Copy(S, 1, P - 1) else M := S;
+  Major := StrToIntDef(M, 0);
+  if Major = 16 then Result := '16.0'
+  else if Major = 15 then Result := '15.0';
+end;
+
+function DetectOfficeVersion: String;
+var
+  S: String;
+begin
+  Result := '';
+
+  if RegQueryStringValue(HKLM64, 'SOFTWARE\Microsoft\Office\ClickToRun\Configuration', 'ClientVersionToReport', S) then
+    Result := VersionFromClientVersion(S)
+  else if RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\Office\ClickToRun\Configuration', 'ClientVersionToReport', S) then
+    Result := VersionFromClientVersion(S);
+
+  if Result = '' then
+  begin
+    if RegKeyExists(HKLM64, 'SOFTWARE\Microsoft\Office\16.0\Common') or
+       RegKeyExists(HKLM32, 'SOFTWARE\Microsoft\Office\16.0\Common') or
+       RegKeyExists(HKCU, 'Software\Microsoft\Office\16.0\Common') then
+      Result := '16.0'
+    else if RegKeyExists(HKLM64, 'SOFTWARE\Microsoft\Office\15.0\Common') or
+            RegKeyExists(HKLM32, 'SOFTWARE\Microsoft\Office\15.0\Common') or
+            RegKeyExists(HKCU, 'Software\Microsoft\Office\15.0\Common') then
+      Result := '15.0';
+  end;
+
+  InstallLog('Office version detected: ' + Result);
+end;
+
+function IsVersionPresent(const Version: String): Boolean;
+begin
+  Result :=
+    (CompareText(DetectedOfficeVersion, Version) = 0) or
+    RegKeyExists(HKCU, 'Software\Microsoft\Office\' + Version + '\Common') or
+    RegKeyExists(HKLM64, 'SOFTWARE\Microsoft\Office\' + Version + '\Common') or
+    RegKeyExists(HKLM32, 'SOFTWARE\Microsoft\Office\' + Version + '\Common');
+end;
+
+function IsHostInstalled(const Host: String; const Version: String): Boolean;
+var
+  Exe, S: String;
+begin
+  Result := False;
+
+  ; First prefer explicit host/version registry evidence.
+  if RegKeyExists(HKCU, 'Software\Microsoft\Office\' + Version + '\' + Host) or
+     RegKeyExists(HKLM64, 'SOFTWARE\Microsoft\Office\' + Version + '\' + Host) or
+     RegKeyExists(HKLM32, 'SOFTWARE\Microsoft\Office\' + Version + '\' + Host) then
+  begin
+    Result := True;
+    exit;
+  end;
+
+  ; Executable/App Paths fallback is only valid for the detected Office version.
+  if CompareText(DetectedOfficeVersion, Version) <> 0 then exit;
+
+  Exe := HostExeName(Host);
+  if Exe = '' then exit;
+
+  if RegQueryStringValue(HKLM64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\' + Exe, '', S) or
+     RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\' + Exe, '', S) then
+  begin
+    if FileExists(S) then
+    begin
+      Result := True;
+      exit;
+    end;
+  end;
+
+  Result :=
+    FileExists(ExpandConstant('{pf64}\Microsoft Office\root\Office16\' + Exe)) or
+    FileExists(ExpandConstant('{pf32}\Microsoft Office\root\Office16\' + Exe)) or
+    FileExists(ExpandConstant('{pf64}\Microsoft Office\Office16\' + Exe)) or
+    FileExists(ExpandConstant('{pf32}\Microsoft Office\Office16\' + Exe)) or
+    FileExists(ExpandConstant('{pf64}\Microsoft Office\Office15\' + Exe)) or
+    FileExists(ExpandConstant('{pf32}\Microsoft Office\Office15\' + Exe));
+end;
+
+function HostDetected(const Host: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  if VersionList = nil then exit;
+  for I := 0 to VersionList.Count - 1 do
+  begin
+    if IsHostInstalled(Host, VersionList[I]) then
+    begin
+      Result := True;
+      exit;
+    end;
+  end;
 end;
 
 function VstoRuntimeInstalled(const BitView: Integer): Boolean;
 var
   Ver: String;
 begin
-  // HKLM\SOFTWARE\Microsoft\VSTO Runtime Setup\v4R -> Version
   Result := RegQueryStringValue(BitView, 'SOFTWARE\Microsoft\VSTO Runtime Setup\v4R', 'Version', Ver);
   InstallLog('VSTO Runtime check (registry view ' + IntToStr(BitView) + '): found=' + B2S(Result) + ' version=' + Ver);
 end;
 
-// ============================================================
-//  Cleanup of previous installs (spec 4.2 step 2 + 4.4 DisabledItems)
-// ============================================================
 procedure RemoveAddinRegistry();
 var
   I, J: Integer;
   Key: String;
   Versions, Hosts: array of String;
 begin
-  // Deliberately does NOT depend on the global HostList/VersionList — those
-  // are only populated during PrepareToInstall, which never runs during
-  // uninstall. Using its own fixed, complete list means this works
-  // correctly both when reinstalling (cleanup before rewrite) AND during a
-  // real uninstall (this was a real bug: uninstall silently removed NOTHING
-  // from the registry before, because HostList was nil at that point and
-  // the old nil-guard just made this whole procedure a no-op).
   SetArrayLength(Versions, 2); Versions[0] := '16.0'; Versions[1] := '15.0';
   SetArrayLength(Hosts, 3); Hosts[0] := 'Excel'; Hosts[1] := 'Word'; Hosts[2] := 'PowerPoint';
 
@@ -186,46 +268,19 @@ begin
       if RegKeyExists(HKCU, Key) then
       begin
         RegDeleteKeyIncludingSubkeys(HKCU, Key);
-        InstallLog('Removed old registry key: HKCU\' + Key);
+        InstallLog('Removed OMNIX-owned registry key: HKCU\' + Key);
       end;
     end;
 end;
 
-procedure CleanResiliencyDisabledItems();
-var
-  I, J, K: Integer;
-  Versions, Hosts: array of String;
-  Root, Key: String;
-  Names: TArrayOfString;
+procedure PreserveOfficeResiliencyState();
 begin
-  SetArrayLength(Versions, 2); Versions[0] := '16.0'; Versions[1] := '15.0';
-  SetArrayLength(Hosts, 3); Hosts[0] := 'Excel'; Hosts[1] := 'Word'; Hosts[2] := 'PowerPoint';
-
-  for I := 0 to GetArrayLength(Versions) - 1 do
-    for J := 0 to GetArrayLength(Hosts) - 1 do
-    begin
-      Root := 'Software\Microsoft\Office\' + Versions[I] + '\' + Hosts[J] + '\Resiliency';
-      Key := Root + '\DisabledItems';
-      if RegKeyExists(HKCU, Key) then
-      begin
-        // Delete every binary blob Office stored for a previously disabled add-in.
-        if RegGetValueNames(HKCU, Key, Names) then
-        begin
-          for K := 0 to GetArrayLength(Names) - 1 do
-            RegDeleteValue(HKCU, Key, Names[K]);
-        end;
-        InstallLog('Cleaned Resiliency\DisabledItems for ' + Hosts[J] + ' ' + Versions[I]);
-      end;
-      Key := Root + '\CrashingAddinList';
-      if RegKeyExists(HKCU, Key) then RegDeleteKeyIncludingSubkeys(HKCU, Key);
-      Key := Root + '\DoNotDisableAddinList';
-      if RegKeyExists(HKCU, Key) then RegDeleteKeyIncludingSubkeys(HKCU, Key);
-    end;
+  ; Office Resiliency entries are shared security/recovery state. Values in
+  ; DisabledItems are opaque binary records and may belong to unrelated add-ins.
+  ; OMNIX must not globally delete them or CrashingAddinList/DoNotDisableAddinList.
+  InstallLog('Office Resiliency state preserved unchanged (no global DisabledItems cleanup).');
 end;
 
-// ============================================================
-//  Setup init: Office must be closed while files are replaced
-// ============================================================
 function IsProcessRunning(const ImageName: String): Boolean;
 var
   ResultCode: Integer;
@@ -236,9 +291,6 @@ begin
   Result := (ResultCode = 0);
 end;
 
-// Inno Setup calls this automatically near the end of installation. If it
-// returns True, the user is properly asked "Setup needs to restart your
-// computer" instead of silently leaving a half-registered VSTO Runtime.
 function NeedRestart(): Boolean;
 begin
   Result := VstoRestartNeeded;
@@ -247,6 +299,9 @@ end;
 function InitializeSetup(): Boolean;
 begin
   Result := True;
+  PrerequisiteFailed := False;
+  VstoRestartNeeded := False;
+
   ForceDirectories(ExpandConstant('{localappdata}') + '\OMNIX\logs');
   InstallLog('=== OMNIX setup initialized (version {#MyAppVersion}) ===');
 
@@ -259,13 +314,10 @@ begin
         Result := False;
     end;
   except
-    InstallLog('WARNING: the "is Office running" check failed and was skipped: ' + GetExceptionMessage);
+    InstallLog('WARNING: Office running-state check failed: ' + GetExceptionMessage);
   end;
 end;
 
-// ============================================================
-//  Detection happens BEFORE installing anything (spec 4.1)
-// ============================================================
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Hosts, Versions: String;
@@ -274,42 +326,44 @@ begin
   Result := '';
   try
     DetectedPlatform := DetectOfficePlatform;
+    DetectedOfficeVersion := DetectOfficeVersion;
+
     if DetectedPlatform = '' then
     begin
-      InstallLog('OFFICE_DETECTION_ERROR: Office could not be detected.');
+      InstallLog('OFFICE_DETECTION_ERROR: Office platform could not be detected.');
       Result := 'Microsoft Office (Excel, Word or PowerPoint) was not detected on this system.';
       exit;
     end;
 
     HostList := TStringList.Create;
     VersionList := TStringList.Create;
-    if IsHostInstalled('Excel', '16.0') or IsHostInstalled('Excel', '15.0') then HostList.Add('Excel');
-    if IsHostInstalled('Word', '16.0') or IsHostInstalled('Word', '15.0') then HostList.Add('Word');
-    if IsHostInstalled('PowerPoint', '16.0') or IsHostInstalled('PowerPoint', '15.0') then HostList.Add('PowerPoint');
-    if IsHostInstalled('Excel', '16.0') or IsHostInstalled('Word', '16.0') or IsHostInstalled('PowerPoint', '16.0') then VersionList.Add('16.0');
-    if IsHostInstalled('Excel', '15.0') or IsHostInstalled('Word', '15.0') or IsHostInstalled('PowerPoint', '15.0') then VersionList.Add('15.0');
 
-    InstallLog('Hosts found: ' + HostsSummary() + ' | Versions found: 16.0=' + B2S(VersionList.IndexOf('16.0') >= 0) + ' 15.0=' + B2S(VersionList.IndexOf('15.0') >= 0));
+    if IsVersionPresent('16.0') then VersionList.Add('16.0');
+    if IsVersionPresent('15.0') then VersionList.Add('15.0');
+    if (VersionList.Count = 0) and (DetectedOfficeVersion <> '') then VersionList.Add(DetectedOfficeVersion);
+
+    if HostDetected('Excel') then HostList.Add('Excel');
+    if HostDetected('Word') then HostList.Add('Word');
+    if HostDetected('PowerPoint') then HostList.Add('PowerPoint');
+
+    InstallLog('Hosts found: ' + HostsSummary() +
+               ' | versions: 16.0=' + B2S(VersionList.IndexOf('16.0') >= 0) +
+               ' 15.0=' + B2S(VersionList.IndexOf('15.0') >= 0));
 
     if HostList.Count = 0 then
     begin
-      InstallLog('OFFICE_DETECTION_ERROR: no Office host application found.');
-      Result := 'No Excel, Word or PowerPoint installation was found.';
+      InstallLog('OFFICE_DETECTION_ERROR: no supported Office host application found.');
+      Result := 'No supported Excel, Word or PowerPoint installation was found.';
       exit;
     end;
 
-    // VSTO Runtime bitness check (spec 4.1 step 3): Office x64 needs x64 VSTO runtime too.
     NeedVstoX86 := not VstoRuntimeInstalled(HKLM32);
     if IsWin64 and (DetectedPlatform = 'x64') then
       NeedVstoX64 := not VstoRuntimeInstalled(HKLM64)
     else
       NeedVstoX64 := False;
+
     InstallLog('VSTO runtime needed: x86=' + B2S(NeedVstoX86) + ' x64=' + B2S(NeedVstoX64));
-    // Note: the actual redistributable (vstor_redist.exe) is bundled directly in
-    // the payload (fetched from the official Microsoft URL at CI build time) and
-    // is installed later, in CurStepChanged, with Exec — no in-wizard download
-    // page is used, which avoids that whole (fragile, harder-to-diagnose-remotely)
-    // code path entirely.
 
     Hosts := '';
     for I := 0 to HostList.Count - 1 do Hosts := Hosts + HostList[I] + ' ';
@@ -326,20 +380,17 @@ function UpdateReadyMemo(const Space, NewLine, MemoUserInfoInfo, MemoDirInfo, Me
   MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 begin
   Result := '';
-  Result := Result + 'Office platform:  ' + DetectedPlatform + NewLine;
+  Result := Result + 'Office platform: ' + DetectedPlatform + NewLine;
+  Result := Result + 'Office generation: ' + DetectedOfficeVersion + NewLine;
   Result := Result + 'Hosts to register: ' + HostsSummary() + NewLine;
   if NeedVstoX86 or NeedVstoX64 then
     Result := Result + NewLine +
-      'The Microsoft VSTO Runtime is missing and will be installed from the bundled redistributable.' + NewLine +
-      'This is the ONLY step that may ask for Administrator permission (transparent UAC).' + NewLine;
+      'The Microsoft VSTO Runtime prerequisite appears missing and the bundled Microsoft redistributable will be attempted.' + NewLine +
+      'Windows may request Administrator approval for that Microsoft prerequisite only.' + NewLine;
   Result := Result + NewLine +
-    'Installation folder: ' + ExpandConstant('{localappdata}') + '\Programs\OMNIX (per-user, no admin needed).' + NewLine;
+    'Installation folder: ' + ExpandConstant('{localappdata}') + '\Programs\OMNIX' + NewLine;
 end;
 
-
-// ============================================================
-//  Install steps — exact order of spec 4.2
-// ============================================================
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   I, J: Integer;
@@ -348,183 +399,147 @@ var
   ResultCode: Integer;
   VstoExe: String;
   CertPath: String;
+  RuntimeStillMissing: Boolean;
 begin
   if CurStep = ssInstall then
   begin
     InstallLog('=== OMNIX install begin (version {#MyAppVersion}) ===');
 
-    // ExtractTemporaryFile is REQUIRED for any [Files] entry using the
-    // 'dontcopy' flag — that flag only means "don't permanently install to
-    // {app}"; it does NOT auto-extract to {tmp} by itself. Without this
-    // explicit call, {tmp}\vstor_redist.exe and {tmp}\OMNIX.cer would never
-    // exist even though both files are genuinely embedded in the compiled
-    // installer (this was the real, root-cause bug behind "vstor_redist.exe
-    // missing from temp" / "no OMNIX.cer found" in the v1.0.2 install log).
     try
       ExtractTemporaryFile('vstor_redist.exe');
     except
-      InstallLog('NOTE: could not extract vstor_redist.exe (likely not bundled in this build): ' + GetExceptionMessage);
+      InstallLog('NOTE: vstor_redist.exe was not extracted/bundled: ' + GetExceptionMessage);
     end;
+
     try
       ExtractTemporaryFile('OMNIX.cer');
     except
-      InstallLog('NOTE: could not extract OMNIX.cer (likely not bundled in this build): ' + GetExceptionMessage);
+      InstallLog('NOTE: OMNIX.cer was not extracted/bundled: ' + GetExceptionMessage);
     end;
 
-    // --- 4.2 step 2: clean previous install + DisabledItems BEFORE writing anything new ---
+    ; Remove only previous OMNIX-owned registration. Never mutate shared Office
+    ; Resiliency state to force-enable the add-in.
     RemoveAddinRegistry();
-    CleanResiliencyDisabledItems();
+    PreserveOfficeResiliencyState();
 
-    // Fully wipe any previous install folder before Inno's own [Files] copy
-    // phase begins right after this function returns. Overwriting files by
-    // matching name (what [Files] normally does) does NOT remove files that
-    // existed in an OLDER build but are no longer part of the current one —
-    // this is exactly how stray leftover folders/files from earlier,
-    // different OMNIX architectures were found sitting around undetected
-    // for a long time. A full wipe-then-reinstall is simpler and safer than
-    // trying to track every historical file name that might be stale.
     if DirExists(ExpandConstant('{app}')) then
     begin
-      InstallLog('Removing previous install folder entirely before reinstalling: ' + ExpandConstant('{app}'));
+      InstallLog('Removing previous OMNIX application folder before clean reinstall: ' + ExpandConstant('{app}'));
       DelTree(ExpandConstant('{app}'), True, True, True);
     end;
 
-    // --- 4.2 step 3: VSTO runtime if missing — the only step that may raise UAC ---
-    // TEMPORARY EXPERIMENT: Microsoft's own documentation says Office 2013+
-    // (including 365/Click-to-Run) generally already bundles the VSTO
-    // runtime extensions as long as .NET Framework 4 is present — which it
-    // always is on any modern Windows. Our own registry check may be
-    // looking for a legacy marker that a modern Click-to-Run Office simply
-    // never writes, even though the real runtime support is already fully
-    // functional. Given vstor_redist.exe (a 2010-era installer) has also
-    // been repeatedly unreliable in the wild on modern systems ("Generic
-    // trust failure" reports), this build SKIPS running it entirely, as a
-    // direct test: does OMNIX load in Excel without it? If yes, this whole
-    // fragile, UAC-and-certutil-heavy step can be REMOVED for good, making
-    // the installer dramatically more robust for mass deployment.
-    if (NeedVstoX86 or NeedVstoX64) and False then
+    ; Install the official Microsoft VSTO runtime only when the expected runtime
+    ; marker is absent. Do not hide prerequisite failure behind a successful setup.
+    if NeedVstoX86 or NeedVstoX64 then
     begin
       VstoExe := ExpandConstant('{tmp}') + '\vstor_redist.exe';
       if FileExists(VstoExe) then
       begin
-        InstallLog('Installing VSTO Runtime (vstor_redist.exe /q /norestart) with elevation (UAC)…');
+        InstallLog('Installing Microsoft VSTO Runtime prerequisite (/q /norestart) with normal UAC approval...');
         if not ShellExec('runas', VstoExe, '/q /norestart', '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
         begin
           ResultCode := -1;
-          InstallLog('ShellExec(runas) itself failed to launch vstor_redist.exe (e.g. user declined the UAC prompt).');
-        end;
-        InstallLog('VSTO Runtime installer exit code: ' + IntToStr(ResultCode));
-        if NeedVstoX64 and (not VstoRuntimeInstalled(HKLM64)) then
+          PrerequisiteFailed := True;
+          InstallLog('VSTO prerequisite could not be launched (UAC may have been declined).');
+        end
+        else
         begin
-          if ResultCode = 0 then
-          begin
-            // The installer itself reported success, but the registry marker
-            // still isn't there. This is a well-known pattern for Windows
-            // runtime installers when required files were locked/in-use
-            // (very plausible here, given how many prior partial install
-            // attempts have touched this machine) — the actual registration
-            // completes only after a restart. Ask Inno Setup to prompt for
-            // one properly, instead of silently leaving a half-finished
-            // runtime and registering the add-in anyway.
-            InstallLog('VSTO installer exit code 0 but registry still shows NOT installed — this looks like a pending-restart case. Requesting a restart.');
-            VstoRestartNeeded := True;
-          end
-          else
-            InstallLog('WARNING: x64 VSTO Runtime verification after install did not succeed.');
+          InstallLog('VSTO Runtime installer exit code: ' + IntToStr(ResultCode));
+          if ResultCode <> 0 then PrerequisiteFailed := True;
+        end;
+
+        RuntimeStillMissing := False;
+        if NeedVstoX86 and (not VstoRuntimeInstalled(HKLM32)) then RuntimeStillMissing := True;
+        if NeedVstoX64 and (not VstoRuntimeInstalled(HKLM64)) then RuntimeStillMissing := True;
+
+        if (ResultCode = 0) and RuntimeStillMissing then
+        begin
+          VstoRestartNeeded := True;
+          InstallLog('VSTO installer returned success but runtime marker is not visible yet; restart requested before final runtime acceptance.');
         end;
       end
       else
-        InstallLog('WARNING: vstor_redist.exe missing from temp — download step did not run.');
-    end
-    else if NeedVstoX86 or NeedVstoX64 then
-      InstallLog('EXPERIMENT: skipping vstor_redist.exe entirely this build, to test whether Office already has what it needs. Registry will still be written below regardless.');
+      begin
+        PrerequisiteFailed := True;
+        InstallLog('PREREQUISITE_ERROR: vstor_redist.exe is required but missing from the installer payload.');
+      end;
+    end;
 
-    // --- 4.2 step 4: trust the manifest signing certificate (CurrentUser — no admin) ---
+    ; Development/self-signed manifests may require CurrentUser trust. Production
+    ; releases must replace this with a real signing chain; the release gate must
+    ; not claim production trust from this temporary certificate.
     CertPath := ExpandConstant('{tmp}') + '\OMNIX.cer';
-    if not FileExists(CertPath) then
-      CertPath := ExpandConstant('{app}') + '\OMNIX.cer';
+    if not FileExists(CertPath) then CertPath := ExpandConstant('{app}') + '\OMNIX.cer';
     if FileExists(CertPath) then
     begin
-      // -f (force) is REQUIRED here: without it, "certutil -addstore Root"
-      // shows an interactive Windows security confirmation dialog ("Do you
-      // want to install this certificate?"). Since this Exec call uses
-      // SW_HIDE and ewWaitUntilTerminated, an unsuppressed dialog could sit
-      // hidden/behind other windows forever, making the WHOLE INSTALLER
-      // HANG silently while waiting for a click the user never sees — a
-      // real, previously undiscovered bug found on this full re-review.
       Exec(ExpandConstant('{cmd}'), '/C certutil -f -user -addstore ' + TrustedPubStore + ' "' + CertPath + '"',
            '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      InstallLog('certutil -f -user -addstore TrustedPublisher exit code: ' + IntToStr(ResultCode));
-      // Self-signed chains also need the CurrentUser ROOT store.
+      InstallLog('TrustedPublisher certificate import exit code: ' + IntToStr(ResultCode));
       Exec(ExpandConstant('{cmd}'), '/C certutil -f -user -addstore ' + RootStore + ' "' + CertPath + '"',
            '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      InstallLog('certutil -f -user -addstore Root exit code: ' + IntToStr(ResultCode));
+      InstallLog('CurrentUser Root certificate import exit code: ' + IntToStr(ResultCode));
     end
     else
-      InstallLog('NOTE: no OMNIX.cer found — manifests are UNSIGNED for this build. ' +
-                 'Office may silently reject the add-in (spec 4.4).');
+      InstallLog('NOTE: no OMNIX.cer found; Office may reject unsigned VSTO manifests.');
   end;
 
   if CurStep = ssPostInstall then
   begin
-    // --- 4.2 step 5: write the Addins registry per real host and per real version ---
-    AllOk := True;
+    AllOk := not PrerequisiteFailed;
     AppPathForward := ExpandConstant('{app}');
     StringChange(AppPathForward, '\', '/');
+
     for I := 0 to VersionList.Count - 1 do
       for J := 0 to HostList.Count - 1 do
       begin
-        Key := Format(RegAddinsFmt, [VersionList[I], HostList[J]]);
-        Manifest := 'file:///' + AppPathForward + '/OMNIX.' + HostList[J] + '.vsto|vstolocal';
+        if IsHostInstalled(HostList[J], VersionList[I]) then
+        begin
+          Key := Format(RegAddinsFmt, [VersionList[I], HostList[J]]);
+          Manifest := 'file:///' + AppPathForward + '/OMNIX.' + HostList[J] + '.vsto|vstolocal';
 
-        RegWriteStringValue(HKCU, Key, 'Description', 'OMNIX AI Office');
-        RegWriteStringValue(HKCU, Key, 'FriendlyName', 'OMNIX');
-        RegWriteDWordValue(HKCU, Key, 'LoadBehavior', 3);
-        RegWriteStringValue(HKCU, Key, 'Manifest', Manifest);
-        InstallLog('Wrote HKCU\' + Key + '  Manifest=' + Manifest);
+          RegWriteStringValue(HKCU, Key, 'Description', 'OMNIX AI Office');
+          RegWriteStringValue(HKCU, Key, 'FriendlyName', 'OMNIX');
+          RegWriteDWordValue(HKCU, Key, 'LoadBehavior', 3);
+          RegWriteStringValue(HKCU, Key, 'Manifest', Manifest);
+          InstallLog('Wrote HKCU\' + Key + ' Manifest=' + Manifest);
 
-        // --- 4.2 step 6: verification — read back immediately and log ---
-        if RegQueryStringValue(HKCU, Key, 'Manifest', ReadBack) then
-          InstallLog('  VERIFIED (' + VersionList[I] + ' / ' + HostList[J] + '): ' + ReadBack)
-        else begin
-          InstallLog('  REGISTRATION_ERROR: could not read back ' + Key);
-          AllOk := False;
+          if RegQueryStringValue(HKCU, Key, 'Manifest', ReadBack) then
+            InstallLog('REGISTRATION VERIFIED (' + VersionList[I] + ' / ' + HostList[J] + '): ' + ReadBack)
+          else
+          begin
+            InstallLog('REGISTRATION_ERROR: could not read back ' + Key);
+            AllOk := False;
+          end;
         end;
       end;
 
-    // --- 4.2 step 7: Start Menu uninstall shortcut is created via [Icons] ---
-    InstallLog('=== OMNIX install end (registration OK: ' + B2S(AllOk) + ') ===');
-
-    if not AllOk then
-      MsgBox('Some registry keys could not be verified. Please check install-debug.log in ' +
-             ExpandConstant('{localappdata}') + '\OMNIX\logs.', mbError, MB_OK);
-
-    // --- Automatic post-install verification (spec-driven request: no manual
-    // Excel menu navigation needed) — briefly launches Excel via COM
-    // automation, checks whether OMNIX genuinely appears loaded in
-    // Application.COMAddIns, and if not connected, tries to force-connect it
-    // to capture the EXACT underlying exception. Writes everything to
-    // %LOCALAPPDATA%\OMNIX\logs\post-install-verify.log automatically —
-    // the user does not have to open Excel or any menu themselves.
-    if AllOk then
+    ; If a prerequisite restart is pending, defer COM acceptance until after reboot.
+    if AllOk and (not VstoRestartNeeded) then
     begin
       try
-        InstallLog('Launching automatic post-install verification (briefly opens Excel via COM, hidden)...');
+        InstallLog('Launching automatic Excel/Word/PowerPoint post-install verification...');
         Exec('powershell.exe',
              '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}') + '\post-install-verify.ps1"',
              '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-        InstallLog('post-install-verify.ps1 exit code: ' + IntToStr(ResultCode) +
-                    ' (full detail in post-install-verify.log)');
+        InstallLog('post-install-verify.ps1 exit code: ' + IntToStr(ResultCode));
+        if ResultCode <> 0 then AllOk := False;
       except
-        InstallLog('EXCEPTION launching post-install-verify.ps1: ' + GetExceptionMessage);
+        InstallLog('POST_INSTALL_VERIFY_ERROR: ' + GetExceptionMessage);
+        AllOk := False;
       end;
-    end;
+    end
+    else if VstoRestartNeeded then
+      InstallLog('Post-install COM verification deferred because a Windows restart is required first.');
+
+    InstallLog('=== OMNIX install end (verified=' + B2S(AllOk) + ', restart=' + B2S(VstoRestartNeeded) + ') ===');
+
+    if not AllOk then
+      MsgBox('OMNIX installation completed but runtime verification FAILED.' #13#10#13#10 +
+             'Do not treat this build as ready. See logs in ' + ExpandConstant('{localappdata}') + '\OMNIX\logs.',
+             mbError, MB_OK);
   end;
 end;
 
-// ============================================================
-//  Uninstall (spec Phase 21: nothing left behind)
-// ============================================================
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ResultCode: Integer;
@@ -532,19 +547,18 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     RemoveAddinRegistry();
-    CleanResiliencyDisabledItems();
-    InstallLog('=== OMNIX uninstall: registry cleaned ===');
+    PreserveOfficeResiliencyState();
+    InstallLog('=== OMNIX uninstall: OMNIX-owned registration removed; Office Resiliency preserved ===');
 
-    // Remove the trusted certificate we added (leave the machine as it was).
     Exec(ExpandConstant('{cmd}'), '/C certutil -user -delstore ' + TrustedPubStore + ' OMNIX', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec(ExpandConstant('{cmd}'), '/C certutil -user -delstore ' + RootStore + ' OMNIX', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    InstallLog('Certificate removal attempted (best effort).');
+    InstallLog('OMNIX certificate removal attempted (best effort).');
   end;
 
   if CurUninstallStep = usPostUninstall then
   begin
-    if MsgBox('Also remove OMNIX settings and chat history ' +
-              '(' + ExpandConstant('{localappdata}') + '\OMNIX)?' + #13#10 +
+    if MsgBox('Also remove OMNIX settings and chat history (' +
+              ExpandConstant('{localappdata}') + '\OMNIX)?' + #13#10 +
               'Choose Yes only if you do NOT plan to reinstall.', mbConfirmation, MB_YESNO) = IDYES then
     begin
       DelTree(ExpandConstant('{localappdata}') + '\OMNIX', True, True, True);
