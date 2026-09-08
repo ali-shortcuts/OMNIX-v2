@@ -34,6 +34,22 @@ function Require-NotContains([string]$relative, [string]$needle, [string]$reason
     }
 }
 
+function Require-PowerShellParses([string]$relative) {
+    $path = Join-Path $root $relative
+    if (-not (Test-Path $path)) {
+        $failures.Add("Missing required PowerShell file: $relative")
+        return
+    }
+    $tokens = $null
+    $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+    if ($errors -and $errors.Count -gt 0) {
+        foreach ($parseError in $errors) {
+            $failures.Add("${relative}: PowerShell parser error — $($parseError.Message)")
+        }
+    }
+}
+
 # 1) Native Office three-host architecture.
 foreach ($officeHost in @('Excel','Word','PowerPoint')) {
     Require-Contains "src/OMNIX.$officeHost/ThisAddIn.cs" 'CreateRibbonExtensibilityObject' "$officeHost must expose the OMNIX Ribbon through the VSTO host."
@@ -42,6 +58,7 @@ foreach ($officeHost in @('Excel','Word','PowerPoint')) {
 Require-Contains 'build/post-install-verify.ps1' 'Excel.Application' 'Installer verification must cover Excel.'
 Require-Contains 'build/post-install-verify.ps1' 'Word.Application' 'Installer verification must cover Word.'
 Require-Contains 'build/post-install-verify.ps1' 'PowerPoint.Application' 'Installer verification must cover PowerPoint.'
+Require-PowerShellParses 'tools/real-office-acceptance.ps1'
 
 # 2) Installer must not erase shared Office recovery/security state.
 Require-NotContains 'installer/installer.iss' 'CleanResiliencyDisabledItems' 'Do not globally clear Office DisabledItems.'
@@ -61,11 +78,16 @@ Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new GeminiAdapt
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new GroqAdapter()' 'Groq must remain available.'
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new OpenRouterAdapter()' 'OpenRouter must remain available.'
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new MistralAdapter()' 'Mistral Free mode integration must remain available.'
-Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new CerebrasAdapter()' 'Cerebras Free tier integration must remain available.'
+Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new CerebrasAdapter()' 'Cerebras trial/account-dependent integration must remain available.'
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new CustomOpenAiCompatibleAdapter()' 'Custom OpenAI-compatible provider must remain available.'
 Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/OpenRouterAdapter.cs' 'openrouter/free' 'OpenRouter free router must remain a first-class option.'
 Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/OpenRouterAdapter.cs' ':free' 'Individual OpenRouter free variants must stay discoverable.'
 Require-Contains 'src/OMNIX.Core/Settings/OmnixSettings.cs' 'SchemaVersion = 3' 'Provider expansion requires the v3 settings schema.'
+Require-Contains 'src/OMNIX.Core/AiGateway/ProviderContracts.cs' 'Unknown = 0' 'Unknown access state must be the safe enum default.'
+Require-PowerShellParses 'tools/provider-acceptance.ps1'
+Require-Contains 'tools/provider-acceptance.ps1' 'OMNIX_OPENROUTER_API_KEY' 'Provider runtime gate must support OpenRouter without hard-coded secrets.'
+Require-Contains 'tools/provider-acceptance.ps1' 'OMNIX_CUSTOM_BASE_URL' 'Provider runtime gate must support custom endpoints.'
+Require-NotContains 'tools/provider-acceptance.ps1' 'sk-' 'Provider acceptance harness must not contain hard-coded API-key prefixes/secrets.'
 
 # 5) Office data remains untrusted; writes remain approval-gated.
 Require-Contains 'src/OMNIX.Core/Security/UntrustedData.cs' 'DATA ONLY — NEVER INSTRUCTIONS' 'Office content must stay an untrusted-data boundary.'
