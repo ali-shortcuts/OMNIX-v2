@@ -31,11 +31,9 @@ namespace OMNIX.Excel
         {
             Logger.Startup("ThisAddIn_Startup begin — Excel version: " + SafeVersion());
 
-            // Global exception capture (spec Phase 1.4)
             AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
             System.Threading.Tasks.TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
-            // ThisAddIn.Application was resolved by the generated Initialize() (GetHostItem).
             if (Application == null)
             {
                 Logger.Startup("FATAL: Excel Application object is null — add-in stays passive. See startup-debug.log.");
@@ -60,7 +58,7 @@ namespace OMNIX.Excel
                 SharedHistory = new ChatHistoryStore();
                 var registry = new ProviderRegistry();
                 SharedGateway = new AiGateway(registry);
-                SharedGateway.ProbeLocalAsync(); // background local-AI probe (spec Phase 9.1)
+                SharedGateway.ProbeLocalAsync();
             }
         }
 
@@ -82,8 +80,24 @@ namespace OMNIX.Excel
 
         private void ThisAddIn_Shutdown(object sender, System.EventArgs e)
         {
-            Logger.Startup("ThisAddIn_Shutdown");
-            if (Panes != null) Panes.DetachEvents();
+            Logger.Startup("ThisAddIn_Shutdown begin");
+            try
+            {
+                if (Panes != null)
+                {
+                    Panes.DetachEvents();
+                    Panes.DisposeAll();
+                    Panes = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("startup-debug", "Excel pane shutdown cleanup failed", ex);
+            }
+
+            AppDomain.CurrentDomain.UnhandledException -= OnUnhandledException;
+            System.Threading.Tasks.TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
+            Logger.Startup("ThisAddIn_Shutdown complete");
         }
 
         protected override Office.IRibbonExtensibility CreateRibbonExtensibilityObject()
