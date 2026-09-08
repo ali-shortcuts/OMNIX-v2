@@ -20,16 +20,17 @@ namespace OMNIX.Core.AiGateway
     }
 
     /// <summary>
-    /// Cost/access metadata is informational only. OMNIX never assumes that a cloud request is
-    /// permanently free because quotas, regions and provider policies can change.
+    /// Cost/access metadata is informational only. Unknown is deliberately zero/default so a
+    /// provider can never be mislabeled as free merely because metadata was not initialized.
     /// </summary>
     public enum ProviderAccessProfile
     {
-        LocalNoCost,
-        FreeTierAvailable,
-        FreeModelsAvailable,
-        AccountDependent,
-        CustomEndpoint
+        Unknown = 0,
+        LocalNoCost = 1,
+        FreeTierAvailable = 2,
+        FreeModelsAvailable = 3,
+        AccountDependent = 4,
+        CustomEndpoint = 5
     }
 
     public sealed class ProviderInfo
@@ -43,43 +44,21 @@ namespace OMNIX.Core.AiGateway
         public string Notes { get; set; }
         public ProviderAccessProfile AccessProfile { get; set; }
         public string AccessNotes { get; set; }
-
-        /// <summary>
-        /// Official provider-owned HTTPS pages only. These are product metadata, not user input.
-        /// Settings uses ApiKeyUrl for the optional "Get API Key" action and still validates
-        /// the scheme/host before opening the user's default browser.
-        /// </summary>
         public string OfficialWebsiteUrl { get; set; }
         public string DocumentationUrl { get; set; }
         public string ApiKeyUrl { get; set; }
     }
 
-    /// <summary>
-    /// Layer 6 contract: every provider (local or cloud) presents the SAME input/output shape.
-    /// The UI never talks to a provider directly — only the AI Gateway calls this interface.
-    /// </summary>
     public interface IProviderAdapter
     {
         ProviderInfo Info { get; }
-
-        /// <summary>Apply credentials/model for the next calls (in-memory only).</summary>
         void Configure(ProviderCredentials credentials);
-
         Task<IReadOnlyList<string>> ListModelsAsync(CancellationToken ct);
-
         Task<bool> TestConnectionAsync(CancellationToken ct);
-
-        /// <summary>
-        /// Sends a chat request. Streaming deltas are reported through onDelta.
-        /// Implementations MUST honor ct (real cancellation of the HTTP request).
-        /// </summary>
         Task<ChatResponse> SendAsync(ChatRequest request, Action<string> onDelta, CancellationToken ct);
-
-        /// <summary>Whether the currently configured model can accept images. Called at send time.</summary>
         bool SupportsVisionNow();
     }
 
-    /// <summary>Maps HTTP responses from OpenAI-style providers to categorized OMNIX errors.</summary>
     public static class HttpStatusMapper
     {
         public static OmnixException Map(int statusCode, string body, string providerName)
