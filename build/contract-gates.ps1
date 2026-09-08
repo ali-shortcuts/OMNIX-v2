@@ -1,6 +1,5 @@
 # OMNIX v3 anti-drift contract gates
-#
-# Fast structural checks. Runtime Office/provider tests remain separate release gates.
+# Fast structural checks only. Real Office/provider/runtime tests remain separate release gates.
 
 [CmdletBinding()]
 param()
@@ -17,20 +16,20 @@ function Read-RepoFile([string]$relative) {
         $failures.Add("Missing required file: $relative")
         return ''
     }
-    return Get-Content -Raw -Path $path
+    Get-Content -Raw -Path $path
 }
 
 function Require-Contains([string]$relative, [string]$needle, [string]$reason) {
     $text = Read-RepoFile $relative
     if ($text -notlike "*$needle*") {
-        $failures.Add("${relative}: missing required contract '$needle' — $reason")
+        $failures.Add("${relative}: missing '$needle' — $reason")
     }
 }
 
 function Require-NotContains([string]$relative, [string]$needle, [string]$reason) {
     $text = Read-RepoFile $relative
     if ($text -like "*$needle*") {
-        $failures.Add("${relative}: forbidden regression '$needle' — $reason")
+        $failures.Add("${relative}: forbidden '$needle' — $reason")
     }
 }
 
@@ -43,16 +42,14 @@ function Require-PowerShellParses([string]$relative) {
     $tokens = $null
     $errors = $null
     [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
-    if ($errors -and $errors.Count -gt 0) {
-        foreach ($parseError in $errors) {
-            $failures.Add("${relative}: PowerShell parser error — $($parseError.Message)")
-        }
+    foreach ($parseError in @($errors)) {
+        $failures.Add("${relative}: PowerShell parser error — $($parseError.Message)")
     }
 }
 
-# 1) Native Office three-host architecture.
+# 1. Native Office integration must remain present for all three hosts.
 foreach ($officeHost in @('Excel','Word','PowerPoint')) {
-    Require-Contains "src/OMNIX.$officeHost/ThisAddIn.cs" 'CreateRibbonExtensibilityObject' "$officeHost must expose the OMNIX Ribbon through the VSTO host."
+    Require-Contains "src/OMNIX.$officeHost/ThisAddIn.cs" 'CreateRibbonExtensibilityObject' "$officeHost must expose the OMNIX Ribbon."
     Require-Contains "src/OMNIX.$officeHost/OmnixRibbon.xml" 'OMNIX' "$officeHost must keep an OMNIX Ribbon definition."
 }
 Require-Contains 'build/post-install-verify.ps1' 'Excel.Application' 'Installer verification must cover Excel.'
@@ -60,106 +57,98 @@ Require-Contains 'build/post-install-verify.ps1' 'Word.Application' 'Installer v
 Require-Contains 'build/post-install-verify.ps1' 'PowerPoint.Application' 'Installer verification must cover PowerPoint.'
 Require-PowerShellParses 'tools/real-office-acceptance.ps1'
 Require-PowerShellParses 'tools/real-office-ui-acceptance.ps1'
-Require-Contains 'tools/real-office-ui-acceptance.ps1' 'OFFICE-UI-REAL-001' 'Release evidence must include a real Ribbon/workspace UI test.'
-Require-Contains 'tools/real-office-ui-acceptance.ps1' 'RibbonTabFound' 'UI gate must verify the OMNIX Ribbon tab itself.'
-Require-Contains 'tools/real-office-ui-acceptance.ps1' 'OpenWorkspaceInvoked' 'UI gate must actually invoke Open Workspace, not only discover registration.'
-Require-Contains 'tools/real-office-ui-acceptance.ps1' 'WorkspaceEvidenceFound' 'UI gate must prove workspace UI appeared.'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' 'OFFICE-UI-REAL-001' 'Real Ribbon/workspace evidence is mandatory.'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' 'RibbonTabFound' 'UI gate must find the actual OMNIX Ribbon tab.'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' 'OpenWorkspaceInvoked' 'UI gate must invoke Open Workspace.'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' 'WorkspaceEvidenceFound' 'UI gate must detect the task pane/workspace.'
 
-# 2) Installer must not erase shared Office recovery/security state or broadly alter trust stores.
+# 2. Installer must preserve Office recovery/security state.
 Require-NotContains 'installer/installer.iss' 'CleanResiliencyDisabledItems' 'Do not globally clear Office DisabledItems.'
 Require-NotContains 'installer/installer.iss' "Root + '\CrashingAddinList'" 'Do not delete shared Office crashing-addin state.'
-Require-NotContains 'installer/installer.iss' 'RegDeleteValue(HKCU, Key' 'Opaque DisabledItems values may belong to unrelated add-ins.'
-Require-Contains 'installer/installer.iss' 'PreserveOfficeResiliencyState' 'Installer must preserve shared Office Resiliency state.'
+Require-NotContains 'installer/installer.iss' 'RegDeleteValue(HKCU, Key' 'Opaque DisabledItems may belong to unrelated add-ins.'
+Require-Contains 'installer/installer.iss' 'PreserveOfficeResiliencyState' 'Shared Office Resiliency state must remain untouched.'
 Require-NotContains 'installer/installer.iss' 'and False then' 'Do not silently disable the VSTO prerequisite path.'
-Require-PowerShellParses 'build/classify-dev-cert.ps1'
-Require-Contains 'build/classify-dev-cert.ps1' 'isSelfSigned' 'Installer trust helper must distinguish self-signed development certificates from CA-signed production certificates.'
-Require-Contains 'installer/installer.iss' 'classify-dev-cert.ps1' 'Installer must classify the public cert before any development trust-store import.'
-Require-Contains 'installer/installer.iss' 'CA/non-self-signed publisher certificate detected: no OMNIX trust-store modification performed.' 'Production certificates must rely on the normal Windows trust chain.'
-Require-Contains 'installer/installer.iss' 'dev-cert-thumbprint.txt' 'Development trust removal must be bound to the exact thumbprint imported by OMNIX.'
-Require-NotContains 'installer/installer.iss' 'delstore ' + 'TrustedPublisher + '' OMNIX''' 'Do not delete certificates by a broad OMNIX name match.'
-Require-NotContains 'installer/installer.iss' 'delstore ' + 'RootStore + '' OMNIX''' 'Do not delete Root certificates by a broad OMNIX name match.'
 
-# Private signing material must stay out of the repository payload and logs.
+# 3. Development certificate trust must be exact and production-safe.
 Require-PowerShellParses 'build/create-signing-cert.ps1'
-Require-Contains 'build/create-signing-cert.ps1' 'KeyExportPolicy NonExportable' 'Development private key must remain non-exportable in CurrentUser certificate store.'
-Require-NotContains 'build/create-signing-cert.ps1' 'Export-PfxCertificate' 'Do not export development private keys to PFX.'
-Require-NotContains 'build/create-signing-cert.ps1' 'omnix-dev-only' 'No hard-coded PFX password is allowed.'
-Require-Contains 'build/package.ps1' 'Private signing key file(s) were found' 'Packaging must fail closed if PFX files appear.'
-Require-Contains 'build/package.ps1' 'payloadPrivateKeys' 'Installer payload must reject private signing keys.'
+Require-PowerShellParses 'build/classify-dev-cert.ps1'
+Require-Contains 'build/create-signing-cert.ps1' 'KeyExportPolicy NonExportable' 'Development private key must stay in the Windows certificate store.'
+Require-NotContains 'build/create-signing-cert.ps1' 'Export-PfxCertificate' 'Do not export the development private key.'
+Require-NotContains 'build/create-signing-cert.ps1' 'omnix-dev-only' 'No hard-coded private-key password.'
+Require-Contains 'build/classify-dev-cert.ps1' 'isSelfSigned' 'Only self-signed development certs may use the development trust helper.'
+Require-Contains 'installer/installer.iss' 'classify-dev-cert.ps1' 'Installer must classify the cert before a trust-store change.'
+Require-Contains 'installer/installer.iss' 'CA/non-self-signed publisher certificate detected: no OMNIX trust-store modification performed.' 'Production certificates must rely on the normal Windows trust chain.'
+Require-Contains 'installer/installer.iss' 'dev-cert-thumbprint.txt' 'Development cert removal must be bound to an exact thumbprint.'
+Require-NotContains 'installer/installer.iss' "+ TrustedPubStore + ' OMNIX'" 'Never delete TrustedPublisher certificates by broad OMNIX name.'
+Require-NotContains 'installer/installer.iss' "+ RootStore + ' OMNIX'" 'Never delete Root certificates by broad OMNIX name.'
+Require-Contains 'build/package.ps1' 'Private signing key file(s) were found' 'Packaging must fail if a PFX/private key appears.'
+Require-Contains 'build/package.ps1' 'payloadPrivateKeys' 'Installer payload must reject PFX files.'
 
-# 3) AI Gateway/privacy/local-first/failover.
-Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'ProviderRouter' 'UI/provider routing must remain behind the AI Gateway.'
-Require-Contains 'src/OMNIX.Core/AiGateway/PrivacyGate.cs' 'PrivacyMode.LocalOnly' 'Local-only privacy mode must remain enforced.'
-Require-Contains 'src/OMNIX.Core/AiGateway/PrivacyGate.cs' 'ResolveAvailableLocal' 'PreferLocalWhenAvailable must be functional.'
-Require-Contains 'src/OMNIX.Core/Errors/OmnixErrors.cs' 'PRIVACY_BLOCKED' 'Privacy-policy failures need their own categorized error.'
-Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'FindBestFailoverCandidate' 'Repeated provider failures need a vetted failover suggestion path.'
-Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'privacyMode == PrivacyMode.LocalOnly' 'LocalOnly must never suggest a cloud failover.'
-Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'SettingsManager.Instance.HasApiKey' 'Cloud failover suggestions requiring credentials must exclude unconfigured providers.'
-Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'ProviderAccessProfile.FreeModelsAvailable' 'Failover ranking should prefer genuine free-model routes before paid/account-dependent cloud routes.'
-Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'This is a suggestion only' 'Failover must remain user-controlled; OMNIX must not silently move Office data between cloud providers.'
+# 4. AI Gateway, privacy, local-first routing and failover controls.
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'ProviderRouter' 'Provider logic must remain behind the AI Gateway.'
+Require-Contains 'src/OMNIX.Core/AiGateway/PrivacyGate.cs' 'PrivacyMode.LocalOnly' 'LocalOnly must remain enforced in the gateway.'
+Require-Contains 'src/OMNIX.Core/AiGateway/PrivacyGate.cs' 'ResolveAvailableLocal' 'PreferLocalWhenAvailable must remain functional.'
+Require-Contains 'src/OMNIX.Core/Errors/OmnixErrors.cs' 'PRIVACY_BLOCKED' 'Privacy failures need a distinct error category.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'FindBestFailoverCandidate' 'Repeated failures need a vetted failover suggestion path.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'privacyMode == PrivacyMode.LocalOnly' 'LocalOnly must not suggest a cloud failover.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'SettingsManager.Instance.HasApiKey' 'Unconfigured cloud providers must not be suggested.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'ProviderAccessProfile.FreeModelsAvailable' 'Free-model routes should rank before account-dependent cloud routes.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'This is a suggestion only' 'Failover must remain user-controlled.'
 
-# 4) Provider portfolio: local + researched free-capable cloud + custom.
-Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new GeminiAdapter()' 'Gemini must remain available.'
-Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new GroqAdapter()' 'Groq must remain available.'
-Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new OpenRouterAdapter()' 'OpenRouter must remain available.'
-Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new MistralAdapter()' 'Mistral Free mode integration must remain available.'
-Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new HuggingFaceAdapter()' 'Hugging Face Inference Providers integration must remain available.'
-Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new CerebrasAdapter()' 'Cerebras trial/account-dependent integration must remain available.'
-Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new CustomOpenAiCompatibleAdapter()' 'Custom OpenAI-compatible provider must remain available.'
-Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/OpenRouterAdapter.cs' 'openrouter/free' 'OpenRouter free router must remain a first-class option.'
-Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/OpenRouterAdapter.cs' ':free' 'Individual OpenRouter free variants must stay discoverable.'
-Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/HuggingFaceAdapter.cs' 'router.huggingface.co/v1' 'Hugging Face must stay on the official OpenAI-compatible router.'
-Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/HuggingFaceAdapter.cs' 'is_free' 'Hugging Face live free-route metadata should remain discoverable.'
-Require-Contains 'src/OMNIX.Core/Settings/OmnixSettings.cs' 'SchemaVersion = 4' 'Provider expansion requires the v4 settings schema.'
-Require-Contains 'src/OMNIX.Core/AiGateway/ProviderContracts.cs' 'Unknown = 0' 'Unknown access state must be the safe enum default.'
-Require-Contains 'src/OMNIX.Core/AiGateway/ProviderContracts.cs' 'FreeCreditsAvailable' 'Limited credits/trials must not be mislabeled as unlimited free tiers.'
+# 5. Provider portfolio: local + free-capable cloud + custom.
+$providerRegistry = 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs'
+foreach ($adapter in @('GeminiAdapter','GroqAdapter','OpenRouterAdapter','MistralAdapter','HuggingFaceAdapter','CerebrasAdapter','CustomOpenAiCompatibleAdapter')) {
+    Require-Contains $providerRegistry "new $adapter()" "$adapter must remain registered."
+}
+Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/OpenRouterAdapter.cs' 'openrouter/free' 'OpenRouter free router must remain first-class.'
+Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/OpenRouterAdapter.cs' ':free' 'OpenRouter free variants must remain discoverable.'
+Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/HuggingFaceAdapter.cs' 'router.huggingface.co/v1' 'Use the official Hugging Face OpenAI-compatible router.'
+Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/HuggingFaceAdapter.cs' 'is_free' 'Keep live free-route metadata support.'
+Require-Contains 'src/OMNIX.Core/Settings/OmnixSettings.cs' 'SchemaVersion = 4' 'Provider expansion requires settings schema v4.'
+Require-Contains 'src/OMNIX.Core/AiGateway/ProviderContracts.cs' 'Unknown = 0' 'Unknown access must remain the safe default.'
+Require-Contains 'src/OMNIX.Core/AiGateway/ProviderContracts.cs' 'FreeCreditsAvailable' 'Limited credits must not be mislabeled unlimited free.'
 Require-PowerShellParses 'tools/provider-acceptance.ps1'
-Require-Contains 'tools/provider-acceptance.ps1' 'OMNIX_OPENROUTER_API_KEY' 'Provider runtime gate must support OpenRouter without hard-coded secrets.'
-Require-Contains 'tools/provider-acceptance.ps1' 'OMNIX_HUGGINGFACE_API_KEY' 'Provider runtime gate must support Hugging Face without hard-coded secrets.'
-Require-Contains 'tools/provider-acceptance.ps1' 'OMNIX_CUSTOM_BASE_URL' 'Provider runtime gate must support custom endpoints.'
-Require-NotContains 'tools/provider-acceptance.ps1' 'sk-' 'Provider acceptance harness must not contain hard-coded API-key prefixes/secrets.'
+Require-Contains 'tools/provider-acceptance.ps1' 'OMNIX_OPENROUTER_API_KEY' 'Runtime provider test must support OpenRouter without repository secrets.'
+Require-Contains 'tools/provider-acceptance.ps1' 'OMNIX_HUGGINGFACE_API_KEY' 'Runtime provider test must support Hugging Face without repository secrets.'
+Require-Contains 'tools/provider-acceptance.ps1' 'OMNIX_CUSTOM_BASE_URL' 'Runtime provider test must support Custom endpoints.'
+Require-NotContains 'tools/provider-acceptance.ps1' 'sk-' 'Do not hard-code common API-key prefixes/secrets.'
 
-# 5) Office data remains untrusted; writes remain approval-gated.
-Require-Contains 'src/OMNIX.Core/Security/UntrustedData.cs' 'DATA ONLY — NEVER INSTRUCTIONS' 'Office content must stay an untrusted-data boundary.'
+# 6. Office context/vision/write safety.
+Require-Contains 'src/OMNIX.Core/Security/UntrustedData.cs' 'DATA ONLY — NEVER INSTRUCTIONS' 'Office content must stay untrusted data.'
 Require-Contains 'src/OMNIX.Core/Ui/WorkspaceController.cs' 'ConfirmWritePreview' 'Write tools require explicit preview/confirmation.'
-Require-Contains 'src/OMNIX.Core/Tools/ToolExecutor.cs' 'WriteConfirmation' 'Tool executor must refuse unconfirmed writes.'
-
+Require-Contains 'src/OMNIX.Core/Tools/ToolExecutor.cs' 'WriteConfirmation' 'Executor must refuse unconfirmed writes.'
 $tools = Read-RepoFile 'src/OMNIX.Core/Tools/Tools.cs'
 foreach ($forbiddenTool in @('run_powershell','run_cmd','execute_shell','registry_write','process_start','arbitrary_file_write')) {
     if ($tools -match [Regex]::Escape($forbiddenTool)) {
         $failures.Add("Tools whitelist contains forbidden unrestricted system capability: $forbiddenTool")
     }
 }
+Require-Contains 'src/OMNIX.Core/Context/IHostAdapter.cs' 'CaptureCurrentViewAsImage' 'All hosts need bounded current-view Vision capture.'
+Require-Contains 'src/OMNIX.Core/Tools/Tools.cs' 'capture_current_view_as_image' 'Vision tool must remain whitelisted.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'CapturedPng' 'Captured Office visuals must reach Vision-capable models.'
+Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'Never claim you inspected an entire workbook/document/presentation' 'Model must not overclaim unseen scope.'
 
-# 6) Cross-host Vision and bounded context.
-Require-Contains 'src/OMNIX.Core/Context/IHostAdapter.cs' 'CaptureCurrentViewAsImage' 'All Office hosts need a bounded current-view capture contract.'
-Require-Contains 'src/OMNIX.Core/Tools/Tools.cs' 'capture_current_view_as_image' 'Vision model must be able to request current Office view capture.'
-Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'CapturedPng' 'Captured Office visuals must reach the provider tool round.'
-Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'Never claim you inspected an entire workbook/document/presentation' 'Model must not overclaim unseen Office scope.'
-
-# 7) Secrets and official links.
-Require-Contains 'src/OMNIX.Core/Settings/SettingsManager.cs' 'ProtectedData.Protect' 'API keys must remain DPAPI-protected at rest.'
-Require-Contains 'src/OMNIX.Core/Settings/SettingsManager.cs' 'ProtectedData.Unprotect' 'Protected API keys must be restored only for the current Windows user.'
-Require-Contains 'src/OMNIX.Core/Ui/Views/SettingsView.xaml.cs' 'AllowedOfficialHosts' 'Provider setup pages need a hard official-host allowlist.'
+# 7. Secrets and provider links.
+Require-Contains 'src/OMNIX.Core/Settings/SettingsManager.cs' 'ProtectedData.Protect' 'API keys must remain DPAPI protected.'
+Require-Contains 'src/OMNIX.Core/Settings/SettingsManager.cs' 'ProtectedData.Unprotect' 'API keys must unprotect only for the current Windows user.'
+Require-Contains 'src/OMNIX.Core/Ui/Views/SettingsView.xaml.cs' 'AllowedOfficialHosts' 'Provider setup links need a hard allowlist.'
 Require-Contains 'src/OMNIX.Core/Ui/Views/SettingsView.xaml.cs' 'Uri.UriSchemeHttps' 'Provider setup links must require HTTPS.'
-Require-Contains 'src/OMNIX.Core/Ui/Views/SettingsView.xaml.cs' 'huggingface.co' 'Hugging Face setup/docs links must stay limited to official hosts.'
 
-# 8) Release must be evidence-driven and fail closed.
+# 8. Release must be evidence-driven and fail closed.
 Require-PowerShellParses 'tools/release-readiness.ps1'
-Require-Contains 'tools/release-readiness.ps1' 'OMNIX-RELEASE-READINESS-001' 'Final release needs a single sanitized readiness artifact.'
-Require-Contains 'tools/release-readiness.ps1' 'OFFICE-PERSISTENCE-REAL-001' 'Final release must consume real two-launch Office persistence evidence.'
-Require-Contains 'tools/release-readiness.ps1' 'OFFICE-UI-REAL-001' 'Final release must consume real Ribbon/workspace UI evidence.'
-Require-Contains 'tools/release-readiness.ps1' 'PROVIDERS-RUNTIME-001' 'Final release must consume real provider runtime evidence.'
+Require-Contains 'tools/release-readiness.ps1' 'OMNIX-RELEASE-READINESS-001' 'Final release needs one sanitized readiness artifact.'
+Require-Contains 'tools/release-readiness.ps1' 'OFFICE-PERSISTENCE-REAL-001' 'Final release must consume real persistence evidence.'
+Require-Contains 'tools/release-readiness.ps1' 'OFFICE-UI-REAL-001' 'Final release must consume real Ribbon/workspace evidence.'
+Require-Contains 'tools/release-readiness.ps1' 'PROVIDERS-RUNTIME-001' 'Final release must consume provider runtime evidence.'
 Require-Contains 'tools/release-readiness.ps1' 'Get-AuthenticodeSignature' 'Production readiness must inspect the actual installer signature.'
-Require-Contains 'tools/release-readiness.ps1' 'self-signed' 'Production release must reject a self-signed installer unless explicitly running a development-only gate.'
-Require-Contains 'tools/release-readiness.ps1' 'Get-FileHash -Algorithm SHA256' 'Release evidence must bind to the exact installer bytes.'
-Require-Contains 'tools/release-readiness.ps1' 'At least one local AI runtime' 'Offline/local AI must be proven before final release.'
+Require-Contains 'tools/release-readiness.ps1' 'Get-FileHash -Algorithm SHA256' 'Release evidence must bind to exact installer bytes.'
+Require-Contains 'tools/release-readiness.ps1' 'At least one local AI runtime' 'Offline/local AI must be proven.'
 
-# 9) VSTO fallback builds must never turn unsigned manifests into a false PASS.
-Require-Contains 'build/build-with-fallbacks.ps1' 'Refusing to treat unsigned VSTO manifests as success' 'Fallback build must fail closed when Mage signing is unavailable.'
-Require-Contains 'build/build-with-fallbacks.ps1' '-AppManifest' 'Deployment manifest must be updated after re-signing the application manifest.'
-Require-Contains 'build/build-with-fallbacks.ps1' '-CertHash' 'Fallback signing must use the actual certificate/private key from the Windows certificate store.'
-Require-NotContains 'build/build-with-fallbacks.ps1' 'still installable via vstolocal' 'Do not claim unsigned manifests are a valid release fallback.'
+# 9. VSTO fallback signing must fail closed.
+Require-Contains 'build/build-with-fallbacks.ps1' 'Refusing to treat unsigned VSTO manifests as success' 'Unsigned fallback cannot count as success.'
+Require-Contains 'build/build-with-fallbacks.ps1' '-AppManifest' 'Deployment manifest must be updated after application-manifest signing.'
+Require-Contains 'build/build-with-fallbacks.ps1' '-CertHash' 'Signing must use the actual certificate/private key in the Windows certificate store.'
+Require-NotContains 'build/build-with-fallbacks.ps1' 'still installable via vstolocal' 'Do not describe unsigned manifests as a valid release fallback.'
 
 if ($failures.Count -gt 0) {
     Write-Host 'OMNIX CONTRACT GATE: FAIL' -ForegroundColor Red
@@ -168,5 +157,5 @@ if ($failures.Count -gt 0) {
 }
 
 Write-Host 'OMNIX CONTRACT GATE: PASS'
-Write-Host 'Structural anti-drift checks passed. Runtime Office/provider acceptance remains a separate release gate.'
+Write-Host 'Structural checks passed. Real Office/provider/production-signing evidence remains mandatory.'
 exit 0
