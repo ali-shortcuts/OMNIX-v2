@@ -52,7 +52,7 @@ namespace OMNIX.Core.Settings
         public static OmnixSettings CreateDefaults()
         {
             var s = new OmnixSettings();
-            s.SchemaVersion = 3;
+            s.SchemaVersion = 4;
             s.Privacy = PrivacyMode.AskBeforeSending;
             s.Theme = ThemeMode.System;
             s.UiLanguage = "en";
@@ -64,6 +64,7 @@ namespace OMNIX.Core.Settings
                 { "groq", "openai/gpt-oss-120b" },
                 { "openrouter", "openrouter/free" },
                 { "mistral", "mistral-small-latest" },
+                { "huggingface", "openai/gpt-oss-120b:fastest" },
                 { "cerebras", "gpt-oss-120b" },
                 { "ollama", "" },
                 { "lmstudio", "" },
