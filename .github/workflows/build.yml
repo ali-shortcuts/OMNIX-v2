@@ -1,21 +1,19 @@
-# ============================================================================
-# OMNIX CI — build the full solution on Windows, package the single-exe
-# installer, run the honest Defender check, and (on version tags) publish a
-# GitHub Release with the ONE .exe file (spec Phase 2.7, 2.8, Section 12).
-# ============================================================================
+# OMNIX v3 CI
+#
+# This workflow builds and packages a DEVELOPMENT installer. It intentionally does NOT publish
+# GitHub Releases. A public release requires real Office/UI/provider evidence plus a trusted
+# production Authenticode signature; GitHub-hosted runners cannot prove those conditions.
 name: build
 
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
 
 permissions:
-  contents: write
-  issues: write
+  contents: read
 
 env:
   SOLUTION: OMNIX.sln
@@ -23,21 +21,21 @@ env:
 
 jobs:
   build:
-    name: Build + package (windows-latest)
+    name: Build + package (windows-2022)
     runs-on: windows-2022
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Exclude workspace from Windows Defender real-time scanning during build (mitigates a transient file-lock race where the FindRibbons VSTO task reflects-loads a just-written host DLL a fraction of a second after CoreCompile writes it — the 2nd/3rd project in a multi-project VSTO solution build is the one usually hit, matching the observed OMNIX.Word/OMNIX.PowerPoint failures while OMNIX.Excel, built first, succeeded)
+      - name: Temporarily exclude workspace from Defender during VSTO compilation
         shell: pwsh
         run: |
           try {
             Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE" -ErrorAction Stop
-            Write-Host "Defender exclusion added for $env:GITHUB_WORKSPACE"
+            Write-Host "Temporary build exclusion added. It will be removed before the release-artifact scan."
           } catch {
-            Write-Host "Could not add Defender exclusion (non-fatal): $_"
+            Write-Host "Could not add temporary Defender exclusion (non-fatal): $_"
           }
 
       - name: Setup MSBuild
@@ -45,277 +43,152 @@ jobs:
         with:
           vs-prerelease: false
 
-      - name: Ensure VSTO SDK is present (installs Office dev tools if missing)
+      - name: Ensure VSTO SDK is present
         shell: pwsh
         run: ./build/ensure-vsto-sdk.ps1
 
-      - name: Create temporary self-signed code-signing certificate
+      - name: Create non-exportable DEVELOPMENT manifest-signing certificate
         id: cert
         shell: pwsh
         run: |
           ./build/create-signing-cert.ps1
-          Write-Host "--- Diagnostic: cert files present? ---"
-          Write-Host "OMNIX.cer  : $(Test-Path build/cert/OMNIX.cer)"
-          Write-Host "OMNIX.pfx  : $(Test-Path build/cert/OMNIX.pfx)"
-          Write-Host "thumbprint : $(Test-Path build/cert/thumbprint.txt)"
-          $thumb = ""
-          if (Test-Path build/cert/thumbprint.txt) { $thumb = (Get-Content build/cert/thumbprint.txt).Trim() }
+          if (Test-Path build/cert/OMNIX.pfx) {
+            throw "Private signing key file must never exist in CI/release payload."
+          }
+          $thumb = (Get-Content build/cert/thumbprint.txt -Raw).Trim()
+          if (-not $thumb) { throw "Development certificate thumbprint is empty." }
           "thumbprint=$thumb" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Thumbprint: $thumb"
-          if (-not $thumb) { Write-Host "WARNING: thumbprint is EMPTY — cert creation likely failed silently upstream." }
+          Write-Host "Development manifest signer ready. Private key remains in CurrentUser certificate store."
 
       - name: NuGet restore
         shell: pwsh
         run: |
           if (-not (Test-Path build/nuget.exe)) {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $ProgressPreference = 'SilentlyContinue'
             Invoke-WebRequest 'https://dist.nuget.org/win-x86-commandline/latest/nuget.exe' -OutFile build/nuget.exe
           }
           ./build/nuget.exe restore $env:SOLUTION
 
-      - name: Build solution (3 independent fallback strategies — see build/build-with-fallbacks.ps1)
+      - name: Build solution with signed VSTO manifests
         shell: pwsh
         run: ./build/build-with-fallbacks.ps1 ${{ steps.cert.outputs.thumbprint }}
 
-      - name: Stage installer payload
+      - name: Stage installer payload and reject private-key leakage
         shell: pwsh
-        run: |
-          ./build/package.ps1
-          Write-Host "--- Diagnostic: payload contents after package.ps1 ---"
-          Get-ChildItem installer\payload -ErrorAction SilentlyContinue | ForEach-Object { Write-Host ("  " + $_.Name + "  " + $_.Length + " bytes") }
-          Write-Host "OMNIX.cer in payload? $(Test-Path installer\payload\OMNIX.cer)"
+        run: ./build/package.ps1
 
-      - name: Download the official Microsoft VSTO Runtime redistributable and bundle it into the payload (offline-install friendly, and avoids the fragile in-installer download-page code path)
+      - name: Bundle official Microsoft VSTO Runtime redistributable
         shell: pwsh
         run: |
-          try {
-            $dest = "installer\payload\vstor_redist.exe"
-            $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri "https://download.microsoft.com/download/C/0/0/C001737F-822B-48C2-8F6A-CDE13B4B9E9C/vstor_redist.exe" -OutFile $dest -UseBasicParsing -TimeoutSec 180
-            $size = (Get-Item $dest).Length
-            Write-Host "Downloaded vstor_redist.exe: $size bytes"
-            if ($size -lt 10000000) { throw "vstor_redist.exe looks too small ($size bytes, expected ~40MB) — download likely failed" }
-            exit 0
-          } catch {
-            "EXCEPTION downloading vstor_redist.exe: $($_.Exception.GetType().FullName): $($_.Exception.Message)" | Tee-Object -FilePath build_output_vstodownload.txt
-            exit 1
-          }
+          $dest = "installer\payload\vstor_redist.exe"
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest `
+            -Uri "https://download.microsoft.com/download/C/0/0/C001737F-822B-48C2-8F6A-CDE13B4B9E9C/vstor_redist.exe" `
+            -OutFile $dest `
+            -UseBasicParsing `
+            -TimeoutSec 180
+          $size = (Get-Item $dest).Length
+          if ($size -lt 10000000) { throw "vstor_redist.exe is unexpectedly small ($size bytes)." }
+          Write-Host "Bundled Microsoft VSTO Runtime: $size bytes"
 
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup -y --no-progress
 
-      - name: Compile single-exe installer (Inno Setup)
+      - name: Compile development single-exe installer
         shell: pwsh
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          # Derive the real version from the git tag that triggered this run
-          # (e.g. refs/tags/v1.0.1 -> "1.0.1"); fall back to a dev-marker for
-          # ordinary branch pushes so the output filename never lies about
-          # which version it actually is (this is exactly what caused the
-          # v1.0.1 GitHub Release to contain a file still named ...-1.0.0.exe).
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found." }
           $ver = "0.0.0-dev"
-          if ($env:GITHUB_REF -match '^refs/tags/v(.+)$') { $ver = $Matches[1] }
-          Write-Host "Building installer version: $ver"
-          & $iscc "/DMyAppVersion=$ver" "installer/installer.iss" 2>&1 | Tee-Object -FilePath build_output_innosetup.txt
-          $code = $LASTEXITCODE
-          Get-ChildItem installer/Output -ErrorAction SilentlyContinue
-          if ($code -eq 0) {
-            # Success — remove this step's own log so it never pollutes a LATER
-            # step's diagnostic capture (this exact bug hid a real Defender-step
-            # failure behind a wall of stale, successful Inno Setup output once already).
-            Remove-Item build_output_innosetup.txt -ErrorAction SilentlyContinue
-          }
-          exit $code
+          & $iscc "/DMyAppVersion=$ver" "installer/installer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = Get-ChildItem installer\Output\OMNIX-Setup-*.exe | Select-Object -First 1
+          if (-not $exe -or $exe.Length -lt 1MB) { throw "Installer output missing or unexpectedly small." }
+          Write-Host "Development installer compiled: $($exe.Name) ($($exe.Length) bytes)"
 
-      - name: Post build output to a GitHub Issue if ANY step so far failed (diagnostic — network to blob storage is restricted for the human/AI reviewing this)
-        if: failure()
-        shell: pwsh
-        run: |
-          $full = (Get-ChildItem build_output_*.txt -ErrorAction SilentlyContinue | Sort-Object Name | Get-Content -Raw) -join "`n--- next file ---`n"
-          if (-not $full) { $full = "(no build_output_*.txt files were produced by any strategy)" }
-          if ($full.Length -gt 55000) { $full = $full.Substring($full.Length - 55000) }
-          $body = @{
-            title = "CI build failure — run $env:GITHUB_RUN_ID"
-            body  = "``````text`n$full`n``````"
-          } | ConvertTo-Json
-          $headers = @{
-            Authorization = "Bearer $env:GITHUB_TOKEN"
-            Accept        = "application/vnd.github+json"
-          }
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues" -Method Post -Headers $headers -Body $body -ContentType "application/json"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: "Isolated test: does elevated (runas-equivalent) launch of the bundled vstor_redist.exe actually succeed on a real Windows machine, independent of Office (Office isn't installed on this runner at all, so this is the ONLY part of the install flow that CAN be verified here without a human)"
-        shell: pwsh
-        run: |
-          $vsto = Get-ChildItem installer\payload\vstor_redist.exe -ErrorAction SilentlyContinue
-          if (-not $vsto) { Write-Host "vstor_redist.exe not found in payload — skipping this isolated test."; exit 0 }
-          Write-Host "Launching $($vsto.FullName) /q /norestart via Start-Process -Verb RunAs (PowerShell's equivalent of ShellExec 'runas')..."
-          try {
-            $p = Start-Process -FilePath $vsto.FullName -ArgumentList "/q","/norestart" -Verb RunAs -Wait -PassThru
-            Write-Host "Exit code: $($p.ExitCode)"
-            if ($p.ExitCode -eq 740) {
-              Write-Host "FAILED: still got 740 (elevation required) even with -Verb RunAs — the elevation mechanism itself is not working as expected on this runner."
-              exit 1
-            } elseif ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) {
-              Write-Host "SUCCESS: vstor_redist.exe ran with real elevation and completed (exit $($p.ExitCode) — 3010 just means 'needs a restart', which is fine and expected)."
-            } else {
-              Write-Host "Ran with elevation (no 740), but returned an unexpected code $($p.ExitCode) — not necessarily a failure of THIS fix, just worth noting."
-            }
-          } catch {
-            Write-Host "EXCEPTION launching with -Verb RunAs: $($_.Exception.Message)"
-            exit 1
-          }
-
-      - name: "Actually RUN the installer silently and verify it completes (this is the gap that let 'Runtime error at 7.72 - Could not call proc' slip through undetected - CI only compiled it before, never executed it)"
+      - name: Verify installer handles Office-less CI machine gracefully
         shell: pwsh
         run: |
           $exe = Get-ChildItem installer\Output\OMNIX-Setup-*.exe | Select-Object -First 1
-          if (-not $exe) { Write-Host "No installer exe found to test!"; exit 1 }
-          Write-Host "Running: $($exe.FullName) /VERYSILENT /SUPPRESSMSGBOXES /LOG=install_test.log /NORESTART"
-          $p = Start-Process -FilePath $exe.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/LOG=$PWD\install_test.log","/NORESTART" -Wait -PassThru
-          Write-Host "Installer process exit code: $($p.ExitCode)"
-          if (Test-Path install_test.log) {
-            Write-Host "--- Inno Setup /LOG output ---"
-            Get-Content install_test.log | Write-Host
-          } else {
-            Write-Host "No install_test.log was produced."
-          }
-          if ($p.ExitCode -ne 0) {
-            $logContent = ""
-            if (Test-Path install_test.log) { $logContent = Get-Content install_test.log -Raw }
-            if ($logContent -match "was not detected on this system") {
-              Write-Host "Installer correctly and gracefully detected that Office is not installed on this CI runner (expected — GitHub-hosted Windows runners don't have Office). This is the CORRECT behavior, not a crash, so this is NOT treated as a test failure. Full end-to-end verification (tab appears in a real Excel) remains a required human step per spec Section 12."
-              exit 0
+          if (-not $exe) { throw "No installer exe found." }
+
+          $log = Join-Path $PWD "install_test.log"
+          $p = Start-Process -FilePath $exe.FullName `
+            -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/LOG=$log","/NORESTART" `
+            -Wait -PassThru
+
+          if ($p.ExitCode -eq 0) {
+            # Some runner images may happen to expose Office-compatible registration. If setup says
+            # success, require that it actually copied the payload.
+            $addinDll = "$env:LOCALAPPDATA\Programs\OMNIX\OMNIX.Excel.dll"
+            if (-not (Test-Path $addinDll)) {
+              throw "Installer returned success but OMNIX payload was not installed."
             }
-            Write-Host "Silent install FAILED for an UNEXPECTED reason (exit $($p.ExitCode))"
-            exit 1
+            Write-Host "Installer completed successfully on this runner."
+            exit 0
           }
-          $addinDll = "$env:LOCALAPPDATA\Programs\OMNIX\OMNIX.Excel.dll"
-          if (-not (Test-Path $addinDll)) {
-            Write-Host "Install reported success but $addinDll is missing — treating as failure."
-            exit 1
-          }
-          Write-Host "Silent install verified OK — OMNIX.Excel.dll present at $addinDll"
 
-      - name: "TEMP diagnostic (this round only): post VSTO Runtime status lines to an Issue regardless of pass/fail, so this can be inspected without another human download-and-test round"
+          $text = if (Test-Path $log) { Get-Content $log -Raw } else { "" }
+          if ($text -match 'Microsoft Office .* was not detected' -or
+              $text -match 'No supported Excel, Word or PowerPoint installation was found') {
+            Write-Host "Expected: GitHub-hosted runner has no supported Office host. Installer refused cleanly instead of crashing."
+            exit 0
+          }
+
+          Write-Host $text
+          throw "Installer failed for an unexpected reason (exit $($p.ExitCode))."
+
+      - name: Remove temporary Defender exclusion
         if: always()
-        shell: pwsh
-        run: |
-          $full = ""
-          $ourLog = "$env:LOCALAPPDATA\OMNIX\logs\install-debug.log"
-          if (Test-Path $ourLog) { $full = Get-Content $ourLog -Raw }
-          if (-not $full) { $full = "(file empty or missing)" }
-          $body = @{
-            title = "TEMP VSTO diagnostic — run $env:GITHUB_RUN_ID"
-            body  = "``````text`n$full`n``````"
-          } | ConvertTo-Json
-          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = "application/vnd.github+json" }
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues" -Method Post -Headers $headers -Body $body -ContentType "application/json"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Post build output to a GitHub Issue if the silent-install test failed (diagnostic)
-        if: failure()
-        shell: pwsh
-        run: |
-          $full = ""
-          if (Test-Path install_test.log) { $full += (Get-Content install_test.log -Raw) }
-          if (Test-Path "$env:LOCALAPPDATA\OMNIX\logs\install-debug.log") {
-            $full += "`n--- install-debug.log ---`n" + (Get-Content "$env:LOCALAPPDATA\OMNIX\logs\install-debug.log" -Raw)
-          }
-          if (-not $full) { $full = "(no install_test.log or install-debug.log produced)" }
-          if ($full.Length -gt 55000) { $full = $full.Substring($full.Length - 55000) }
-          $body = @{
-            title = "CI SILENT-INSTALL failure — run $env:GITHUB_RUN_ID"
-            body  = "``````text`n$full`n``````"
-          } | ConvertTo-Json
-          $headers = @{
-            Authorization = "Bearer $env:GITHUB_TOKEN"
-            Accept        = "application/vnd.github+json"
-          }
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues" -Method Post -Headers $headers -Body $body -ContentType "application/json"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Remove the temporary Defender build exclusion before the honest scan (spec 2.9 must run with full real-time protection, no exclusions)
         shell: pwsh
         run: |
           try {
             Remove-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE" -ErrorAction Stop
-            Write-Host "Defender exclusion removed — real-time protection is fully back on for the honest check."
+            Write-Host "Temporary Defender build exclusion removed."
           } catch {
-            Write-Host "Could not remove Defender exclusion (non-fatal, may not have been set): $_"
+            Write-Host "Could not remove exclusion (it may never have been added): $_"
           }
 
-      - name: Windows Defender check with real-time protection ON (spec 2.9 — honest)
+      - name: Windows Defender scan with real-time protection restored
+        shell: pwsh
+        run: ./build/defender-check.ps1
+
+      - name: Generate development artifact manifest
         shell: pwsh
         run: |
-          $out = "build_output_defender.txt"
-          try {
-            & ./build/defender-check.ps1 *>&1 | Tee-Object -FilePath $out
-            $code = $LASTEXITCODE
-          } catch {
-            $msg = "EXCEPTION while invoking build/defender-check.ps1: $($_.Exception.GetType().FullName): $($_.Exception.Message)`n$($_.ScriptStackTrace)"
-            $msg | Tee-Object -FilePath $out
-            $code = 1
+          $exe = Get-ChildItem installer\Output\OMNIX-Setup-*.exe | Select-Object -First 1
+          if (-not $exe) { throw "Installer missing before artifact manifest generation." }
+          $hash = (Get-FileHash -Algorithm SHA256 $exe.FullName).Hash.ToLowerInvariant()
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          $manifest = [ordered]@{
+            ArtifactType = 'DEVELOPMENT_ONLY'
+            SourceCommit = $env:GITHUB_SHA
+            FileName = $exe.Name
+            SizeBytes = [int64]$exe.Length
+            Sha256 = $hash
+            AuthenticodeStatus = [string]$sig.Status
+            RealOfficeRuntimeTested = $false
+            ProductionReleaseApproved = $false
+            Note = 'CI build artifact only. Real Office/UI/provider acceptance and trusted production signing are mandatory before release.'
           }
-          if (-not (Test-Path $out) -or (Get-Item $out).Length -eq 0) {
-            "defender-check.ps1 produced no output at all (script may have failed to parse/load) and threw no catchable exception either." | Out-File $out
-            $code = 1
-          }
-          exit $code
+          New-Item -ItemType Directory -Force build\artifact | Out-Null
+          $manifest | ConvertTo-Json -Depth 6 | Set-Content build\artifact\manifest.json -Encoding UTF8
+          $hash | Set-Content build\artifact\installer.sha256 -Encoding ASCII
+          $manifest | ConvertTo-Json -Depth 6
 
-      - name: Post build output to a GitHub Issue if the Defender check step failed (diagnostic — network to blob storage is restricted for the human/AI reviewing this)
-        if: failure()
-        shell: pwsh
-        run: |
-          $full = (Get-ChildItem build_output_*.txt -ErrorAction SilentlyContinue | Sort-Object Name | Get-Content -Raw) -join "`n--- next file ---`n"
-          if (-not $full) { $full = "(no build_output_*.txt files were produced)" }
-          if ($full.Length -gt 55000) { $full = $full.Substring($full.Length - 55000) }
-          $body = @{
-            title = "CI build failure — run $env:GITHUB_RUN_ID"
-            body  = "``````text`n$full`n``````"
-          } | ConvertTo-Json
-          $headers = @{
-            Authorization = "Bearer $env:GITHUB_TOKEN"
-            Accept        = "application/vnd.github+json"
-          }
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues" -Method Post -Headers $headers -Body $body -ContentType "application/json"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload build artifacts (installer + reports + logs)
+      - name: Upload development build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: omnix-build
+          name: omnix-development-build
           path: |
             installer/Output/*.exe
+            build/artifact/manifest.json
+            build/artifact/installer.sha256
             build/defender-report.txt
-            build/logs/build.binlog
+            build/logs/*.binlog
           if-no-files-found: error
 
-      - name: Release (only on v* tags)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: installer/Output/OMNIX-Setup-*.exe
-          body: |
-            OMNIX ${{ github.ref_name }} — single-exe installer.
-
-            **Install:** download the ONE .exe below and run it (no zip, no helper files).
-            Excel/Word/PowerPoint are detected automatically; only the hosts that exist
-            on your system are registered. The only step that may ask for Administrator
-            permission is the Microsoft VSTO Runtime bootstrap (transparent UAC, only
-            when it is actually missing).
-
-            **Honest notes:**
-            - The installer is signed with a temporary self-signed certificate.
-              Until a real Authenticode certificate is used (spec 10.2), SmartScreen
-              may show "Windows protected your PC" — choose "More info → Run anyway".
-            - A Windows Defender scan with real-time protection ON ran in CI; the
-              result is in the build artifacts (defender-report.txt).
-          draft: false
-          prerelease: false
+# No automatic GitHub Release step belongs in this workflow.
+# Release only after tools/release-readiness.ps1 returns OverallPass=true for the exact installer
+# and a trusted production Authenticode signing path is in place.
