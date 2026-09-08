@@ -7,6 +7,9 @@
 ;   * NEVER clear Office Resiliency/DisabledItems/CrashingAddinList globally.
 ;   * Never bypass Office/Windows policy. User-authorized install only.
 ;   * Verify all installed Office hosts after registration and log exact failures.
+;   * Trust-store changes are development-only: only an exact self-signed OMNIX
+;     development certificate may be imported, and uninstall removes only its
+;     recorded thumbprint. A CA-signed production cert is never root-imported.
 ; ============================================================================
 
 #define MyAppName "OMNIX"
@@ -41,13 +44,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; Three VSTO hosts + shared core + scripts staged by the build pipeline.
+; Three VSTO hosts + shared core + verification/trust-classifier scripts staged by the build pipeline.
 Source: "payload\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: "vstor_redist.exe"
-
-#if FileExists(AddBackslash(SourcePath) + "payload\OMNIX.cer")
-Source: "payload\OMNIX.cer"; DestDir: "{app}"; Flags: ignoreversion
-Source: "payload\OMNIX.cer"; DestDir: "{tmp}"; Flags: dontcopy
-#endif
 
 #if FileExists(AddBackslash(SourcePath) + "payload\vstor_redist.exe")
 Source: "payload\vstor_redist.exe"; DestDir: "{tmp}"; Flags: dontcopy
@@ -194,7 +192,6 @@ var
 begin
   Result := False;
 
-  // First prefer explicit host/version registry evidence.
   if RegKeyExists(HKCU, 'Software\Microsoft\Office\' + Version + '\' + Host) or
      RegKeyExists(HKLM64, 'SOFTWARE\Microsoft\Office\' + Version + '\' + Host) or
      RegKeyExists(HKLM32, 'SOFTWARE\Microsoft\Office\' + Version + '\' + Host) then
@@ -203,7 +200,6 @@ begin
     exit;
   end;
 
-  // Executable/App Paths fallback is only valid for the detected Office version.
   if CompareText(DetectedOfficeVersion, Version) <> 0 then exit;
 
   Exe := HostExeName(Host);
@@ -275,9 +271,6 @@ end;
 
 procedure PreserveOfficeResiliencyState();
 begin
-  // Office Resiliency entries are shared security/recovery state. Values in
-  // DisabledItems are opaque binary records and may belong to unrelated add-ins.
-  // OMNIX must not globally delete them or CrashingAddinList/DoNotDisableAddinList.
   InstallLog('Office Resiliency state preserved unchanged (no global DisabledItems cleanup).');
 end;
 
@@ -396,9 +389,8 @@ var
   I, J: Integer;
   Key, Manifest, ReadBack, AppPathForward: String;
   AllOk: Boolean;
-  ResultCode: Integer;
-  VstoExe: String;
-  CertPath: String;
+  ResultCode, CertClassResult: Integer;
+  VstoExe, CertPath, CertClassifier, CertMarker, DevThumbprint: String;
   RuntimeStillMissing: Boolean;
 begin
   if CurStep = ssInstall then
@@ -411,14 +403,6 @@ begin
       InstallLog('NOTE: vstor_redist.exe was not extracted/bundled: ' + GetExceptionMessage);
     end;
 
-    try
-      ExtractTemporaryFile('OMNIX.cer');
-    except
-      InstallLog('NOTE: OMNIX.cer was not extracted/bundled: ' + GetExceptionMessage);
-    end;
-
-    // Remove only previous OMNIX-owned registration. Never mutate shared Office
-    // Resiliency state to force-enable the add-in.
     RemoveAddinRegistry();
     PreserveOfficeResiliencyState();
 
@@ -428,8 +412,6 @@ begin
       DelTree(ExpandConstant('{app}'), True, True, True);
     end;
 
-    // Install the official Microsoft VSTO runtime only when the expected runtime
-    // marker is absent. Do not hide prerequisite failure behind a successful setup.
     if NeedVstoX86 or NeedVstoX64 then
     begin
       VstoExe := ExpandConstant('{tmp}') + '\vstor_redist.exe';
@@ -445,17 +427,18 @@ begin
         else
         begin
           InstallLog('VSTO Runtime installer exit code: ' + IntToStr(ResultCode));
-          if ResultCode <> 0 then PrerequisiteFailed := True;
+          if (ResultCode <> 0) and (ResultCode <> 3010) then PrerequisiteFailed := True;
+          if ResultCode = 3010 then VstoRestartNeeded := True;
         end;
 
         RuntimeStillMissing := False;
         if NeedVstoX86 and (not VstoRuntimeInstalled(HKLM32)) then RuntimeStillMissing := True;
         if NeedVstoX64 and (not VstoRuntimeInstalled(HKLM64)) then RuntimeStillMissing := True;
 
-        if (ResultCode = 0) and RuntimeStillMissing then
+        if ((ResultCode = 0) or (ResultCode = 3010)) and RuntimeStillMissing then
         begin
           VstoRestartNeeded := True;
-          InstallLog('VSTO installer returned success but runtime marker is not visible yet; restart requested before final runtime acceptance.');
+          InstallLog('VSTO installer completed but runtime marker is not visible yet; restart requested before final runtime acceptance.');
         end;
       end
       else
@@ -464,28 +447,65 @@ begin
         InstallLog('PREREQUISITE_ERROR: vstor_redist.exe is required but missing from the installer payload.');
       end;
     end;
-
-    // Development/self-signed manifests may require CurrentUser trust. Production
-    // releases must replace this with a real signing chain; the release gate must
-    // not claim production trust from this temporary certificate.
-    CertPath := ExpandConstant('{tmp}') + '\OMNIX.cer';
-    if not FileExists(CertPath) then CertPath := ExpandConstant('{app}') + '\OMNIX.cer';
-    if FileExists(CertPath) then
-    begin
-      Exec(ExpandConstant('{cmd}'), '/C certutil -f -user -addstore ' + TrustedPubStore + ' "' + CertPath + '"',
-           '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      InstallLog('TrustedPublisher certificate import exit code: ' + IntToStr(ResultCode));
-      Exec(ExpandConstant('{cmd}'), '/C certutil -f -user -addstore ' + RootStore + ' "' + CertPath + '"',
-           '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      InstallLog('CurrentUser Root certificate import exit code: ' + IntToStr(ResultCode));
-    end
-    else
-      InstallLog('NOTE: no OMNIX.cer found; Office may reject unsigned VSTO manifests.');
   end;
 
   if CurStep = ssPostInstall then
   begin
     AllOk := not PrerequisiteFailed;
+
+    ; Development certificate trust is allowed only after files have been copied and only when
+    ; the bundled public certificate is actually self-signed. A CA-signed production publisher
+    ; certificate relies on the normal Windows chain and is never inserted into CurrentUser Root.
+    CertPath := ExpandConstant('{app}') + '\OMNIX.cer';
+    CertClassifier := ExpandConstant('{app}') + '\classify-dev-cert.ps1';
+    CertMarker := ExpandConstant('{app}') + '\dev-cert-thumbprint.txt';
+    DeleteFile(CertMarker);
+
+    if FileExists(CertPath) and FileExists(CertClassifier) then
+    begin
+      Exec('powershell.exe',
+           '-NoProfile -ExecutionPolicy Bypass -File "' + CertClassifier + '" -CertPath "' + CertPath + '" -OutputPath "' + CertMarker + '"',
+           '', SW_HIDE, ewWaitUntilTerminated, CertClassResult);
+
+      if CertClassResult = 0 then
+      begin
+        DevThumbprint := '';
+        if LoadStringFromFile(CertMarker, DevThumbprint) then DevThumbprint := Trim(DevThumbprint);
+        if DevThumbprint = '' then
+        begin
+          InstallLog('CERTIFICATE_ERROR: self-signed development certificate classifier returned no thumbprint.');
+          AllOk := False;
+        end
+        else
+        begin
+          Exec(ExpandConstant('{cmd}'), '/C certutil -f -user -addstore ' + TrustedPubStore + ' "' + CertPath + '"',
+               '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+          InstallLog('Development TrustedPublisher import exit code: ' + IntToStr(ResultCode) + ' thumbprint=' + DevThumbprint);
+          if ResultCode <> 0 then AllOk := False;
+
+          Exec(ExpandConstant('{cmd}'), '/C certutil -f -user -addstore ' + RootStore + ' "' + CertPath + '"',
+               '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+          InstallLog('Development CurrentUser Root import exit code: ' + IntToStr(ResultCode) + ' thumbprint=' + DevThumbprint);
+          if ResultCode <> 0 then AllOk := False;
+        end;
+      end
+      else if CertClassResult = 2 then
+      begin
+        DeleteFile(CertMarker);
+        InstallLog('CA/non-self-signed publisher certificate detected: no OMNIX trust-store modification performed.');
+      end
+      else
+      begin
+        InstallLog('CERTIFICATE_ERROR: could not classify bundled OMNIX.cer (exit ' + IntToStr(CertClassResult) + ').');
+        AllOk := False;
+      end;
+    end
+    else
+    begin
+      InstallLog('CERTIFICATE_ERROR: OMNIX.cer or classify-dev-cert.ps1 missing from installed payload.');
+      AllOk := False;
+    end;
+
     AppPathForward := ExpandConstant('{app}');
     StringChange(AppPathForward, '\', '/');
 
@@ -513,7 +533,6 @@ begin
         end;
       end;
 
-    // If a prerequisite restart is pending, defer COM acceptance until after reboot.
     if AllOk and (not VstoRestartNeeded) then
     begin
       try
@@ -543,6 +562,7 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ResultCode: Integer;
+  CertMarker, DevThumbprint: String;
 begin
   if CurUninstallStep = usUninstall then
   begin
@@ -550,9 +570,25 @@ begin
     PreserveOfficeResiliencyState();
     InstallLog('=== OMNIX uninstall: OMNIX-owned registration removed; Office Resiliency preserved ===');
 
-    Exec(ExpandConstant('{cmd}'), '/C certutil -user -delstore ' + TrustedPubStore + ' OMNIX', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec(ExpandConstant('{cmd}'), '/C certutil -user -delstore ' + RootStore + ' OMNIX', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    InstallLog('OMNIX certificate removal attempted (best effort).');
+    ; Remove only the exact self-signed development certificate thumbprint recorded by this
+    ; installer. Production/CA certificates are never root-imported by OMNIX and are never removed.
+    CertMarker := ExpandConstant('{app}') + '\dev-cert-thumbprint.txt';
+    DevThumbprint := '';
+    if FileExists(CertMarker) and LoadStringFromFile(CertMarker, DevThumbprint) then
+    begin
+      DevThumbprint := Trim(DevThumbprint);
+      if DevThumbprint <> '' then
+      begin
+        Exec(ExpandConstant('{cmd}'), '/C certutil -user -delstore ' + TrustedPubStore + ' "' + DevThumbprint + '"',
+             '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        InstallLog('Development TrustedPublisher removal exit code: ' + IntToStr(ResultCode));
+        Exec(ExpandConstant('{cmd}'), '/C certutil -user -delstore ' + RootStore + ' "' + DevThumbprint + '"',
+             '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        InstallLog('Development CurrentUser Root removal exit code: ' + IntToStr(ResultCode));
+      end;
+    end
+    else
+      InstallLog('No development certificate marker found; no trust-store removal performed.');
   end;
 
   if CurUninstallStep = usPostUninstall then
