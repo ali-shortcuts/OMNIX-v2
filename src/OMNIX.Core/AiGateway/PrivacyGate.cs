@@ -32,7 +32,7 @@ namespace OMNIX.Core.AiGateway
                 throw new OmnixException(ErrorCode.PRIVACY_BLOCKED,
                     Localization.Strings.T("S.Privacy.LocalOnlyBlocked").Replace("{0}", provider.Info.DisplayName),
                     "PrivacyMode=LocalOnly; requested provider=" + provider.Info.Id,
-                    "Switch to a local AI provider (Ollama / LM Studio) or change Privacy Mode in Settings.");
+                    "Switch to a local AI provider (Ollama / LM Studio / loopback Custom) or change Privacy Mode in Settings.");
             }
 
             if (_sessionApproved) return;
@@ -110,6 +110,11 @@ namespace OMNIX.Core.AiGateway
 
             if (settings.Privacy == PrivacyMode.LocalOnly)
             {
+                // A user-selected Custom endpoint may itself be a loopback local model server.
+                // Treat that as local rather than forcing the user to leave Local Only mode.
+                var selectedCustomLocal = ResolveSelectedLoopbackCustom(selectedProviderId, needsVision);
+                if (selectedCustomLocal != null) return selectedCustomLocal;
+
                 var local = ResolveAvailableLocal(settings.PreferredLocalProviderId, needsVision);
                 if (local != null) return local;
 
@@ -118,13 +123,13 @@ namespace OMNIX.Core.AiGateway
                     throw new OmnixException(ErrorCode.MODEL_ERROR,
                         "Privacy Mode is Local Only, but no available local model is currently Vision-capable.",
                         "ProviderRouter.Resolve: local providers are reachable, needsVision=true, none reports vision support.",
-                        "Load a multimodal local model in Ollama/LM Studio, or use text-only context.");
+                        "Load a multimodal local model in Ollama/LM Studio, test a Vision-capable loopback Custom endpoint, or use text-only context.");
                 }
 
                 throw new OmnixException(ErrorCode.PRIVACY_BLOCKED,
                     Localization.Strings.T("S.Privacy.LocalOnlyBlocked").Replace("{0}", "selected cloud provider"),
                     "PrivacyMode=LocalOnly and no compatible local AI is reachable.",
-                    "Start Ollama or LM Studio, or switch Privacy Mode in Settings.");
+                    "Start Ollama or LM Studio, configure a localhost Custom endpoint, or switch Privacy Mode in Settings.");
             }
 
             if (settings.PreferLocalWhenAvailable)
@@ -144,6 +149,33 @@ namespace OMNIX.Core.AiGateway
                     "Provider '" + selectedProviderId + "' is not registered.",
                     "ProviderRouter.Resolve", "Pick a provider in Settings.");
             return chosen;
+        }
+
+        private IProviderAdapter ResolveSelectedLoopbackCustom(string selectedProviderId, bool needsVision)
+        {
+            if (!string.Equals(selectedProviderId, "custom", StringComparison.OrdinalIgnoreCase)) return null;
+
+            var settings = SettingsManager.Instance.Settings;
+            var cp = settings.CustomProvider;
+            if (cp == null || string.IsNullOrWhiteSpace(cp.BaseUrl)) return null;
+
+            Uri uri;
+            if (!Uri.TryCreate(cp.BaseUrl, UriKind.Absolute, out uri) ||
+                !(uri.IsLoopback || string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)))
+                return null;
+
+            var custom = _registry.Get("custom");
+            if (custom == null) return null;
+            custom.Configure(BuildCredentials("custom"));
+
+            if (needsVision && !custom.SupportsVisionNow())
+                throw new OmnixException(ErrorCode.MODEL_ERROR,
+                    "The selected localhost Custom provider has not been verified as Vision-capable.",
+                    "ProviderRouter.Resolve: custom loopback endpoint selected; needsVision=true; SupportsVisionNow=false.",
+                    "Use Test Connection in Settings to probe Vision support, choose a multimodal local model, or send text-only context.");
+
+            Logger.Gateway("ProviderRouter: LocalOnly accepted selected loopback Custom endpoint.");
+            return custom;
         }
 
         private IProviderAdapter ResolveAvailableLocal(string preferredId, bool needsVision)
