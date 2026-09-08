@@ -64,7 +64,7 @@ namespace OMNIX.Core.Settings
         public static OmnixSettings CreateDefaults()
         {
             var s = new OmnixSettings();
-            s.SchemaVersion = 1;
+            s.SchemaVersion = 2;
             s.Privacy = PrivacyMode.AskBeforeSending;
             s.Theme = ThemeMode.System;
             s.UiLanguage = "en";
