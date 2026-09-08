@@ -10,7 +10,7 @@ namespace OMNIX.Word
 {
     /// <summary>
     /// Per-window task pane management for Word: each document window gets its own
-    /// pane/chat/context. Docked right at a compact default width.
+    /// pane/chat/context/provider state. Docked right at a compact default width.
     /// </summary>
     public sealed class WordTaskPaneService
     {
@@ -91,7 +91,7 @@ namespace OMNIX.Word
             object window = _addIn.Application.ActiveWindow;
             if (window == null) return null;
 
-            var controller = new WorkspaceController(_adapter, ThisAddIn.SharedGateway, ThisAddIn.SharedHistory);
+            var controller = new WorkspaceController(_adapter, ThisAddIn.SharedHistory);
             _controllers[key] = controller;
 
             var hostControl = new TaskPaneHostControl(controller.View);
