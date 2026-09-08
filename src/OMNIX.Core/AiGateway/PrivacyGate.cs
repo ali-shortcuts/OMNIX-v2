@@ -80,9 +80,6 @@ namespace OMNIX.Core.AiGateway
 
         public async Task ProbeLocalProvidersAsync()
         {
-            // Only fixed, known local runtimes participate in background auto-discovery.
-            // A Custom endpoint is classified at Configure-time and is validated only when the
-            // user selects/tests it, preventing stale Custom state from being auto-routed later.
             foreach (var p in _registry.All.Where(x =>
                 string.Equals(x.Info.Id, "ollama", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(x.Info.Id, "lmstudio", StringComparison.OrdinalIgnoreCase)))
@@ -225,19 +222,12 @@ namespace OMNIX.Core.AiGateway
             switch (providerId)
             {
                 case "gemini":
-                    creds.ApiKey = SettingsManager.Instance.GetApiKey("gemini");
-                    break;
                 case "groq":
-                    creds.ApiKey = SettingsManager.Instance.GetApiKey("groq");
-                    break;
                 case "openrouter":
-                    creds.ApiKey = SettingsManager.Instance.GetApiKey("openrouter");
-                    break;
                 case "mistral":
-                    creds.ApiKey = SettingsManager.Instance.GetApiKey("mistral");
-                    break;
+                case "huggingface":
                 case "cerebras":
-                    creds.ApiKey = SettingsManager.Instance.GetApiKey("cerebras");
+                    creds.ApiKey = SettingsManager.Instance.GetApiKey(providerId);
                     break;
                 case "ollama":
                     creds.BaseUrl = "http://localhost:11434";
@@ -250,8 +240,6 @@ namespace OMNIX.Core.AiGateway
                 case "custom":
                     var cp = settings.CustomProvider;
                     creds.BaseUrl = cp != null ? cp.BaseUrl : null;
-                    // The main Model picker writes settings.Models["custom"]. Prefer that value;
-                    // fall back to the legacy CustomProvider.Model only for older settings files.
                     if (string.IsNullOrWhiteSpace(creds.Model))
                         creds.Model = cp != null ? cp.Model : null;
                     creds.ApiKey = SettingsManager.Instance.GetApiKey("custom");
