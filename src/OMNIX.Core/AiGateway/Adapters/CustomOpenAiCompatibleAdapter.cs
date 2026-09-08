@@ -11,8 +11,9 @@ namespace OMNIX.Core.AiGateway.Adapters
 {
     /// <summary>
     /// Custom provider: any OpenAI-compatible endpoint (Name + Base URL + optional API Key + Model).
-    /// The API-key field is exposed in Settings but remains optional so local endpoints without
-    /// authentication still work. Vision is probed after a successful model-list connection.
+    /// Loopback endpoints (localhost / 127.0.0.1 / ::1) are classified as Local after Configure,
+    /// so Privacy Mode can use a local custom server without pretending data leaves the PC.
+    /// All other custom endpoints remain Cloud and pass through the normal cloud privacy gate.
     /// </summary>
     public sealed class CustomOpenAiCompatibleAdapter : IProviderAdapter
     {
@@ -29,11 +30,10 @@ namespace OMNIX.Core.AiGateway.Adapters
                 Kind = ProviderKind.Cloud,
                 Vision = VisionSupport.DependsOnModel,
                 DefaultModel = "gpt-4o-mini",
-                // True here means "show the API-key field". OMNIX still accepts an empty key,
-                // which is required for local OpenAI-compatible servers that do not use auth.
+                // True means Settings should expose the key field. The key itself remains optional.
                 RequiresApiKey = true,
                 AccessProfile = ProviderAccessProfile.CustomEndpoint,
-                AccessNotes = "API key is optional. Cost, privacy and limits are defined by your endpoint.",
+                AccessNotes = "API key is optional. Loopback endpoints are treated as local; other endpoints are treated as cloud.",
                 Notes = "Configure an OpenAI-compatible Base URL, model, and optional API key."
             };
         }
@@ -59,6 +59,11 @@ namespace OMNIX.Core.AiGateway.Adapters
             }
 
             _baseUrl = parsed.GetLeftPart(UriPartial.Path).TrimEnd('/');
+            Info.Kind = IsLoopbackEndpoint(parsed) ? ProviderKind.Local : ProviderKind.Cloud;
+            Info.AccessNotes = Info.Kind == ProviderKind.Local
+                ? "Loopback custom endpoint: treated as Local AI; request data stays on this PC unless that local server forwards it elsewhere."
+                : "Remote custom endpoint: treated as Cloud; OMNIX cloud privacy rules apply. Cost, retention and limits are defined by the endpoint owner.";
+
             if (string.IsNullOrWhiteSpace(_creds.Model) && cp != null) _creds.Model = cp.Model;
             if (string.IsNullOrWhiteSpace(_creds.Model)) _creds.Model = Info.DefaultModel;
         }
@@ -126,6 +131,18 @@ namespace OMNIX.Core.AiGateway.Adapters
             if (_visionProbeResult.HasValue) return _visionProbeResult.Value;
             var cp = SettingsManager.Instance.Settings.CustomProvider;
             return cp != null && cp.SupportsVision == true;
+        }
+
+        public static bool IsLoopbackEndpoint(string raw)
+        {
+            Uri uri;
+            return Uri.TryCreate(raw, UriKind.Absolute, out uri) && IsLoopbackEndpoint(uri);
+        }
+
+        private static bool IsLoopbackEndpoint(Uri uri)
+        {
+            return uri != null && (uri.IsLoopback ||
+                string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase));
         }
 
         private OpenAiCompatibleClient ActiveClient()
