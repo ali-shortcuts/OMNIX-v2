@@ -54,7 +54,9 @@ namespace OMNIX.Core.AiGateway
         /// Sends a request and streams deltas. Runs the whitelisted tool loop:
         /// if the model answers with an omnix_tool block, the tool is executed
         /// (write tools need explicit user confirmation) and the result is fed back
-        /// (max 3 rounds per request).
+        /// (max 3 rounds per request). Captured chart/slide PNGs are attached directly
+        /// to the next tool-result turn so a Vision-capable model can inspect Office visuals
+        /// without making the user manually re-attach the image.
         /// </summary>
         public async Task<ChatResponse> ChatAsync(
             ChatRequest request,
@@ -83,7 +85,7 @@ namespace OMNIX.Core.AiGateway
                     throw new OmnixException(ErrorCode.MODEL_ERROR,
                         Localization.Strings.T("Err.VisionNotSupported"),
                         "Provider=" + provider.Info.Id + "; model=" + (provider.Info.DefaultModel ?? "?") + "; request has images.",
-                        "Use a Vision-capable provider (e.g., Gemini) or send text only.");
+                        "Use a Vision-capable provider/model or send text-only context.");
 
                 await _privacy.EnsureAllowedAsync(provider).ConfigureAwait(true);
 
@@ -137,12 +139,29 @@ namespace OMNIX.Core.AiGateway
                 ToolResult result = await toolExecutor.ExecuteAsync(call, hostAdapter).ConfigureAwait(true);
                 history.Add(current);
                 history.Add(new ChatTurn { Role = ChatRole.Assistant, Text = response.Text, TimestampUtc = DateTime.UtcNow });
-                current = new ChatTurn
+
+                var toolResultTurn = new ChatTurn
                 {
                     Role = ChatRole.User,
                     Text = "OMNIX TOOL RESULT: " + result.ContentForModel,
                     TimestampUtc = DateTime.UtcNow
                 };
+
+                if (result.CapturedPng != null && result.CapturedPng.Length > 0)
+                {
+                    toolResultTurn.Images = new List<ImageAttachment>
+                    {
+                        new ImageAttachment
+                        {
+                            FileName = call.Name + ".png",
+                            PngBytes = result.CapturedPng,
+                            SourceLabel = "OMNIX Office tool: " + call.Name
+                        }
+                    };
+                    Logger.Gateway("Vision tool result attached: " + call.Name + " (" + result.CapturedPng.Length + " bytes)");
+                }
+
+                current = toolResultTurn;
                 final = response;
             }
 
@@ -157,7 +176,6 @@ namespace OMNIX.Core.AiGateway
             if (local != null && !string.Equals(local.Info.Id, current.Info.Id, StringComparison.OrdinalIgnoreCase))
                 return local;
 
-            // Any other cloud provider than the failing one.
             return _registry.All.FirstOrDefault(p =>
                 p.Info.Kind == ProviderKind.Cloud &&
                 !string.Equals(p.Info.Id, current.Info.Id, StringComparison.OrdinalIgnoreCase));
@@ -190,6 +208,7 @@ namespace OMNIX.Core.AiGateway
             sb.AppendLine("{\"tool\":\"<name>\",\"args\":{...}}");
             sb.AppendLine("```");
             sb.AppendLine("Read-only tools: read_selection, read_document, read_presentation, capture_chart_as_image, capture_slide_as_image.");
+            sb.AppendLine("When visual inspection is needed, use capture_chart_as_image or capture_slide_as_image. OMNIX will attach the captured PNG to the next tool-result turn automatically; analyze that image directly if the active model supports Vision.");
             sb.AppendLine("Write tools (the user will see a preview and must confirm): write_to_cell {address,value}, insert_formula {address,formula}, rewrite_selected_text {text}, insert_slide {index,title,body}, add_speaker_notes {slide,notes}, highlight_range {address}.");
             sb.AppendLine("Use a write tool only when the user asked for a concrete change. After tool results come back, continue your answer.");
             sb.AppendLine();
