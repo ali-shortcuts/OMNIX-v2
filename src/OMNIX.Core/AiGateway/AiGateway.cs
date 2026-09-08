@@ -17,10 +17,10 @@ using OMNIX.Core.Tools;
 namespace OMNIX.Core.AiGateway
 {
     /// <summary>
-    /// Layer 5 — AI Gateway: THE single entry point between UI and providers.
-    /// Responsibilities: privacy enforcement (Layer 7.5), provider routing (Local first),
-    /// retry/failover, tool-call loop (Layer 7, whitelisted tools only), untrusted-data
-    /// wrapping (Rule 8). The UI never talks to a provider directly.
+    /// Layer 5 — AI Gateway: the single entry point between UI and providers.
+    /// Responsibilities: privacy enforcement, provider routing, retry/failover,
+    /// whitelisted Office tool loop, Vision attachment routing and untrusted-data wrapping.
+    /// The UI never talks to a provider directly.
     /// </summary>
     public sealed class AiGateway
     {
@@ -41,22 +41,17 @@ namespace OMNIX.Core.AiGateway
         public ProviderRouter Router { get { return _router; } }
         public PrivacyGate Privacy { get { return _privacy; } }
 
-        /// <summary>UI wires this to suggest switching providers after repeated failures (Phase 12.4).</summary>
         public event Action<IProviderAdapter> SuggestFailover;
 
-        /// <summary>Background probe of Ollama/LM Studio availability (Phase 9.1).</summary>
         public Task ProbeLocalAsync()
         {
             return _router.ProbeLocalProvidersAsync();
         }
 
         /// <summary>
-        /// Sends a request and streams deltas. Runs the whitelisted tool loop:
-        /// if the model answers with an omnix_tool block, the tool is executed
-        /// (write tools need explicit user confirmation) and the result is fed back
-        /// (max 3 rounds per request). Captured chart/slide PNGs are attached directly
-        /// to the next tool-result turn so a Vision-capable model can inspect Office visuals
-        /// without making the user manually re-attach the image.
+        /// Sends a request and streams deltas. Runs the approved tool loop for at most three
+        /// rounds. Office chart/slide/current-view PNGs are attached to the next tool-result turn
+        /// so Vision-capable models can inspect them without a manual re-attach step.
         /// </summary>
         public async Task<ChatResponse> ChatAsync(
             ChatRequest request,
@@ -114,7 +109,6 @@ namespace OMNIX.Core.AiGateway
                     return final;
                 }
 
-                // ---- whitelisted tool protocol (Layer 7) ----
                 var call = ToolCallParser.Parse(response.Text);
                 if (call == null)
                 {
@@ -181,7 +175,6 @@ namespace OMNIX.Core.AiGateway
                 !string.Equals(p.Info.Id, current.Info.Id, StringComparison.OrdinalIgnoreCase));
         }
 
-        /// <summary>Assembles the full system prompt: identity + tool protocol + untrusted context.</summary>
         public static string BuildSystemPrompt(IHostAdapter hostAdapter, OfficeContext context)
         {
             return SystemPromptBuilder.Build(hostAdapter, context);
@@ -189,9 +182,9 @@ namespace OMNIX.Core.AiGateway
     }
 
     /// <summary>
-    /// System prompt builder. Document payloads are ALWAYS wrapped by UntrustedData (Rule 8),
-    /// and a prompt-injection guard reminder is attached when suspicious content is detected
-    /// (Phase 16 — content stays visible as data, never becomes a directive).
+    /// Builds the Office-aware system prompt. Document payloads are always untrusted data.
+    /// The model is explicitly told the difference between structured Office context and the
+    /// bounded visual captures it can request; it must never pretend it can see outside them.
     /// </summary>
     public static class SystemPromptBuilder
     {
@@ -200,6 +193,7 @@ namespace OMNIX.Core.AiGateway
             var sb = new StringBuilder();
             sb.AppendLine("You are OMNIX, an AI assistant embedded in Microsoft Office (Excel, Word, PowerPoint) as a docked side panel.");
             sb.AppendLine("You help the user with THEIR document: answering questions, drafting text, writing Excel formulas, summarizing data, and reviewing slides.");
+            sb.AppendLine("Use structured Office context first. Never claim you inspected an entire workbook/document/presentation unless the supplied context or a read tool actually contains the relevant scope.");
             sb.AppendLine("Formatting: answer in clean Markdown. Put Excel formulas in backticks (e.g. `=SUM(A1:A10)`). Keep answers compact — the panel is 360px wide.");
             sb.AppendLine();
             sb.AppendLine("AVAILABLE TOOLS (whitelist — nothing else exists):");
@@ -207,8 +201,10 @@ namespace OMNIX.Core.AiGateway
             sb.AppendLine("```omnix_tool");
             sb.AppendLine("{\"tool\":\"<name>\",\"args\":{...}}");
             sb.AppendLine("```");
-            sb.AppendLine("Read-only tools: read_selection, read_document, read_presentation, capture_chart_as_image, capture_slide_as_image.");
-            sb.AppendLine("When visual inspection is needed, use capture_chart_as_image or capture_slide_as_image. OMNIX will attach the captured PNG to the next tool-result turn automatically; analyze that image directly if the active model supports Vision.");
+            sb.AppendLine("Read-only tools: read_selection, read_document, read_presentation, capture_chart_as_image, capture_slide_as_image, capture_current_view_as_image.");
+            sb.AppendLine("For a broader textual/structural question, request read_document (or read_presentation in PowerPoint) instead of guessing from the initial compact context.");
+            sb.AppendLine("For visual inspection, request capture_current_view_as_image for the current Excel/Word/PowerPoint view/selection, capture_chart_as_image for an Excel chart, or capture_slide_as_image for a PowerPoint slide. OMNIX attaches the captured PNG to the next tool-result turn automatically when the active model supports Vision.");
+            sb.AppendLine("A visual capture is bounded: analyze only what is visible in that captured image and do not claim to see other pages, sheets, cells or slides.");
             sb.AppendLine("Write tools (the user will see a preview and must confirm): write_to_cell {address,value}, insert_formula {address,formula}, rewrite_selected_text {text}, insert_slide {index,title,body}, add_speaker_notes {slide,notes}, highlight_range {address}.");
             sb.AppendLine("Use a write tool only when the user asked for a concrete change. After tool results come back, continue your answer.");
             sb.AppendLine();
