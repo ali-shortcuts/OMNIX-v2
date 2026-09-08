@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Windows.Forms;
 using Wd = Microsoft.Office.Interop.Word;
 using Microsoft.Office.Tools;
 using OMNIX.Core.Context;
@@ -10,8 +9,8 @@ using OMNIX.Core.Ui;
 namespace OMNIX.Word
 {
     /// <summary>
-    /// Per-window task pane management for Word (spec Section 5): each document window gets
-    /// its own pane/chat. Docked right, 360px default, clamped so the document stays usable.
+    /// Per-window task pane management for Word: each document window gets its own
+    /// pane/chat/context. Docked right at a compact default width.
     /// </summary>
     public sealed class WordTaskPaneService
     {
@@ -23,6 +22,7 @@ namespace OMNIX.Word
         private readonly Dictionary<IntPtr, CustomTaskPane> _panes = new Dictionary<IntPtr, CustomTaskPane>();
         private readonly Dictionary<IntPtr, WorkspaceController> _controllers = new Dictionary<IntPtr, WorkspaceController>();
         private bool _clamping;
+        private bool _disposed;
 
         public WordTaskPaneService(ThisAddIn addIn, IHostAdapter adapter)
         {
@@ -32,6 +32,7 @@ namespace OMNIX.Word
 
         public void AttachEvents()
         {
+            if (_disposed) return;
             _addIn.Application.WindowActivate += OnWindowActivate;
             _addIn.Application.WindowSelectionChange += OnWindowSelectionChange;
             Logger.Startup("WordTaskPaneService events attached");
@@ -82,6 +83,8 @@ namespace OMNIX.Word
 
         private CustomTaskPane EnsurePane(IntPtr key)
         {
+            if (_disposed || key == IntPtr.Zero) return null;
+
             CustomTaskPane pane;
             if (_panes.TryGetValue(key, out pane) && pane != null) return pane;
 
@@ -96,8 +99,6 @@ namespace OMNIX.Word
             pane.DockPosition = Microsoft.Office.Core.MsoCTPDockPosition.msoCTPDockPositionRight;
             try { pane.Width = DefaultWidth; } catch { }
             pane.VisibleChanged += OnPaneVisibleChanged;
-            // NOTE: Microsoft.Office.Tools.CustomTaskPane has no WidthChanged event in this VSTO runtime version;
-            // max-width clamping is disabled for now (non-critical UX nicety, not a spec requirement). OnPaneWidthChanged left as dead code for future re-wiring (e.g. a timer-based poll) if needed.
             _panes[key] = pane;
             Logger.Startup("Word task pane created for window " + key);
             return pane;
@@ -113,7 +114,6 @@ namespace OMNIX.Word
                 {
                     _clamping = true;
                     pane.Width = MaxWidth;
-                    _clamping = false;
                 }
             }
             catch { }
@@ -132,6 +132,7 @@ namespace OMNIX.Word
                         WorkspaceController controller;
                         if (_controllers.TryGetValue(kv.Key, out controller))
                             controller.OnPaneClosing();
+                        break;
                     }
                 }
             }
@@ -139,6 +140,7 @@ namespace OMNIX.Word
 
         public void ToggleActive()
         {
+            if (_disposed) return;
             IntPtr key = KeyOf(_addIn.Application.ActiveWindow);
             if (key == IntPtr.Zero) return;
             CustomTaskPane pane = EnsurePane(key);
@@ -148,6 +150,7 @@ namespace OMNIX.Word
 
         public void ShowSettings()
         {
+            if (_disposed) return;
             IntPtr key = KeyOf(_addIn.Application.ActiveWindow);
             CustomTaskPane pane = EnsurePane(key);
             if (pane == null) return;
@@ -155,6 +158,27 @@ namespace OMNIX.Word
             WorkspaceController controller;
             if (_controllers.TryGetValue(key, out controller))
                 controller.View.ShowSettingsTab();
+        }
+
+        public void DisposeAll()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            foreach (var controller in _controllers.Values)
+            {
+                try { if (controller != null) controller.Dispose(); } catch { }
+            }
+            _controllers.Clear();
+
+            foreach (var pane in _panes.Values)
+            {
+                if (pane == null) continue;
+                try { pane.VisibleChanged -= OnPaneVisibleChanged; } catch { }
+                try { _addIn.CustomTaskPanes.Remove(pane); } catch { }
+            }
+            _panes.Clear();
+            Logger.Startup("WordTaskPaneService disposed all panes/controllers");
         }
     }
 }
