@@ -390,7 +390,19 @@ begin
     end;
 
     // --- 4.2 step 3: VSTO runtime if missing — the only step that may raise UAC ---
-    if NeedVstoX86 or NeedVstoX64 then
+    // TEMPORARY EXPERIMENT: Microsoft's own documentation says Office 2013+
+    // (including 365/Click-to-Run) generally already bundles the VSTO
+    // runtime extensions as long as .NET Framework 4 is present — which it
+    // always is on any modern Windows. Our own registry check may be
+    // looking for a legacy marker that a modern Click-to-Run Office simply
+    // never writes, even though the real runtime support is already fully
+    // functional. Given vstor_redist.exe (a 2010-era installer) has also
+    // been repeatedly unreliable in the wild on modern systems ("Generic
+    // trust failure" reports), this build SKIPS running it entirely, as a
+    // direct test: does OMNIX load in Excel without it? If yes, this whole
+    // fragile, UAC-and-certutil-heavy step can be REMOVED for good, making
+    // the installer dramatically more robust for mass deployment.
+    if (NeedVstoX86 or NeedVstoX64) and False then
     begin
       VstoExe := ExpandConstant('{tmp}') + '\vstor_redist.exe';
       if FileExists(VstoExe) then
@@ -423,7 +435,9 @@ begin
       end
       else
         InstallLog('WARNING: vstor_redist.exe missing from temp — download step did not run.');
-    end;
+    end
+    else if NeedVstoX86 or NeedVstoX64 then
+      InstallLog('EXPERIMENT: skipping vstor_redist.exe entirely this build, to test whether Office already has what it needs. Registry will still be written below regardless.');
 
     // --- 4.2 step 4: trust the manifest signing certificate (CurrentUser — no admin) ---
     CertPath := ExpandConstant('{tmp}') + '\OMNIX.cer';
