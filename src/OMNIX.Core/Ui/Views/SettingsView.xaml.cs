@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Windows;
@@ -12,14 +13,28 @@ using OMNIX.Core.Theming;
 namespace OMNIX.Core.Ui
 {
     /// <summary>
-    /// Settings page: provider dropdown, API key (DPAPI-encrypted on save), model list loading,
-    /// real Test Connection, local AI probing (Ollama 11434 / LM Studio 1234), Privacy Mode,
-    /// appearance and history limits (spec Phases 7–10).
+    /// Settings page: provider dropdown, DPAPI-protected API key, dynamic models,
+    /// categorized connection diagnostics, official provider setup links, local AI probing,
+    /// Privacy Mode, appearance and history limits.
     /// </summary>
     public partial class SettingsView : UserControl
     {
         private WorkspaceController _controller;
         private bool _loading;
+
+        // Provider pages are product metadata, but still enforce a hard HTTPS host allowlist
+        // before shell-opening anything. Custom provider BaseUrl is never opened by this code.
+        private static readonly string[] AllowedOfficialHosts =
+        {
+            "ai.google.dev",
+            "aistudio.google.com",
+            "groq.com",
+            "console.groq.com",
+            "openrouter.ai",
+            "ollama.com",
+            "docs.ollama.com",
+            "lmstudio.ai"
+        };
 
         public SettingsView()
         {
@@ -46,14 +61,20 @@ namespace OMNIX.Core.Ui
 
                 ProviderCombo.ItemsSource = registry != null ? registry.All.Select(p => p.Info).ToList() : null;
                 var selected = registry != null ? registry.Get(settings.SelectedProviderId) : null;
-                if (selected != null) ProviderCombo.SelectedItem = selected.Info;
+                if (selected != null)
+                {
+                    ProviderCombo.SelectedItem = selected.Info;
+                    UpdateProviderUi(selected.Info);
+                }
 
                 string model;
                 ModelCombo.Text = settings.Models != null && settings.Models.TryGetValue(settings.SelectedProviderId ?? "", out model) ? model : "";
 
                 ApiKeyBox.Clear();
-                bool hasKey = SettingsManager.Instance.HasApiKey(settings.SelectedProviderId);
-                KeyStateText.Visibility = hasKey ? Visibility.Visible : Visibility.Collapsed;
+                if (selected == null)
+                {
+                    KeyStateText.Visibility = Visibility.Collapsed;
+                }
 
                 var cp = settings.CustomProvider;
                 CustomNameBox.Text = cp != null ? cp.Name : "";
@@ -90,6 +111,38 @@ namespace OMNIX.Core.Ui
             LocalStatusText.Text = "Ollama (11434): " + ollama + "\nLM Studio (1234): " + lm;
         }
 
+        private void UpdateProviderUi(ProviderInfo info)
+        {
+            if (info == null) return;
+
+            bool needsKey = info.RequiresApiKey;
+            bool hasKey = needsKey && SettingsManager.Instance.HasApiKey(info.Id);
+
+            ApiKeyLabel.Visibility = needsKey ? Visibility.Visible : Visibility.Collapsed;
+            ApiKeyBox.Visibility = needsKey ? Visibility.Visible : Visibility.Collapsed;
+
+            if (needsKey)
+            {
+                KeyStateText.SetResourceReference(TextBlock.TextProperty, "S.Settings.ApiKeyStored");
+                KeyStateText.Visibility = hasKey ? Visibility.Visible : Visibility.Collapsed;
+            }
+            else
+            {
+                KeyStateText.SetResourceReference(TextBlock.TextProperty, "S.Settings.NoApiKeyRequired");
+                KeyStateText.Visibility = Visibility.Visible;
+            }
+
+            GetApiKeyButton.Visibility = needsKey && !string.IsNullOrWhiteSpace(info.ApiKeyUrl)
+                ? Visibility.Visible : Visibility.Collapsed;
+            ProviderDocsButton.Visibility = !string.IsNullOrWhiteSpace(info.DocumentationUrl)
+                ? Visibility.Visible : Visibility.Collapsed;
+
+            bool hasOfficialLink = GetApiKeyButton.Visibility == Visibility.Visible ||
+                                   ProviderDocsButton.Visibility == Visibility.Visible;
+            ProviderLinksPanel.Visibility = hasOfficialLink ? Visibility.Visible : Visibility.Collapsed;
+            ProviderLinkNote.Visibility = hasOfficialLink ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         // ------------------------------------------------------------- handlers
 
         private void OnProviderChanged(object sender, SelectionChangedEventArgs e)
@@ -104,7 +157,52 @@ namespace OMNIX.Core.Ui
             ModelCombo.Text = settings.Models != null && settings.Models.TryGetValue(info.Id, out model) ? model : info.DefaultModel;
 
             ApiKeyBox.Clear();
-            KeyStateText.Visibility = SettingsManager.Instance.HasApiKey(info.Id) ? Visibility.Visible : Visibility.Collapsed;
+            UpdateProviderUi(info);
+            TestResultText.Text = info.Notes ?? string.Empty;
+        }
+
+        private void OnGetApiKey(object sender, RoutedEventArgs e)
+        {
+            var info = ProviderCombo.SelectedItem as ProviderInfo;
+            if (info == null || string.IsNullOrWhiteSpace(info.ApiKeyUrl)) return;
+            OpenVerifiedOfficialUrl(info.ApiKeyUrl, info.Id, "API key page");
+        }
+
+        private void OnProviderDocs(object sender, RoutedEventArgs e)
+        {
+            var info = ProviderCombo.SelectedItem as ProviderInfo;
+            if (info == null || string.IsNullOrWhiteSpace(info.DocumentationUrl)) return;
+            OpenVerifiedOfficialUrl(info.DocumentationUrl, info.Id, "documentation");
+        }
+
+        private void OpenVerifiedOfficialUrl(string url, string providerId, string purpose)
+        {
+            try
+            {
+                Uri uri;
+                if (!Uri.TryCreate(url, UriKind.Absolute, out uri) ||
+                    !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+                    !AllowedOfficialHosts.Any(h => string.Equals(uri.Host, h, StringComparison.OrdinalIgnoreCase)))
+                {
+                    Logger.Error("ui", "Blocked non-official provider URL: " + url, null);
+                    TestResultText.Text = "Blocked an unverified provider link. No page was opened.";
+                    TestResultText.SetResourceReference(TextBlock.ForegroundProperty, "B.Danger");
+                    return;
+                }
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = uri.AbsoluteUri,
+                    UseShellExecute = true
+                });
+                Logger.Gateway("Opened verified official " + purpose + " for provider=" + providerId + " host=" + uri.Host);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("ui", "Failed to open official provider link", ex);
+                TestResultText.Text = "Could not open the provider's official page: " + ex.Message;
+                TestResultText.SetResourceReference(TextBlock.ForegroundProperty, "B.Danger");
+            }
         }
 
         private async void OnLoadModels(object sender, RoutedEventArgs e)
@@ -163,8 +261,11 @@ namespace OMNIX.Core.Ui
                 adapter.Configure(gateway.Router.BuildCredentials(info.Id));
                 using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
                 {
-                    bool ok = await adapter.TestConnectionAsync(cts.Token);
-                    TestResultText.Text = ok ? Localization.Strings.T("S.Settings.TestOk") + (info.RequiresApiKey ? "" : "")
+                    // Use the throwing model-list probe here rather than adapters' bool-only
+                    // TestConnectionAsync wrappers, so AUTH/NETWORK/PROVIDER errors stay visible.
+                    var models = await adapter.ListModelsAsync(cts.Token);
+                    bool ok = models != null && models.Count > 0;
+                    TestResultText.Text = ok ? Localization.Strings.T("S.Settings.TestOk")
                                              : Localization.Strings.T("S.Settings.TestFailed");
                     TestResultText.SetResourceReference(TextBlock.ForegroundProperty,
                         ok ? "B.Success" : "B.Danger");
@@ -182,10 +283,16 @@ namespace OMNIX.Core.Ui
                 TestResultText.Text = Errors.ErrorPresenter.Format(ex);
                 TestResultText.SetResourceReference(TextBlock.ForegroundProperty, "B.Danger");
             }
+            catch (OperationCanceledException)
+            {
+                TestResultText.Text = Errors.ErrorPresenter.Format(OmnixException.Timeout(info.DisplayName + " connection test timed out."));
+                TestResultText.SetResourceReference(TextBlock.ForegroundProperty, "B.Danger");
+            }
             catch (Exception ex)
             {
                 Logger.Error("ui", "TestConnection failed", ex);
                 TestResultText.Text = Localization.Strings.T("S.Settings.TestFailed") + " — " + ex.Message;
+                TestResultText.SetResourceReference(TextBlock.ForegroundProperty, "B.Danger");
             }
             finally
             {
@@ -232,7 +339,9 @@ namespace OMNIX.Core.Ui
             SaveGeneralFields();
             SettingsManager.Instance.Save();
             if (_controller != null) _controller.SaveSettingsFromUi();
-            KeyStateText.Visibility = Visibility.Visible;
+
+            var info = ProviderCombo.SelectedItem as ProviderInfo;
+            if (info != null) UpdateProviderUi(info);
         }
 
         private void SaveProviderFields()
@@ -245,7 +354,7 @@ namespace OMNIX.Core.Ui
                 settings.Models[info.Id] = ModelCombo.Text.Trim();
 
                 string key = ApiKeyBox.Password;
-                if (!string.IsNullOrWhiteSpace(key))
+                if (info.RequiresApiKey && !string.IsNullOrWhiteSpace(key))
                     SettingsManager.Instance.SetApiKey(info.Id, key.Trim());
             }
 
