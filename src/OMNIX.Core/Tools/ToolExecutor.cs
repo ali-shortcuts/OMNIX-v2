@@ -11,7 +11,7 @@ namespace OMNIX.Core.Tools
     /// <summary>
     /// Layer 7 — executes ONLY whitelisted tools. Read tools run directly; write tools first
     /// produce a preview, require explicit user confirmation, then apply through the host
-    /// adapter so native Office undo (Ctrl+Z) keeps working (spec Phase 15).
+    /// adapter so native Office undo (Ctrl+Z) keeps working.
     /// </summary>
     public sealed class ToolExecutor
     {
@@ -60,13 +60,7 @@ namespace OMNIX.Core.Tools
                     var args = ToolArguments.Parse(call.ArgumentsJson);
                     byte[] png = adapter.CaptureChartAsImage(args.Get("chart", ""));
                     if (png == null || png.Length == 0) return ToolResult.Fail("No chart found to capture.");
-                    return new ToolResult
-                    {
-                        Success = true,
-                        ContentForModel = "OMNIX captured the requested Excel chart. The PNG attached to this tool-result message is the visual source; analyze that image directly and combine it with the structured Office context.",
-                        UiNote = "Chart captured for Vision",
-                        CapturedPng = png
-                    };
+                    return VisionCaptureResult("Excel chart", call.Name, png);
                 }
                 case ToolNames.CaptureSlideAsImage:
                 {
@@ -75,17 +69,29 @@ namespace OMNIX.Core.Tools
                     int.TryParse(args.Get("slide", "0"), out slide);
                     byte[] png = adapter.CaptureSlideAsImage(slide);
                     if (png == null || png.Length == 0) return ToolResult.Fail("No slide available to capture.");
-                    return new ToolResult
-                    {
-                        Success = true,
-                        ContentForModel = "OMNIX captured the requested PowerPoint slide. The PNG attached to this tool-result message is the visual source; inspect the image directly and combine it with slide text/notes context.",
-                        UiNote = "Slide captured for Vision",
-                        CapturedPng = png
-                    };
+                    return VisionCaptureResult("PowerPoint slide", call.Name, png);
+                }
+                case ToolNames.CaptureCurrentViewAsImage:
+                {
+                    byte[] png = adapter.CaptureCurrentViewAsImage();
+                    if (png == null || png.Length == 0)
+                        return ToolResult.Fail("The current Office view could not be captured as an image.");
+                    return VisionCaptureResult(adapter.HostDisplayName + " current view/selection", call.Name, png);
                 }
                 default:
                     return ToolResult.Fail("Unhandled read tool: " + call.Name);
             }
+        }
+
+        private static ToolResult VisionCaptureResult(string source, string toolName, byte[] png)
+        {
+            return new ToolResult
+            {
+                Success = true,
+                ContentForModel = "OMNIX captured the " + source + ". The PNG attached to this tool-result message is the visual source; inspect it directly and combine it with the structured Office context. Do not claim to see anything outside this captured view.",
+                UiNote = source + " captured for Vision",
+                CapturedPng = png
+            };
         }
 
         private async Task<ToolResult> ExecuteWriteAsync(ToolCall call, IHostAdapter adapter)
