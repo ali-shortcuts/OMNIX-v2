@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Newtonsoft.Json;
 using OMNIX.Core.AiGateway.Http;
 using OMNIX.Core.Errors;
 using OMNIX.Core.Settings;
@@ -11,19 +10,18 @@ using OMNIX.Core.Storage;
 namespace OMNIX.Core.AiGateway.Adapters
 {
     /// <summary>
-    /// Custom provider: any OpenAI-compatible endpoint (Name + Base URL + API Key + Model).
-    /// Vision is auto-enabled when the endpoint accepts image_url payloads — Test Connection
-    /// performs a small image probe and stores the result (spec Layer 6 / Phase 8.2).
+    /// Custom provider: any OpenAI-compatible endpoint (Name + Base URL + optional API Key + Model).
+    /// The API-key field is exposed in Settings but remains optional so local endpoints without
+    /// authentication still work. Vision is probed after a successful model-list connection.
     /// </summary>
     public sealed class CustomOpenAiCompatibleAdapter : IProviderAdapter
     {
-        private readonly OpenAiCompatibleClient _client;
         private ProviderCredentials _creds;
         private bool? _visionProbeResult;
+        private string _baseUrl;
 
         public CustomOpenAiCompatibleAdapter()
         {
-            _client = new OpenAiCompatibleClient("http://localhost:8080/v1", "Custom Provider");
             Info = new ProviderInfo
             {
                 Id = "custom",
@@ -31,8 +29,12 @@ namespace OMNIX.Core.AiGateway.Adapters
                 Kind = ProviderKind.Cloud,
                 Vision = VisionSupport.DependsOnModel,
                 DefaultModel = "gpt-4o-mini",
-                RequiresApiKey = false,
-                Notes = "Any OpenAI-compatible endpoint you configure."
+                // True here means "show the API-key field". OMNIX still accepts an empty key,
+                // which is required for local OpenAI-compatible servers that do not use auth.
+                RequiresApiKey = true,
+                AccessProfile = ProviderAccessProfile.CustomEndpoint,
+                AccessNotes = "API key is optional. Cost, privacy and limits are defined by your endpoint.",
+                Notes = "Configure an OpenAI-compatible Base URL, model, and optional API key."
             };
         }
 
@@ -40,27 +42,36 @@ namespace OMNIX.Core.AiGateway.Adapters
 
         public void Configure(ProviderCredentials credentials)
         {
-            _creds = credentials;
-            _client.SetModel(credentials.Model);
-            string url = credentials.BaseUrl;
+            _creds = credentials ?? new ProviderCredentials();
+            string url = _creds.BaseUrl;
             var cp = SettingsManager.Instance.Settings.CustomProvider;
-            if (string.IsNullOrEmpty(url) && cp != null) url = cp.BaseUrl;
-            if (!string.IsNullOrEmpty(url))
-                url_ = url;
-            else
-                throw OmnixException.Provider("Custom provider Base URL is not configured. Set it in Settings.");
-        }
+            if (string.IsNullOrWhiteSpace(url) && cp != null) url = cp.BaseUrl;
 
-        private string url_;
+            if (string.IsNullOrWhiteSpace(url))
+                throw OmnixException.Provider("Custom provider Base URL is not configured. Set it in Settings.");
+
+            Uri parsed;
+            if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out parsed) ||
+                !(string.Equals(parsed.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+                  string.Equals(parsed.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw OmnixException.Provider("Custom provider Base URL must be an absolute http:// or https:// URL.");
+            }
+
+            _baseUrl = parsed.GetLeftPart(UriPartial.Path).TrimEnd('/');
+            if (string.IsNullOrWhiteSpace(_creds.Model) && cp != null) _creds.Model = cp.Model;
+            if (string.IsNullOrWhiteSpace(_creds.Model)) _creds.Model = Info.DefaultModel;
+        }
 
         public Task<ChatResponse> SendAsync(ChatRequest request, Action<string> onDelta, CancellationToken ct)
         {
-            return ActiveClient().SendAsync(request, _creds.ApiKey, _creds.Model, onDelta, ct);
+            return ActiveClient().SendAsync(request, _creds != null ? _creds.ApiKey : null,
+                _creds != null ? _creds.Model : Info.DefaultModel, onDelta, ct);
         }
 
         public Task<IReadOnlyList<string>> ListModelsAsync(CancellationToken ct)
         {
-            return ActiveClient().ListModelsAsync(_creds.ApiKey, ct);
+            return ActiveClient().ListModelsAsync(_creds != null ? _creds.ApiKey : null, ct);
         }
 
         public async Task<bool> TestConnectionAsync(CancellationToken ct)
@@ -71,7 +82,6 @@ namespace OMNIX.Core.AiGateway.Adapters
                 bool ok = models != null && models.Count > 0;
                 if (ok)
                 {
-                    // Vision probe: 1x1 transparent PNG asking the endpoint to describe it.
                     try
                     {
                         byte[] png = Convert.FromBase64String(
@@ -82,20 +92,24 @@ namespace OMNIX.Core.AiGateway.Adapters
                             {
                                 Role = ChatRole.User,
                                 Text = "Reply with OK.",
-                                Images = new System.Collections.Generic.List<ImageAttachment>
+                                Images = new List<ImageAttachment>
                                 {
                                     new ImageAttachment { PngBytes = png, FileName = "probe.png" }
                                 },
                                 TimestampUtc = DateTime.UtcNow
                             }
                         };
-                        var resp = await ActiveClient().SendAsync(probe, _creds.ApiKey, _creds.Model, null, ct).ConfigureAwait(false);
+                        var resp = await ActiveClient().SendAsync(probe,
+                            _creds != null ? _creds.ApiKey : null,
+                            _creds != null ? _creds.Model : Info.DefaultModel,
+                            null, ct).ConfigureAwait(false);
                         _visionProbeResult = resp != null && resp.Text != null;
                     }
                     catch
                     {
                         _visionProbeResult = false;
                     }
+
                     var cp = SettingsManager.Instance.Settings.CustomProvider;
                     if (cp != null) cp.SupportsVision = _visionProbeResult;
                 }
@@ -116,8 +130,16 @@ namespace OMNIX.Core.AiGateway.Adapters
 
         private OpenAiCompatibleClient ActiveClient()
         {
-            string baseWithFallback = string.IsNullOrEmpty(url_) ? (_creds != null ? _creds.BaseUrl : null) : url_;
-            return new OpenAiCompatibleClient(baseWithFallback ?? "http://localhost:8080/v1", "Custom Provider");
+            if (string.IsNullOrWhiteSpace(_baseUrl))
+            {
+                string raw = _creds != null ? _creds.BaseUrl : null;
+                if (string.IsNullOrWhiteSpace(raw) && SettingsManager.Instance.Settings.CustomProvider != null)
+                    raw = SettingsManager.Instance.Settings.CustomProvider.BaseUrl;
+                if (string.IsNullOrWhiteSpace(raw))
+                    throw OmnixException.Provider("Custom provider Base URL is not configured.");
+                _baseUrl = raw.Trim().TrimEnd('/');
+            }
+            return new OpenAiCompatibleClient(_baseUrl, "Custom Provider");
         }
     }
 }
