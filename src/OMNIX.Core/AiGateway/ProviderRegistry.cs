@@ -9,7 +9,8 @@ namespace OMNIX.Core.AiGateway
 {
     /// <summary>
     /// Provider registry. Runtime/provider behavior lives behind adapters; provider-owned setup
-    /// URLs are centralized here so the UI never hard-codes random third-party links.
+    /// URLs and maintained default-model hints are centralized here so the UI never hard-codes
+    /// random links or silently keeps long-deprecated defaults.
     /// </summary>
     public sealed class ProviderRegistry
     {
@@ -36,32 +37,48 @@ namespace OMNIX.Core.AiGateway
             SetMetadata("gemini",
                 "https://ai.google.dev/gemini-api/docs",
                 "https://ai.google.dev/gemini-api/docs/get-started",
-                "https://aistudio.google.com/apikey");
+                "https://aistudio.google.com/apikey",
+                "gemini-3.6-flash");
 
             SetMetadata("groq",
                 "https://groq.com/",
                 "https://console.groq.com/docs/quickstart",
-                "https://console.groq.com/keys");
+                "https://console.groq.com/keys",
+                "openai/gpt-oss-120b");
 
             SetMetadata("openrouter",
                 "https://openrouter.ai/",
                 "https://openrouter.ai/docs",
-                "https://openrouter.ai/settings/keys");
+                "https://openrouter.ai/settings/keys",
+                "openrouter/auto");
 
-            SetMetadata("ollama", "https://ollama.com/", "https://docs.ollama.com/", null);
-            SetMetadata("lmstudio", "https://lmstudio.ai/", "https://lmstudio.ai/docs", null);
+            SetMetadata("ollama", "https://ollama.com/", "https://docs.ollama.com/", null, null);
+            SetMetadata("lmstudio", "https://lmstudio.ai/", "https://lmstudio.ai/docs", null, null);
+
+            var gemini = Get("gemini");
+            if (gemini != null)
+                gemini.Info.Notes = "Vision-capable Gemini provider. Free-tier availability and limits depend on the current Google account/region.";
+
+            var groq = Get("groq");
+            if (groq != null)
+                groq.Info.Notes = "Fast GroqCloud inference. Available models and account limits are loaded dynamically.";
+
+            var openRouter = Get("openrouter");
+            if (openRouter != null)
+                openRouter.Info.Notes = "Multi-provider router. Endpoint availability can be constrained by account privacy/data-policy settings.";
 
             // Custom provider URLs are intentionally NOT supplied by OMNIX. User-entered BaseUrl
             // is an API endpoint, not a trusted provider setup page, and is never opened as a link.
         }
 
-        private void SetMetadata(string id, string website, string docs, string apiKey)
+        private void SetMetadata(string id, string website, string docs, string apiKey, string defaultModel)
         {
             var provider = Get(id);
             if (provider == null) return;
             provider.Info.OfficialWebsiteUrl = website;
             provider.Info.DocumentationUrl = docs;
             provider.Info.ApiKeyUrl = apiKey;
+            if (!string.IsNullOrWhiteSpace(defaultModel)) provider.Info.DefaultModel = defaultModel;
         }
 
         public IReadOnlyList<IProviderAdapter> All { get { return _providers; } }
