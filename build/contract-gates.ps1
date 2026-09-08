@@ -73,19 +73,24 @@ Require-Contains 'src/OMNIX.Core/AiGateway/PrivacyGate.cs' 'PrivacyMode.LocalOnl
 Require-Contains 'src/OMNIX.Core/AiGateway/PrivacyGate.cs' 'ResolveAvailableLocal' 'PreferLocalWhenAvailable must be functional.'
 Require-Contains 'src/OMNIX.Core/Errors/OmnixErrors.cs' 'PRIVACY_BLOCKED' 'Privacy-policy failures need their own categorized error.'
 
-# 4) Provider portfolio: local + free-capable cloud + custom.
+# 4) Provider portfolio: local + researched free-capable cloud + custom.
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new GeminiAdapter()' 'Gemini must remain available.'
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new GroqAdapter()' 'Groq must remain available.'
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new OpenRouterAdapter()' 'OpenRouter must remain available.'
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new MistralAdapter()' 'Mistral Free mode integration must remain available.'
+Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new HuggingFaceAdapter()' 'Hugging Face Inference Providers integration must remain available.'
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new CerebrasAdapter()' 'Cerebras trial/account-dependent integration must remain available.'
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs' 'new CustomOpenAiCompatibleAdapter()' 'Custom OpenAI-compatible provider must remain available.'
 Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/OpenRouterAdapter.cs' 'openrouter/free' 'OpenRouter free router must remain a first-class option.'
 Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/OpenRouterAdapter.cs' ':free' 'Individual OpenRouter free variants must stay discoverable.'
-Require-Contains 'src/OMNIX.Core/Settings/OmnixSettings.cs' 'SchemaVersion = 3' 'Provider expansion requires the v3 settings schema.'
+Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/HuggingFaceAdapter.cs' 'router.huggingface.co/v1' 'Hugging Face must stay on the official OpenAI-compatible router.'
+Require-Contains 'src/OMNIX.Core/AiGateway/Adapters/HuggingFaceAdapter.cs' 'is_free' 'Hugging Face live free-route metadata should remain discoverable.'
+Require-Contains 'src/OMNIX.Core/Settings/OmnixSettings.cs' 'SchemaVersion = 4' 'Provider expansion requires the v4 settings schema.'
 Require-Contains 'src/OMNIX.Core/AiGateway/ProviderContracts.cs' 'Unknown = 0' 'Unknown access state must be the safe enum default.'
+Require-Contains 'src/OMNIX.Core/AiGateway/ProviderContracts.cs' 'FreeCreditsAvailable' 'Limited credits/trials must not be mislabeled as unlimited free tiers.'
 Require-PowerShellParses 'tools/provider-acceptance.ps1'
 Require-Contains 'tools/provider-acceptance.ps1' 'OMNIX_OPENROUTER_API_KEY' 'Provider runtime gate must support OpenRouter without hard-coded secrets.'
+Require-Contains 'tools/provider-acceptance.ps1' 'OMNIX_HUGGINGFACE_API_KEY' 'Provider runtime gate must support Hugging Face without hard-coded secrets.'
 Require-Contains 'tools/provider-acceptance.ps1' 'OMNIX_CUSTOM_BASE_URL' 'Provider runtime gate must support custom endpoints.'
 Require-NotContains 'tools/provider-acceptance.ps1' 'sk-' 'Provider acceptance harness must not contain hard-coded API-key prefixes/secrets.'
 
@@ -112,6 +117,7 @@ Require-Contains 'src/OMNIX.Core/Settings/SettingsManager.cs' 'ProtectedData.Pro
 Require-Contains 'src/OMNIX.Core/Settings/SettingsManager.cs' 'ProtectedData.Unprotect' 'Protected API keys must be restored only for the current Windows user.'
 Require-Contains 'src/OMNIX.Core/Ui/Views/SettingsView.xaml.cs' 'AllowedOfficialHosts' 'Provider setup pages need a hard official-host allowlist.'
 Require-Contains 'src/OMNIX.Core/Ui/Views/SettingsView.xaml.cs' 'Uri.UriSchemeHttps' 'Provider setup links must require HTTPS.'
+Require-Contains 'src/OMNIX.Core/Ui/Views/SettingsView.xaml.cs' 'huggingface.co' 'Hugging Face setup/docs links must stay limited to official hosts.'
 
 if ($failures.Count -gt 0) {
     Write-Host 'OMNIX CONTRACT GATE: FAIL' -ForegroundColor Red
