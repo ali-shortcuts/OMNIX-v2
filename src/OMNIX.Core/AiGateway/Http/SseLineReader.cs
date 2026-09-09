@@ -152,37 +152,50 @@ namespace OMNIX.Core.AiGateway.Http
                 yield return pending.ToString().TrimEnd('\r');
         }
 
+        /// <summary>
+        /// Reads a normal JSON/text HTTP body without allowing an endpoint to allocate an unlimited
+        /// string inside an Office process. Callers choose a route-specific byte cap.
+        /// </summary>
+        public static async Task<string> ReadBodyBoundedAsync(HttpContent content, int maxBytes, CancellationToken ct)
+        {
+            if (content == null) return string.Empty;
+            if (maxBytes <= 0) throw new ArgumentOutOfRangeException("maxBytes");
+
+            using (var stream = await content.ReadAsStreamAsync().ConfigureAwait(false))
+            using (var ms = new MemoryStream())
+            {
+                var buffer = new byte[BufferBytes];
+                while (true)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    int remaining = maxBytes + 1 - (int)ms.Length;
+                    if (remaining <= 0)
+                        throw new InvalidDataException("HTTP response body exceeded the OMNIX safety limit.");
+                    int read = await stream.ReadAsync(buffer, 0, Math.Min(buffer.Length, remaining), ct).ConfigureAwait(false);
+                    if (read <= 0) break;
+                    ms.Write(buffer, 0, read);
+                    if (ms.Length > maxBytes)
+                        throw new InvalidDataException("HTTP response body exceeded the OMNIX safety limit.");
+                }
+                return Encoding.UTF8.GetString(ms.ToArray());
+            }
+        }
+
         public static async Task<string> ReadErrorBodyAsync(HttpResponseMessage response, CancellationToken ct)
         {
             if (response == null || response.Content == null) return "(no body)";
             try
             {
-                using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
-                {
-                    var buffer = new byte[4096];
-                    var ms = new MemoryStream();
-                    try
-                    {
-                        while (ms.Length < MaxErrorBodyChars)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            int remaining = MaxErrorBodyChars - (int)ms.Length;
-                            int read = await stream.ReadAsync(buffer, 0, Math.Min(buffer.Length, remaining), ct).ConfigureAwait(false);
-                            if (read <= 0) break;
-                            ms.Write(buffer, 0, read);
-                        }
-                        string text = Encoding.UTF8.GetString(ms.ToArray());
-                        return ms.Length >= MaxErrorBodyChars ? text + "…[truncated]" : text;
-                    }
-                    finally
-                    {
-                        ms.Dispose();
-                    }
-                }
+                string text = await ReadBodyBoundedAsync(response.Content, MaxErrorBodyChars, ct).ConfigureAwait(false);
+                return text.Length >= MaxErrorBodyChars ? text + "…[truncated]" : text;
             }
             catch (OperationCanceledException)
             {
                 throw;
+            }
+            catch (InvalidDataException)
+            {
+                return "(provider error body exceeded OMNIX safety limit)";
             }
             catch
             {
