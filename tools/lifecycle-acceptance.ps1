@@ -72,7 +72,8 @@ function Convert-ValueStable($value) {
 function Get-TextSha256([string]$text) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try {
-        $bytes = [Text.Encoding]::UTF8.GetBytes(($text ?? ''))
+        $safeText = if ($null -eq $text) { '' } else { $text }
+        $bytes = [Text.Encoding]::UTF8.GetBytes($safeText)
         return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()
     }
     finally { $sha.Dispose() }
@@ -243,9 +244,11 @@ if ($Phase -eq 'Baseline') {
     if (-not $baseline.SettingsExists) { $errors.Add('settings.dat does not exist; create/save OMNIX settings before lifecycle acceptance.') }
     foreach ($e in @(Test-HealthyRegistration $baseline.Registrations)) { $errors.Add([string]$e) }
 
+    $baselinePass = ($errors.Count -eq 0)
     $state = [ordered]@{
         TestId = 'LIFECYCLE-REAL-001'
         EvidenceSchema = 1
+        BaselinePass = $baselinePass
         Baseline = $baseline
         Repair = $null
         Uninstall = $null
@@ -258,7 +261,7 @@ if ($Phase -eq 'Baseline') {
         Phase = 'Baseline'
         FailureCount = $errors.Count
         Failures = @($errors)
-        BaselinePass = ($errors.Count -eq 0)
+        BaselinePass = $baselinePass
         RepairPass = $false
         UninstallPass = $false
         OverallPass = $false
@@ -276,6 +279,9 @@ if (-not (Test-Path -LiteralPath $StatePath -PathType Leaf)) {
 $state = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json
 if ($state.TestId -ne 'LIFECYCLE-REAL-001' -or $null -eq $state.Baseline) {
     throw 'Lifecycle state is invalid or not a LIFECYCLE-REAL-001 baseline.'
+}
+if (-not [bool]$state.BaselinePass) {
+    throw 'Lifecycle baseline did not PASS; establish a clean passing baseline before continuing.'
 }
 
 $baseline = $state.Baseline
@@ -369,7 +375,7 @@ $report = [ordered]@{
     TimestampUtc = (Get-Date).ToUniversalTime().ToString('o')
     FailureCount = $errors.Count
     Failures = @($errors)
-    BaselinePass = $true
+    BaselinePass = [bool]$state.BaselinePass
     RepairPass = [bool]$state.Repair.Pass
     SettingsPreservedAcrossRepair = [bool]$state.Repair.SettingsPreserved
     ResiliencyPreservedAcrossRepair = [bool]$state.Repair.ResiliencyPreserved
@@ -380,7 +386,7 @@ $report = [ordered]@{
     AppPayloadRemoved = [bool]$state.Uninstall.AppPayloadRemoved
     ResiliencyPreservedAcrossUninstall = [bool]$state.Uninstall.ResiliencyPreserved
     DevelopmentCertificateRemoved = [bool]$state.Uninstall.DevelopmentCertificateRemoved
-    OverallPass = [bool]([bool]$state.Repair.Pass -and $uninstallPass)
+    OverallPass = [bool]([bool]$state.BaselinePass -and [bool]$state.Repair.Pass -and $uninstallPass)
     Privacy = 'Hash-only lifecycle evidence; no settings contents, API keys, registry values or Office documents are copied into the report.'
     Safety = 'Read-only snapshots. Installer/uninstaller actions are explicitly performed by the user through supported UI.'
 }
