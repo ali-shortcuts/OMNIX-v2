@@ -15,10 +15,9 @@
 #
 # IMPORTANT POWERSHELL INVARIANT:
 # A function returns every object written to its success pipeline. Native build
-# output piped through Tee-Object must therefore continue to Out-Host; otherwise
-# the log lines become part of the function return value, turning a final $false
-# into a non-empty (truthy) array. That exact bug previously produced a false
-# "BUILD SUCCEEDED" even though OMNIX.Excel.dll was missing.
+# output must therefore be consumed/routed to Out-Host; otherwise log text can
+# contaminate a Boolean strategy result. Invoke-StrictBooleanStrategy also
+# fail-closes if any strategy ever emits anything except one Boolean value.
 #
 # Critical packaging boundary:
 # Once a strategy succeeds, the complete validated Release output of every
@@ -145,6 +144,19 @@ function Stage-ValidatedArtifacts {
     Write-Host 'OMNIX COMPILED HANDOFF: PASS'
 }
 
+function Invoke-StrictBooleanStrategy([string]$name, [scriptblock]$action) {
+    # Capture the COMPLETE success pipeline of a strategy. Exactly one Boolean is legal.
+    # This prevents console/native command output from ever turning a failed strategy into
+    # a truthy array again.
+    $items = @(& $action)
+    if ($items.Count -ne 1 -or $items[0] -isnot [bool]) {
+        Write-Host "$name emitted unexpected success-pipeline output; treating the strategy as FAILED."
+        Write-Host "Expected exactly one Boolean result; observed item count: $($items.Count)."
+        return $false
+    }
+    return [bool]$items[0]
+}
+
 function Invoke-Strategy1-DirectMsbuild {
     Write-Host "`n=== STRATEGY 1: direct msbuild.exe (up to 2 attempts) ==="
     for ($i = 1; $i -le 2; $i++) {
@@ -177,8 +189,10 @@ function Invoke-Strategy2-Devenv {
     $devenv = Join-Path $vsPath 'Common7\IDE\devenv.com'
     if (-not (Test-Path $devenv)) { Write-Host "devenv.com not found at $devenv, skipping strategy 2"; return $false }
 
-    & $devenv $Solution /Build "$Config|Any CPU" /Out 'build_output_s2.txt'
+    # Consume any native stdout/stderr locally so it cannot become part of the function return value.
+    $devenvOutput = @(& $devenv $Solution /Build "$Config|Any CPU" /Out 'build_output_s2.txt' 2>&1)
     $exitCode = $LASTEXITCODE
+    if ($devenvOutput.Count -gt 0) { $devenvOutput | Out-Host }
     Get-Content 'build_output_s2.txt' -ErrorAction SilentlyContinue | Out-Host
     $artifactsOk = Test-CompleteArtifactSet
     Write-Host "Strategy 2: devenvExit=$exitCode completeArtifacts=$artifactsOk"
@@ -250,11 +264,10 @@ function Invoke-Strategy3-TwoPhaseSigning {
     return [bool](Test-CompleteArtifactSet)
 }
 
-# Assign only the explicit Boolean returned by each strategy. Build log text is routed to Out-Host
-# above and can no longer contaminate these values.
-[bool]$ok = Invoke-Strategy1-DirectMsbuild
-if (-not $ok) { [bool]$ok = Invoke-Strategy2-Devenv }
-if (-not $ok) { [bool]$ok = Invoke-Strategy3-TwoPhaseSigning }
+# Every strategy is wrapped so accidental pipeline output is a failure, never a success signal.
+[bool]$ok = Invoke-StrictBooleanStrategy 'Strategy 1' { Invoke-Strategy1-DirectMsbuild }
+if (-not $ok) { [bool]$ok = Invoke-StrictBooleanStrategy 'Strategy 2' { Invoke-Strategy2-Devenv } }
+if (-not $ok) { [bool]$ok = Invoke-StrictBooleanStrategy 'Strategy 3' { Invoke-Strategy3-TwoPhaseSigning } }
 
 if (-not $ok) {
     Write-Host "`n=== ALL THREE BUILD STRATEGIES FAILED TO PRODUCE A COMPLETE VSTO SET ==="
