@@ -126,13 +126,13 @@ function Release-ComObjectSafe($obj) {
     }
 }
 
-function Test-HostRound($host, [int]$round) {
+function Test-HostRound($officeHost, [int]$round) {
     $app = $null
     $matched = $null
     $comAddins = $null
     $started = Get-Date
     $result = [ordered]@{
-        Host = $host.Name
+        Host = $officeHost.Name
         Round = $round
         Installed = $true
         Started = $false
@@ -153,19 +153,15 @@ function Test-HostRound($host, [int]$round) {
     }
 
     try {
-        $app = New-Object -ComObject $host.ProgId
+        $app = New-Object -ComObject $officeHost.ProgId
         $result.Started = $true
         Start-Sleep -Milliseconds $StartupDelayMs
 
         try { $app.Visible = $false } catch { }
         try { $app.DisplayAlerts = $false } catch { }
         try { $result.Version = [string]$app.Version } catch { $result.Version = 'unknown' }
-        $result.Registry = Get-OmnixRegistryState $host.RegistryHost $result.Version
+        $result.Registry = Get-OmnixRegistryState $officeHost.RegistryHost $result.Version
 
-        # COMAddIns is a 1-based COM collection. Enumerate it explicitly by Item(index): relying on
-        # PowerShell's foreach adapter for __ComObject collections can yield the collection object
-        # itself instead of its children on some Office/PowerShell combinations, causing a false
-        # "OMNIX not found" result even when the add-in is present.
         $comAddins = $app.COMAddIns
         try { $result.ComAddinCount = [int]$comAddins.Count } catch { $result.ComAddinCount = 0 }
         for ($i = 1; $i -le $result.ComAddinCount; $i++) {
@@ -189,7 +185,6 @@ function Test-HostRound($host, [int]$round) {
             finally { Release-ComObjectSafe $item }
         }
 
-        # Diagnostic only. Never use the forced state for Pass.
         if ($result.AddinFound -and -not $result.InitialConnect) {
             $result.ForceConnectAttempted = $true
             try {
@@ -219,7 +214,6 @@ function Test-HostRound($host, [int]$round) {
             $registrationPass)
     }
     catch [System.Runtime.InteropServices.COMException] {
-        # 0x80040154 = class not registered -> Office host not installed / not available.
         if ($_.Exception.HResult -eq -2147221164) {
             $result.Installed = $false
             $result.Error = 'Office COM class is not registered; this required host appears not installed.'
@@ -245,7 +239,6 @@ function Test-HostRound($host, [int]$round) {
     return [pscustomobject]$result
 }
 
-# Do not interfere with a user's currently open Office session.
 $running = @()
 foreach ($h in $hosts) {
     if (Get-Process -Name $h.Process -ErrorAction SilentlyContinue) { $running += $h.Name }
@@ -255,13 +248,13 @@ if ($running.Count -gt 0) {
 }
 
 $all = New-Object System.Collections.Generic.List[object]
-foreach ($host in $hosts) {
-    $r1 = Test-HostRound $host 1
+foreach ($officeHost in $hosts) {
+    $r1 = Test-HostRound $officeHost 1
     $all.Add($r1)
     Start-Sleep -Milliseconds 900
 
     if ($r1.Installed) {
-        $r2 = Test-HostRound $host 2
+        $r2 = Test-HostRound $officeHost 2
         $all.Add($r2)
         Start-Sleep -Milliseconds 900
     }
@@ -271,8 +264,8 @@ $installedHostNames = @($all | Where-Object { $_.Installed } | Select-Object -Ex
 $installedRows = @($all | Where-Object { $_.Installed })
 $requiredHostCountPass = ($installedHostNames.Count -eq $hosts.Count)
 $twoRoundsPerHostPass = $requiredHostCountPass
-foreach ($host in $hosts) {
-    if (@($installedRows | Where-Object { $_.Host -eq $host.Name }).Count -ne 2) {
+foreach ($officeHost in $hosts) {
+    if (@($installedRows | Where-Object { $_.Host -eq $officeHost.Name }).Count -ne 2) {
         $twoRoundsPerHostPass = $false
     }
 }
