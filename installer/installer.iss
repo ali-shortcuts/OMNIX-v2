@@ -7,6 +7,9 @@
 ;   * NEVER clear Office Resiliency/DisabledItems/CrashingAddinList globally.
 ;   * Never bypass Office/Windows policy. User-authorized install only.
 ;   * Verify all installed Office hosts after registration and log exact failures.
+;   * A transparent LIMITED per-user logon task may re-scan supported Office hosts
+;     installed later and repair only OMNIX-owned registration. It never elevates,
+;     launches Office, changes Trust Center/Resiliency, or reads documents.
 ;   * Trust-store changes are development-only: only an exact self-signed OMNIX
 ;     development certificate may be imported, and uninstall removes only its
 ;     recorded thumbprint. A CA-signed production cert is never root-imported.
@@ -44,7 +47,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; Three VSTO hosts + shared core + verification/trust-classifier scripts staged by the build pipeline.
+; Three VSTO hosts + shared core + verification/maintenance/trust-classifier scripts staged by build.
 Source: "payload\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: "vstor_redist.exe"
 
 #if FileExists(AddBackslash(SourcePath) + "payload\vstor_redist.exe")
@@ -52,6 +55,7 @@ Source: "payload\vstor_redist.exe"; DestDir: "{tmp}"; Flags: dontcopy
 #endif
 
 [Icons]
+Name: "{group}\Rescan Office Integration"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\office-registration-maintenance.ps1"" -InstallDir ""{app}"""; WorkingDir: "{app}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 
 [UninstallDelete]
@@ -59,9 +63,10 @@ Type: filesandordirs; Name: "{app}"
 
 [Code]
 const
-  RegAddinsFmt    = 'Software\Microsoft\Office\%0:s\%1:s\Addins\OMNIX';
-  TrustedPubStore = 'TrustedPublisher';
-  RootStore       = 'Root';
+  RegAddinsFmt       = 'Software\Microsoft\Office\%0:s\%1:s\Addins\OMNIX';
+  TrustedPubStore    = 'TrustedPublisher';
+  RootStore          = 'Root';
+  MaintenanceTaskName = 'OMNIX Office Registration Maintenance';
 
 var
   DetectedPlatform: String;
@@ -72,6 +77,7 @@ var
   NeedVstoX86: Boolean;
   VstoRestartNeeded: Boolean;
   PrerequisiteFailed: Boolean;
+  MaintenanceTaskInstalled: Boolean;
 
 procedure InstallLog(const Line: String);
 var
@@ -289,11 +295,72 @@ begin
   Result := VstoRestartNeeded;
 end;
 
+procedure RemoveMaintenanceTask();
+var
+  ResultCode: Integer;
+  Helper: String;
+begin
+  Helper := ExpandConstant('{app}') + '\install-maintenance-task.ps1';
+  if FileExists(Helper) then
+  begin
+    Exec('powershell.exe',
+         '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + Helper + '" -InstallDir "' + ExpandConstant('{app}') + '" -Remove',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    InstallLog('Maintenance task helper removal exit code: ' + IntToStr(ResultCode));
+    if ResultCode = 0 then exit;
+  end;
+
+  Exec(ExpandConstant('{sys}') + '\schtasks.exe',
+       '/Delete /TN "' + MaintenanceTaskName + '" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  InstallLog('Maintenance task fallback removal exit code: ' + IntToStr(ResultCode));
+end;
+
+function InstallMaintenanceTask(): Boolean;
+var
+  ResultCode: Integer;
+  Helper: String;
+begin
+  Result := False;
+  Helper := ExpandConstant('{app}') + '\install-maintenance-task.ps1';
+  if not FileExists(Helper) then
+  begin
+    InstallLog('MAINTENANCE_WARNING: install-maintenance-task.ps1 is missing.');
+    exit;
+  end;
+
+  Exec('powershell.exe',
+       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + Helper + '" -InstallDir "' + ExpandConstant('{app}') + '"',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := (ResultCode = 0);
+  InstallLog('Per-user Office registration maintenance task install exit code: ' + IntToStr(ResultCode));
+end;
+
+function RunRegistrationMaintenance(): Boolean;
+var
+  ResultCode: Integer;
+  ScriptPath: String;
+begin
+  Result := False;
+  ScriptPath := ExpandConstant('{app}') + '\office-registration-maintenance.ps1';
+  if not FileExists(ScriptPath) then
+  begin
+    InstallLog('REGISTRATION_ERROR: office-registration-maintenance.ps1 is missing.');
+    exit;
+  end;
+
+  Exec('powershell.exe',
+       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath + '" -InstallDir "' + ExpandConstant('{app}') + '" -Quiet',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := (ResultCode = 0);
+  InstallLog('Office registration maintenance immediate pass exit code: ' + IntToStr(ResultCode));
+end;
+
 function InitializeSetup(): Boolean;
 begin
   Result := True;
   PrerequisiteFailed := False;
   VstoRestartNeeded := False;
+  MaintenanceTaskInstalled := False;
 
   ForceDirectories(ExpandConstant('{localappdata}') + '\OMNIX\logs');
   InstallLog('=== OMNIX setup initialized (version {#MyAppVersion}) ===');
@@ -381,6 +448,9 @@ begin
       'The Microsoft VSTO Runtime prerequisite appears missing and the bundled Microsoft redistributable will be attempted.' + NewLine +
       'Windows may request Administrator approval for that Microsoft prerequisite only.' + NewLine;
   Result := Result + NewLine +
+    'Automatic Office maintenance: OMNIX will attempt to create one LIMITED current-user logon task.' + NewLine +
+    'It only re-scans supported Excel/Word/PowerPoint hosts and repairs OMNIX-owned registration.' + NewLine +
+    'It does not elevate, change Office Trust Center/Resiliency, or read documents.' + NewLine + NewLine +
     'Installation folder: ' + ExpandConstant('{localappdata}') + '\Programs\OMNIX' + NewLine;
 end;
 
@@ -404,6 +474,7 @@ begin
       InstallLog('NOTE: vstor_redist.exe was not extracted/bundled: ' + GetExceptionMessage);
     end;
 
+    RemoveMaintenanceTask();
     RemoveAddinRegistry();
     PreserveOfficeResiliencyState();
 
@@ -454,9 +525,6 @@ begin
   begin
     AllOk := not PrerequisiteFailed;
 
-    // Development certificate trust is allowed only after files have been copied and only when
-    // the bundled public certificate is actually self-signed. A CA-signed production publisher
-    // certificate relies on the normal Windows chain and is never inserted into CurrentUser Root.
     CertPath := ExpandConstant('{app}') + '\OMNIX.cer';
     CertClassifier := ExpandConstant('{app}') + '\classify-dev-cert.ps1';
     CertMarker := ExpandConstant('{app}') + '\dev-cert-thumbprint.txt';
@@ -536,6 +604,16 @@ begin
         end;
       end;
 
+    if not RunRegistrationMaintenance() then
+    begin
+      InstallLog('REGISTRATION_ERROR: immediate supported-host maintenance verification failed.');
+      AllOk := False;
+    end;
+
+    MaintenanceTaskInstalled := InstallMaintenanceTask();
+    if not MaintenanceTaskInstalled then
+      InstallLog('MAINTENANCE_WARNING: logon maintenance task could not be registered. Current detected Office hosts remain registered; use the Rescan Office Integration shortcut if a new Office host is installed later.');
+
     if AllOk and (not VstoRestartNeeded) then
     begin
       try
@@ -553,12 +631,16 @@ begin
     else if VstoRestartNeeded then
       InstallLog('Post-install COM verification deferred because a Windows restart is required first.');
 
-    InstallLog('=== OMNIX install end (verified=' + B2S(AllOk) + ', restart=' + B2S(VstoRestartNeeded) + ') ===');
+    InstallLog('=== OMNIX install end (verified=' + B2S(AllOk) + ', restart=' + B2S(VstoRestartNeeded) + ', maintenance-task=' + B2S(MaintenanceTaskInstalled) + ') ===');
 
     if not AllOk then
       MsgBox('OMNIX installation completed but runtime verification FAILED.' #13#10#13#10 +
              'Do not treat this build as ready. See logs in ' + ExpandConstant('{localappdata}') + '\OMNIX\logs.',
-             mbError, MB_OK);
+             mbError, MB_OK)
+    else if not MaintenanceTaskInstalled then
+      MsgBox('OMNIX is registered for the Office applications detected now, but Windows policy prevented the optional automatic logon re-scan task.' #13#10#13#10 +
+             'If you install another supported Office application later, use Start Menu > OMNIX > Rescan Office Integration.',
+             mbInformation, MB_OK);
   end;
 end;
 
@@ -570,12 +652,11 @@ var
 begin
   if CurUninstallStep = usUninstall then
   begin
+    RemoveMaintenanceTask();
     RemoveAddinRegistry();
     PreserveOfficeResiliencyState();
-    InstallLog('=== OMNIX uninstall: OMNIX-owned registration removed; Office Resiliency preserved ===');
+    InstallLog('=== OMNIX uninstall: maintenance task + OMNIX-owned registration removed; Office Resiliency preserved ===');
 
-    // Remove only the exact self-signed development certificate thumbprint recorded by this
-    // installer. Production/CA certificates are never root-imported by OMNIX and are never removed.
     CertMarker := ExpandConstant('{app}') + '\dev-cert-thumbprint.txt';
     DevThumbprintRaw := '';
     DevThumbprintText := '';
