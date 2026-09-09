@@ -120,7 +120,7 @@ jobs:
             -OutputPath .\build\artifact\office-registration-maintenance-audit.json `
             -AuditOnly
           $report = Get-Content .\build\artifact\office-registration-maintenance-audit.json -Raw | ConvertFrom-Json
-          if ($report.TestId -ne 'OFFICE-REGISTRATION-MAINTENANCE-001' -or -not [bool]$report.OverallPass) {
+          if ($report.TestId -ne 'OFFICE-REGISTRATION-MAINTENANCE-002' -or -not [bool]$report.OverallPass) {
             throw 'Office registration maintenance audit did not PASS.'
           }
           Write-Host "Office maintenance audit PASS. Installed hosts observed on runner: $($report.InstalledHostCount). No registration writes were requested."
@@ -226,7 +226,7 @@ jobs:
           $maintenancePath = 'build\artifact\office-registration-maintenance-audit.json'
           if (-not (Test-Path $maintenancePath)) { throw "Office maintenance audit evidence is missing." }
           $maintenance = Get-Content $maintenancePath -Raw | ConvertFrom-Json
-          if ($maintenance.TestId -ne 'OFFICE-REGISTRATION-MAINTENANCE-001' -or -not [bool]$maintenance.OverallPass -or -not [bool]$maintenance.AuditOnly) {
+          if ($maintenance.TestId -ne 'OFFICE-REGISTRATION-MAINTENANCE-002' -or -not [bool]$maintenance.OverallPass -or -not [bool]$maintenance.AuditOnly) {
             throw "Office maintenance audit did not PASS in AuditOnly mode."
           }
 
