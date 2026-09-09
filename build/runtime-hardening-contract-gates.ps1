@@ -62,6 +62,39 @@ Require $gateway 'visibleDelta.Complete(call == null, response.Text)' 'Gateway m
 Require $gateway 'return ONLY one fenced tool block' 'system prompt must tell models not to mix tool protocol with user-facing prose.'
 Require $gateway 'await _privacy.EnsureAllowedAsync(provider)' 'privacy must still execute before cloud/provider SendAsync.'
 
+# Provider-bound request memory: long history and stale screenshots must not be replayed forever.
+$models = 'src/OMNIX.Core/AiGateway/Models/Models.cs'
+Require $models 'ChatRequestBudgeter' 'every provider transport needs one deterministic request budget implementation.'
+Require $models 'HardMaxHistoryTurns = 80' 'history replay needs a hard message-count ceiling.'
+Require $models 'HardMaxHistoryChars = 48 * 1024' 'history replay needs a hard text ceiling.'
+Require $models 'MaxCurrentTurnChars = 64 * 1024' 'one user/tool turn cannot be unbounded.'
+Require $models 'MaxCurrentImages = 4' 'one request cannot carry unlimited image objects.'
+Require $models 'MaxCurrentImageBytesTotal = 24 * 1024 * 1024' 'combined image bytes need a hard cap.'
+Require $models 'HistoricalImageMarker' 'older screenshots must be omitted explicitly rather than silently replayed or hallucinated.'
+Require $models 'Images = null' 'historical image bytes must not be copied into provider replay.'
+Require 'src/OMNIX.Core/AiGateway/Http/OpenAiCompatibleClient.cs' 'request = ChatRequestBudgeter.Apply(request)' 'all OpenAI-compatible providers must enforce the request budget.'
+Require 'src/OMNIX.Core/AiGateway/Adapters/GeminiAdapter.cs' 'request = ChatRequestBudgeter.Apply(request)' 'Gemini must enforce the same request budget.'
+Require 'src/OMNIX.Core/AiGateway/Adapters/OllamaAdapter.cs' 'request = ChatRequestBudgeter.Apply(request)' 'Ollama must enforce the same request budget.'
+
+# Network transport hardening: normal certificate validation, no legacy TLS, no auth redirect leaks,
+# bounded streaming/body/model discovery and deterministic cancellation.
+$http = 'src/OMNIX.Core/AiGateway/Http/SseLineReader.cs'
+Require $http 'SecurityProtocolType.Tls12' 'net48 transport must explicitly support TLS 1.2.'
+Forbid $http 'SecurityProtocolType.Tls11' 'OMNIX must not re-enable TLS 1.1.'
+Forbid $http 'SecurityProtocolType.Tls |' 'OMNIX must not re-enable legacy TLS 1.0.'
+Require $http 'AllowAutoRedirect = false' 'Authorization and Office content must not silently follow redirects to a different origin.'
+Require $http 'ReadAsync(bytes, 0, bytes.Length, ct)' 'stream reads must honor cancellation.'
+Require $http 'MaxPendingChars' 'malformed no-newline streams need an accumulator cap.'
+Require $http 'ReadBodyBoundedAsync' 'normal JSON/catalog bodies need a shared bounded reader.'
+Require 'src/OMNIX.Core/AiGateway/Http/OpenAiCompatibleClient.cs' 'MaxAssistantChars' 'assistant responses need a hard output cap.'
+Require 'src/OMNIX.Core/AiGateway/Http/OpenAiCompatibleClient.cs' 'MaxJsonBodyBytes' 'OpenAI-compatible JSON bodies need a hard cap.'
+Require 'src/OMNIX.Core/AiGateway/Adapters/OllamaAdapter.cs' 'MaxAssistantChars' 'Ollama streaming output needs a hard cap.'
+Require 'src/OMNIX.Core/AiGateway/Adapters/OllamaAdapter.cs' 'ReadBodyBoundedAsync' 'Ollama model discovery must be bounded.'
+Require 'src/OMNIX.Core/AiGateway/Adapters/OpenRouterAdapter.cs' 'MaxCatalogBytes' 'OpenRouter live catalog must be bounded.'
+Require 'src/OMNIX.Core/AiGateway/Adapters/OpenRouterAdapter.cs' 'MaxModels = 5000' 'OpenRouter catalog count must be bounded.'
+Require 'src/OMNIX.Core/AiGateway/Adapters/HuggingFaceAdapter.cs' 'MaxCatalogBytes' 'Hugging Face live catalog must be bounded.'
+Require 'src/OMNIX.Core/AiGateway/Adapters/HuggingFaceAdapter.cs' 'MaxModels = 5000' 'Hugging Face catalog count must be bounded.'
+
 # Provider access/free claims must be traceable to dated official sources.
 $contracts = 'src/OMNIX.Core/AiGateway/ProviderContracts.cs'
 $registry = 'src/OMNIX.Core/AiGateway/ProviderRegistry.cs'
@@ -88,5 +121,5 @@ if ($failures.Count -gt 0) {
     exit 1
 }
 Write-Host 'OMNIX RUNTIME-HARDENING CONTRACT: PASS'
-Write-Host 'Write bounds, hidden tool protocol, privacy ordering and provider-source traceability are structurally intact.'
+Write-Host 'Write bounds, hidden tool protocol, request memory limits, transport safety, privacy ordering and provider-source traceability are structurally intact.'
 exit 0
