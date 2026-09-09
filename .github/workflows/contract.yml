@@ -36,3 +36,7 @@ jobs:
       - name: Enforce real-evidence release contract
         shell: pwsh
         run: ./build/real-evidence-contract-gates.ps1
+
+      - name: Enforce final Office AI and lifecycle evidence contract
+        shell: pwsh
+        run: ./build/final-evidence-contract-gates.ps1
