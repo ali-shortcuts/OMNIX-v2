@@ -52,3 +52,7 @@ jobs:
       - name: Enforce provider diagnostic privacy contract
         shell: pwsh
         run: ./build/diagnostic-redaction-contract-gates.ps1
+
+      - name: Enforce image input and capture safety contract
+        shell: pwsh
+        run: ./build/image-safety-contract-gates.ps1
