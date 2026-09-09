@@ -28,8 +28,6 @@ jobs:
       - name: Checkout exact source commit
         uses: actions/checkout@v4
         with:
-          # On pull_request, github.sha points at GitHub's synthetic merge commit. Release evidence
-          # must bind to the actual OMNIX branch head, so build that exact head here.
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
       - name: Resolve exact tested source commit
@@ -65,9 +63,7 @@ jobs:
         shell: pwsh
         run: |
           ./build/create-signing-cert.ps1
-          if (Test-Path build/cert/OMNIX.pfx) {
-            throw "Private signing key file must never exist in CI/release payload."
-          }
+          if (Test-Path build/cert/OMNIX.pfx) { throw "Private signing key file must never exist in CI/release payload." }
           $thumb = (Get-Content build/cert/thumbprint.txt -Raw).Trim()
           if (-not $thumb) { throw "Development certificate thumbprint is empty." }
           "thumbprint=$thumb" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
@@ -104,25 +100,30 @@ jobs:
             'OMNIX.Excel.dll','OMNIX.Excel.dll.manifest','OMNIX.Excel.vsto',
             'OMNIX.Word.dll','OMNIX.Word.dll.manifest','OMNIX.Word.vsto',
             'OMNIX.PowerPoint.dll','OMNIX.PowerPoint.dll.manifest','OMNIX.PowerPoint.vsto',
-            'OMNIX.Core.dll'
+            'OMNIX.Core.dll','office-registration-maintenance.ps1','install-maintenance-task.ps1'
           )
           foreach ($name in $required) {
             $path = Join-Path 'installer\payload' $name
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-              throw "HOLLOW_INSTALLER_GUARD: $name is missing before Inno Setup compilation."
-            }
-            if ((Get-Item -LiteralPath $path).Length -le 0) {
-              throw "HOLLOW_INSTALLER_GUARD: $name is empty before Inno Setup compilation."
-            }
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "HOLLOW_INSTALLER_GUARD: $name is missing before Inno Setup compilation." }
+            if ((Get-Item -LiteralPath $path).Length -le 0) { throw "HOLLOW_INSTALLER_GUARD: $name is empty before Inno Setup compilation." }
           }
-          if (-not (Test-Path build\artifact\payload-inventory.json)) {
-            throw "Payload inventory was not generated."
-          }
+          if (-not (Test-Path build\artifact\payload-inventory.json)) { throw "Payload inventory was not generated." }
           $inventory = @(Get-Content build\artifact\payload-inventory.json -Raw | ConvertFrom-Json)
-          if ($inventory.Count -lt 10) {
-            throw "Payload inventory is unexpectedly small ($($inventory.Count) entries)."
-          }
+          if ($inventory.Count -lt 12) { throw "Payload inventory is unexpectedly small ($($inventory.Count) entries)." }
           Write-Host "Complete OMNIX Office payload verified: $($inventory.Count) inventoried files."
+
+      - name: Audit automatic Office registration maintenance on hosted runner
+        shell: powershell
+        run: |
+          .\installer\payload\office-registration-maintenance.ps1 `
+            -InstallDir .\installer\payload `
+            -OutputPath .\build\artifact\office-registration-maintenance-audit.json `
+            -AuditOnly
+          $report = Get-Content .\build\artifact\office-registration-maintenance-audit.json -Raw | ConvertFrom-Json
+          if ($report.TestId -ne 'OFFICE-REGISTRATION-MAINTENANCE-001' -or -not [bool]$report.OverallPass) {
+            throw 'Office registration maintenance audit did not PASS.'
+          }
+          Write-Host "Office maintenance audit PASS. Installed hosts observed on runner: $($report.InstalledHostCount). No registration writes were requested."
 
       - name: Bundle official Microsoft VSTO Runtime redistributable
         shell: pwsh
@@ -156,16 +157,11 @@ jobs:
 
           $exe = Get-ChildItem installer\Output\OMNIX-Setup-*.exe | Select-Object -First 1
           if (-not $exe -or $exe.Length -lt 1MB) { throw "Installer output missing or unexpectedly small." }
-
-          # In addition to the pre-compile payload gate, require Inno's compile log to show all three
-          # host DLLs were actually compressed into the setup image.
           $compileText = Get-Content build\artifact\inno-compile.log -Raw
-          foreach ($hostDll in @('OMNIX.Excel.dll','OMNIX.Word.dll','OMNIX.PowerPoint.dll','OMNIX.Core.dll')) {
-            if ($compileText -notmatch [Regex]::Escape($hostDll)) {
-              throw "HOLLOW_INSTALLER_GUARD: Inno compile log does not contain $hostDll."
-            }
+          foreach ($requiredFile in @('OMNIX.Excel.dll','OMNIX.Word.dll','OMNIX.PowerPoint.dll','OMNIX.Core.dll','office-registration-maintenance.ps1','install-maintenance-task.ps1')) {
+            if ($compileText -notmatch [Regex]::Escape($requiredFile)) { throw "HOLLOW_INSTALLER_GUARD: Inno compile log does not contain $requiredFile." }
           }
-          Write-Host "Development installer compiled with all Office host payloads: $($exe.Name) ($($exe.Length) bytes)"
+          Write-Host "Development installer compiled with Office hosts + maintenance payload: $($exe.Name) ($($exe.Length) bytes)"
 
       - name: Verify installer handles Office-less CI machine gracefully
         shell: pwsh
@@ -179,23 +175,17 @@ jobs:
             -Wait -PassThru
 
           if ($p.ExitCode -eq 0) {
-            # If a future runner image includes supported Office, successful setup must copy all
-            # three host payloads that are applicable to that machine rather than returning a false 0.
             $installDir = "$env:LOCALAPPDATA\Programs\OMNIX"
-            if (-not (Test-Path (Join-Path $installDir 'OMNIX.Core.dll'))) {
-              throw "Installer returned success but OMNIX.Core.dll was not installed."
-            }
+            if (-not (Test-Path (Join-Path $installDir 'OMNIX.Core.dll'))) { throw "Installer returned success but OMNIX.Core.dll was not installed." }
             Write-Host "Installer completed successfully on this runner."
             exit 0
           }
 
           $text = if (Test-Path $log) { Get-Content $log -Raw } else { "" }
-          if ($text -match 'Microsoft Office .* was not detected' -or
-              $text -match 'No supported Excel, Word or PowerPoint installation was found') {
+          if ($text -match 'Microsoft Office .* was not detected' -or $text -match 'No supported Excel, Word or PowerPoint installation was found') {
             Write-Host "Expected: GitHub-hosted runner has no supported Office host. Installer refused cleanly instead of crashing."
             exit 0
           }
-
           Write-Host $text
           throw "Installer failed for an unexpected reason (exit $($p.ExitCode))."
 
@@ -222,9 +212,7 @@ jobs:
 
           $source = (git rev-parse HEAD).Trim().ToLowerInvariant()
           if ($source -notmatch '^[0-9a-f]{40}$') { throw "Invalid source commit in artifact evidence." }
-          if ($source -ne '${{ steps.source.outputs.sha }}'.ToLowerInvariant()) {
-            throw "Source commit changed during the build."
-          }
+          if ($source -ne '${{ steps.source.outputs.sha }}'.ToLowerInvariant()) { throw "Source commit changed during the build." }
 
           $inventoryPath = 'build\artifact\payload-inventory.json'
           if (-not (Test-Path $inventoryPath)) { throw "Payload inventory missing from artifact evidence." }
@@ -233,13 +221,17 @@ jobs:
           $privacyPath = 'build\artifact\privacy-acceptance.json'
           if (-not (Test-Path $privacyPath)) { throw "Privacy runtime acceptance evidence is missing." }
           $privacy = Get-Content $privacyPath -Raw | ConvertFrom-Json
-          if ($privacy.TestId -ne 'PRIVACY-GATE-RUNTIME-001' -or -not [bool]$privacy.OverallPass) {
-            throw "Privacy runtime acceptance did not PASS."
+          if ($privacy.TestId -ne 'PRIVACY-GATE-RUNTIME-001' -or -not [bool]$privacy.OverallPass) { throw "Privacy runtime acceptance did not PASS." }
+
+          $maintenancePath = 'build\artifact\office-registration-maintenance-audit.json'
+          if (-not (Test-Path $maintenancePath)) { throw "Office maintenance audit evidence is missing." }
+          $maintenance = Get-Content $maintenancePath -Raw | ConvertFrom-Json
+          if ($maintenance.TestId -ne 'OFFICE-REGISTRATION-MAINTENANCE-001' -or -not [bool]$maintenance.OverallPass -or -not [bool]$maintenance.AuditOnly) {
+            throw "Office maintenance audit did not PASS in AuditOnly mode."
           }
 
           $hash = (Get-FileHash -Algorithm SHA256 $exe.FullName).Hash.ToLowerInvariant()
           $sig = Get-AuthenticodeSignature $exe.FullName
-
           $defenderReport = 'build\defender-report.txt'
           $defenderText = if (Test-Path $defenderReport) { Get-Content $defenderReport -Raw } else { '' }
           $rtp = $null
@@ -256,12 +248,15 @@ jobs:
             RequiredOfficePayloadPresent = $true
             PrivacyGatewayRuntimeTested = $true
             PrivacyGatewayRuntimePass = [bool]$privacy.OverallPass
+            OfficeMaintenanceAuditTested = $true
+            OfficeMaintenanceAuditPass = [bool]$maintenance.OverallPass
+            OfficeMaintenanceAuditOnly = [bool]$maintenance.AuditOnly
             AuthenticodeStatus = [string]$sig.Status
             DefenderCustomScanCompleted = [bool](Test-Path $defenderReport)
             DefenderRealTimeProtectionEnabled = $rtp
             RealOfficeRuntimeTested = $false
             ProductionReleaseApproved = $false
-            Note = 'CI development artifact only. Deterministic gateway privacy runtime logic is tested, but real Office/UI/provider/consumer-machine security verification and trusted production signing remain mandatory.'
+            Note = 'CI development artifact only. Deterministic privacy and maintenance audit logic are tested, but real Office/UI/provider/consumer-machine security verification and trusted production signing remain mandatory.'
           }
           $manifest | ConvertTo-Json -Depth 6 | Set-Content build\artifact\manifest.json -Encoding UTF8
           $hash | Set-Content build\artifact\installer.sha256 -Encoding ASCII
@@ -277,6 +272,7 @@ jobs:
             build/artifact/installer.sha256
             build/artifact/payload-inventory.json
             build/artifact/privacy-acceptance.json
+            build/artifact/office-registration-maintenance-audit.json
             build/artifact/inno-compile.log
             build/defender-report.txt
             build/logs/*.binlog
