@@ -48,3 +48,7 @@ jobs:
       - name: Enforce runtime hardening contract
         shell: pwsh
         run: ./build/runtime-hardening-contract-gates.ps1
+
+      - name: Enforce provider diagnostic privacy contract
+        shell: pwsh
+        run: ./build/diagnostic-redaction-contract-gates.ps1
