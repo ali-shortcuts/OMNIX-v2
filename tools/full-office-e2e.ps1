@@ -4,7 +4,8 @@
 # It optionally installs a supplied OMNIX installer, then runs:
 #   1) strict two-launch COM automatic-load/persistence acceptance,
 #   2) real Ribbon + Open Workspace + visible task-pane UI Automation acceptance,
-#   3) real compiled OMNIX.Core Office-context/read/write/PowerPoint-Vision functional acceptance.
+#   3) real compiled OMNIX.Core Office-context/read/write/PowerPoint-Vision functional acceptance,
+#   4) real Office-context -> AiGateway/provider -> streaming WPF UI marker round-trip in ALL 3 hosts.
 #
 # This script does NOT restart Windows, alter networking, clear Office Resiliency, change Trust Center,
 # or touch user Office documents. Reboot persistence remains a separate explicit before/after gate.
@@ -12,9 +13,11 @@
 [CmdletBinding()]
 param(
     [string]$InstallerPath,
+    [string]$ExpectedInstallerSha256,
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\OMNIX",
     [string]$OutputPath = "$env:LOCALAPPDATA\OMNIX\logs\full-office-e2e.json",
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [switch]$SkipAiRoundTrip
 )
 
 Set-StrictMode -Version Latest
@@ -55,6 +58,8 @@ $installerEvidence = [ordered]@{
     FileName = $null
     SizeBytes = $null
     Sha256 = $null
+    ExpectedSha256 = if ([string]::IsNullOrWhiteSpace($ExpectedInstallerSha256)) { $null } else { $ExpectedInstallerSha256.ToLowerInvariant() }
+    HashMatchedExpected = $null
     ExitCode = $null
     Pass = $false
     LogPath = $null
@@ -63,6 +68,9 @@ $installerEvidence = [ordered]@{
 if ($SkipInstall) {
     if (-not (Test-Path -LiteralPath (Join-Path $InstallDir 'OMNIX.Core.dll') -PathType Leaf)) {
         throw "SkipInstall was requested but OMNIX is not installed at $InstallDir"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedInstallerSha256)) {
+        throw 'ExpectedInstallerSha256 cannot be proven when -SkipInstall is used. Final release E2E must test the exact installer.'
     }
     $installerEvidence.Pass = $true
 }
@@ -83,6 +91,15 @@ else {
     $installerEvidence.Sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName).Hash.ToLowerInvariant()
     $installerEvidence.LogPath = $installLog
 
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedInstallerSha256)) {
+        $expected = $ExpectedInstallerSha256.Trim().ToLowerInvariant()
+        if ($expected -notmatch '^[0-9a-f]{64}$') { throw 'ExpectedInstallerSha256 must be exactly 64 hexadecimal characters.' }
+        $installerEvidence.HashMatchedExpected = [bool]($installerEvidence.Sha256 -eq $expected)
+        if (-not $installerEvidence.HashMatchedExpected) {
+            throw "Installer SHA256 mismatch. Expected=$expected Actual=$($installerEvidence.Sha256)"
+        }
+    }
+
     $installArgs = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + $installLog))
     $p = Start-Process -FilePath $installer.FullName -ArgumentList $installArgs -Wait -PassThru
     $installerEvidence.ExitCode = $p.ExitCode
@@ -102,6 +119,7 @@ Assert-OfficeClosed
 $persistencePath = Join-Path $logDir 'real-office-acceptance.json'
 $uiPath = Join-Path $logDir 'real-office-ui-acceptance.json'
 $functionalPath = Join-Path $logDir 'office-functional-acceptance.json'
+$aiPath = Join-Path $logDir 'real-office-ai-e2e.json'
 
 $persistence = Invoke-AcceptanceScript 'real-office-acceptance.ps1' $persistencePath
 Assert-OfficeClosed
@@ -109,6 +127,12 @@ $ui = Invoke-AcceptanceScript 'real-office-ui-acceptance.ps1' $uiPath
 Assert-OfficeClosed
 $functional = Invoke-AcceptanceScript 'office-functional-acceptance.ps1' $functionalPath @('-InstallDir',$InstallDir)
 Assert-OfficeClosed
+
+$ai = $null
+if (-not $SkipAiRoundTrip) {
+    $ai = Invoke-AcceptanceScript 'real-office-ai-e2e.ps1' $aiPath
+    Assert-OfficeClosed
+}
 
 $officeVersions = @()
 foreach ($name in @('Excel','Word','PowerPoint')) {
@@ -125,10 +149,15 @@ if (-not [bool]$installerEvidence.Pass) { $failures.Add('Installer stage failed.
 if ($persistence.ExitCode -ne 0 -or -not [bool]$persistence.Report.OverallPass) { $failures.Add('Strict Office automatic-load/persistence acceptance failed.') }
 if ($ui.ExitCode -ne 0 -or -not [bool]$ui.Report.OverallPass) { $failures.Add('Real Office Ribbon/workspace UI acceptance failed.') }
 if ($functional.ExitCode -ne 0 -or -not [bool]$functional.Report.OverallPass) { $failures.Add('Real Office functional context/read/write/Vision acceptance failed.') }
+if (-not $SkipAiRoundTrip) {
+    if ($null -eq $ai -or $ai.ExitCode -ne 0 -or -not [bool]$ai.Report.OverallPass) {
+        $failures.Add('Real Office context -> AI Gateway/provider -> rendered UI marker round-trip failed.')
+    }
+}
 
 $report = [ordered]@{
     TestId = 'OFFICE-E2E-REAL-001'
-    EvidenceSchema = 1
+    EvidenceSchema = 2
     TimestampUtc = (Get-Date).ToUniversalTime().ToString('o')
     Windows = [Environment]::OSVersion.VersionString
     InteractiveSession = [Environment]::UserInteractive
@@ -156,13 +185,27 @@ $report = [ordered]@{
         AllWritesGuarded = [bool]$functional.Report.AllWritesGuarded
         PowerPointVisionCapturePass = [bool]$functional.Report.PowerPointVisionCapturePass
     }
+    AiRoundTrip = if ($SkipAiRoundTrip) {
+        [ordered]@{ Required=$false; TestId=$null; ExitCode=$null; OverallPass=$null; AllMarkerRoundTripsPass=$null }
+    } else {
+        [ordered]@{
+            Required = $true
+            TestId = [string]$ai.Report.TestId
+            ExitCode = [int]$ai.ExitCode
+            OverallPass = [bool]$ai.Report.OverallPass
+            RequiredHostCountPass = [bool]$ai.Report.RequiredHostCountPass
+            AllMarkerRoundTripsPass = [bool]$ai.Report.AllMarkerRoundTripsPass
+            AllProcessesExitedPass = [bool]$ai.Report.AllProcessesExitedPass
+        }
+    }
     FailureCount = $failures.Count
     Failures = @($failures)
     OverallPass = ($failures.Count -eq 0)
     RemainingSeparateReleaseGates = @(
         'Windows restart persistence before/after an actual user-initiated restart',
         'offline local-model round-trip with public Internet disconnected',
-        'live configured cloud-provider/model/streaming/vision tests',
+        'full live provider matrix/rate-limit/privacy/Vision evidence',
+        'repair/reinstall/uninstall lifecycle preservation evidence',
         'consumer-machine Defender/SmartScreen with normal protections enabled',
         'trusted production Authenticode signature'
     )
