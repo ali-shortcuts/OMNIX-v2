@@ -28,6 +28,15 @@ function Assert-OfficeClosed {
     if ($running.Count -gt 0) { throw "Close all Office applications before maintenance acceptance: $($running -join ', ')" }
 }
 
+function Get-Sha256Hex([byte[]]$bytes) {
+    if ($null -eq $bytes) { $bytes = New-Object byte[] 0 }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()
+    }
+    finally { $sha.Dispose() }
+}
+
 function Convert-ValueBytes($value) {
     if ($null -eq $value) { return [byte[]]@() }
     if ($value -is [byte[]]) { return [byte[]]$value }
@@ -43,7 +52,7 @@ function Get-KeyDigest([Microsoft.Win32.RegistryKey]$key, [string]$relative = ''
         try {
             $kind = [string]$key.GetValueKind($name)
             $bytes = Convert-ValueBytes ($key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames))
-            $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+            $sha = Get-Sha256Hex $bytes
             [void]$lines.Add("$relative|$name|$kind|$sha")
         } catch {
             [void]$lines.Add("$relative|$name|UNREADABLE")
@@ -86,7 +95,7 @@ function Get-ResiliencyFingerprint {
     $bytes = [Text.Encoding]::UTF8.GetBytes($text)
     return [pscustomobject]@{
         EntryCount = $all.Count
-        Sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        Sha256 = Get-Sha256Hex $bytes
     }
 }
 
@@ -98,7 +107,8 @@ function Get-RegistrationRow([string]$version,[string]$host) {
     $p = Get-ItemProperty -LiteralPath $path -ErrorAction Stop
     $manifest = [string]$p.Manifest
     $manifestFile = Join-Path $InstallDir ("OMNIX.$host.vsto")
-    $expected = ((New-Object System.Uri -ArgumentList $manifestFile).AbsoluteUri + '|vstolocal')
+    $uri = New-Object System.Uri -ArgumentList $manifestFile
+    $expected = ($uri.AbsoluteUri + '|vstolocal')
     return [pscustomobject]@{
         Version=$version
         Host=$host
