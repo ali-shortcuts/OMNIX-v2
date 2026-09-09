@@ -132,6 +132,7 @@ Require-Contains 'src/OMNIX.Core/Context/IHostAdapter.cs' 'CaptureCurrentViewAsI
 Require-Contains 'src/OMNIX.Core/Tools/Tools.cs' 'capture_current_view_as_image' 'Vision tool must remain whitelisted.'
 Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'CapturedPng' 'Captured Office visuals must reach Vision-capable models.'
 Require-Contains 'src/OMNIX.Core/AiGateway/AiGateway.cs' 'Never claim you inspected an entire workbook/document/presentation' 'Model must not overclaim unseen scope.'
+Require-Contains 'src/OMNIX.Core/Context/ExcelHostAdapter.cs' 'ExcelWrite.ApplyWrite(this, toolName, argumentsJson)' 'Excel write dispatch must target the implemented helper method.'
 
 # 7. Secrets and provider links.
 Require-Contains 'src/OMNIX.Core/Settings/SettingsManager.cs' 'ProtectedData.Protect' 'API keys must remain DPAPI protected.'
@@ -150,6 +151,9 @@ Require-Contains 'tools/release-readiness.ps1' 'Get-FileHash -Algorithm SHA256' 
 Require-Contains 'tools/release-readiness.ps1' 'At least one local AI runtime' 'Offline/local AI must be proven.'
 
 # 9. VSTO fallback signing must fail closed.
+Require-PowerShellParses 'build/build-with-fallbacks.ps1'
+Require-Contains 'build/build-with-fallbacks.ps1' 'Invoke-StrictBooleanStrategy' 'Every build strategy must fail closed on unexpected pipeline output.'
+Require-Contains 'build/build-with-fallbacks.ps1' 'unexpected success-pipeline output' 'Pipeline contamination must be explicitly rejected.'
 Require-Contains 'build/build-with-fallbacks.ps1' 'Refusing to treat unsigned VSTO manifests as success' 'Unsigned fallback cannot count as success.'
 Require-Contains 'build/build-with-fallbacks.ps1' '-AppManifest' 'Deployment manifest must be updated after application-manifest signing.'
 Require-Contains 'build/build-with-fallbacks.ps1' '-CertHash' 'Signing must use the actual certificate/private key in the Windows certificate store.'
