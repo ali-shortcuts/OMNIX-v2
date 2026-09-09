@@ -1,8 +1,7 @@
 # ============================================================================
 # post-install-verify.ps1
-# OMNIX v3 rebuild: verify every Office host that the installer registered.
-# This script is intentionally Office-runtime focused: a green build is not enough.
-# It verifies discovery in COMAddIns and attempts a controlled Connect=true when needed.
+# OMNIX v3: verify every Office host registered at the Microsoft-documented
+# VSTO path: HKCU\Software\Microsoft\Office\<Host>\Addins\OMNIX
 # ============================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -16,12 +15,12 @@ function Log([string]$msg) {
     Write-Host $line
 }
 
+function Get-OmnixRegistrationPath([string]$hostName) {
+    "HKCU:\Software\Microsoft\Office\$hostName\Addins\OMNIX"
+}
+
 function Test-OmnixRegistration([string]$hostName) {
-    foreach ($version in @('16.0','15.0')) {
-        $path = "HKCU:\Software\Microsoft\Office\$version\$hostName\Addins\OMNIX"
-        if (Test-Path $path) { return $true }
-    }
-    return $false
+    Test-Path -LiteralPath (Get-OmnixRegistrationPath $hostName)
 }
 
 function Release-ComObject($obj) {
@@ -30,18 +29,29 @@ function Release-ComObject($obj) {
     }
 }
 
+function Get-ComAddIns($app) {
+    $collection = $app.COMAddIns
+    $items = @()
+    try {
+        $count = [int]$collection.Count
+        for ($i = 1; $i -le $count; $i++) {
+            try { $items += $collection.Item($i) } catch {}
+        }
+    } catch {}
+    [pscustomobject]@{ Collection=$collection; Items=$items }
+}
+
 function Verify-Host([string]$hostName, [string]$progId) {
     if (-not (Test-OmnixRegistration $hostName)) {
-        Log "SKIP [$hostName]: no OMNIX registry registration was written for this host."
+        Log "SKIP [$hostName]: no canonical OMNIX VSTO registry registration exists."
         return $true
     }
 
     $app = $null
     $comAddIns = $null
+    $addinItems = @()
     $found = $false
     $connected = $false
-    $matchedProgId = ''
-    $matchedDescription = ''
 
     try {
         Log "START [$hostName]: creating $progId COM automation object..."
@@ -50,46 +60,47 @@ function Verify-Host([string]$hostName, [string]$progId) {
         try { $app.DisplayAlerts = $false } catch {}
         try { Log "INFO [$hostName]: version=$($app.Version)" } catch {}
 
-        $comAddIns = $app.COMAddIns
-        foreach ($addin in @($comAddIns)) {
+        $wrapped = Get-ComAddIns $app
+        $comAddIns = $wrapped.Collection
+        $addinItems = @($wrapped.Items)
+
+        foreach ($addin in $addinItems) {
             try {
-                if (($addin.Description -like '*OMNIX*') -or ($addin.ProgId -like '*OMNIX*')) {
+                $description = [string]$addin.Description
+                $addinProgId = [string]$addin.ProgId
+                if (($description -like '*OMNIX*') -or ($addinProgId -like '*OMNIX*')) {
                     $found = $true
-                    $matchedProgId = [string]$addin.ProgId
-                    $matchedDescription = [string]$addin.Description
                     $connected = [bool]$addin.Connect
-                    Log "FOUND [$hostName]: Description='$matchedDescription' ProgId='$matchedProgId' Connect=$connected"
+                    Log "FOUND [$hostName]: Description='$description' ProgId='$addinProgId' Connect=$connected"
 
                     if (-not $connected) {
-                        Log "ACTION [$hostName]: OMNIX is registered but disconnected. Attempting Connect=true to capture the real load result."
+                        Log "DIAGNOSTIC [$hostName]: automatic load failed; attempting Connect=true only to capture the actual VSTO load result. This does NOT convert the automatic-load failure into PASS."
                         try {
                             $addin.Connect = $true
-                            $connected = [bool]$addin.Connect
-                            Log "RESULT [$hostName]: Connect after request=$connected"
+                            Log "DIAGNOSTIC [$hostName]: Connect after manual diagnostic request=$([bool]$addin.Connect)"
                         } catch {
                             Log "ERROR [$hostName]: Connect=true threw $($_.Exception.GetType().FullName): $($_.Exception.Message)"
-                            if ($_.Exception.InnerException) {
-                                Log "ERROR [$hostName]: inner=$($_.Exception.InnerException.Message)"
-                            }
+                            if ($_.Exception.InnerException) { Log "ERROR [$hostName]: inner=$($_.Exception.InnerException.Message)" }
                         }
                     }
+                    break
                 }
-            } finally {
-                Release-ComObject $addin
+            } catch {
+                Log "WARN [$hostName]: COMAddIns item inspection failed: $($_.Exception.Message)"
             }
         }
 
         if (-not $found) {
-            Log "FAIL [$hostName]: OMNIX registry entry exists, but OMNIX was not exposed by Application.COMAddIns."
-            Log "HINT [$hostName]: inspect VSTO runtime, manifest deployment/signature, dependent DLLs, Office Disabled Items, and startup-debug.log."
+            Log "FAIL [$hostName]: canonical registry entry exists but Application.COMAddIns does not expose OMNIX."
+            Log "HINT [$hostName]: inspect VSTO runtime, deployment/application manifest trust, dependent DLLs, Office Disabled Items, and startup-debug.log."
             return $false
         }
         if (-not $connected) {
-            Log "FAIL [$hostName]: OMNIX was found but did not reach Connect=True."
+            Log "FAIL [$hostName]: OMNIX was found but was NOT automatically Connect=True at Office startup."
             return $false
         }
 
-        Log "PASS [$hostName]: OMNIX discovered and connected."
+        Log "PASS [$hostName]: OMNIX discovered and automatically connected."
         return $true
     }
     catch {
@@ -98,6 +109,7 @@ function Verify-Host([string]$hostName, [string]$progId) {
     }
     finally {
         try { if ($null -ne $app) { $app.Quit() } } catch {}
+        foreach ($addin in $addinItems) { Release-ComObject $addin }
         Release-ComObject $comAddIns
         Release-ComObject $app
         [GC]::Collect()
@@ -122,7 +134,7 @@ foreach ($r in $registeredHosts) {
 Log '=== OMNIX post-install verification finished ==='
 
 if ($registeredHosts.Count -eq 0) {
-    Log 'FAIL: installer verification found no OMNIX Office registrations at all.'
+    Log 'FAIL: canonical OMNIX Office registration was not found for any host.'
     exit 20
 }
 if ($failed.Count -gt 0) { exit 21 }
