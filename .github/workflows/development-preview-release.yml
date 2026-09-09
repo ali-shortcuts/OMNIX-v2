@@ -3,7 +3,7 @@ name: development-preview-release
 on:
   push:
     branches:
-      - rebuild/omNix-office-native-v3
+      - main
   workflow_dispatch:
     inputs:
       tag:
