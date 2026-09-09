@@ -8,14 +8,16 @@
 #   tools/reboot-persistence-acceptance.ps1 -Phase AfterRestart
 #   tools/local-offline-acceptance.ps1   (with Internet intentionally disconnected)
 #   tools/provider-acceptance.ps1        (online again for cloud provider evidence)
+#   tools/privacy-acceptance.ps1         (compiled AiGateway/PrivacyGate runtime evidence)
 #
-# This script does not run providers, Office, restart Windows, or alter networking itself. It
-# validates their evidence, requires all three Office hosts to auto-load OMNIX on two independent
-# launches, requires a genuine Windows restart persistence proof, requires Ribbon/workspace UI proof,
-# requires a real local-model round-trip while public Internet is observed disconnected, requires live
-# provider model discovery + streaming evidence, optionally requires every built-in cloud provider +
-# Custom, verifies the installer hash, and requires a real trusted Authenticode signature for a
-# production release.
+# This script does not run providers, Office, restart Windows, alter networking, or manufacture
+# evidence itself. It validates supplied evidence, requires all three Office hosts to auto-load
+# OMNIX on two independent launches, requires a genuine Windows restart persistence proof, requires
+# Ribbon/workspace UI proof, requires a real local-model round-trip while public Internet is observed
+# disconnected, requires live provider model discovery + streaming evidence, requires deterministic
+# runtime proof that the compiled AiGateway/PrivacyGate blocks or prompts BEFORE provider SendAsync,
+# optionally requires every built-in cloud provider + Custom, verifies the installer hash, and
+# requires a real trusted Authenticode signature for a production release.
 #
 # Output is intentionally sanitized: it does not copy machine names, API keys, prompts, response
 # bodies, Authorization headers, or document contents into release evidence.
@@ -27,6 +29,7 @@ param(
     [string]$OfficeRestartReport = "$env:LOCALAPPDATA\OMNIX\logs\real-office-restart-acceptance.json",
     [string]$LocalOfflineReport = "$env:LOCALAPPDATA\OMNIX\logs\local-ai-offline-acceptance.json",
     [string]$ProviderReport = "$env:LOCALAPPDATA\OMNIX\logs\provider-acceptance.json",
+    [string]$PrivacyReport = ".\build\artifact\privacy-acceptance.json",
     [Parameter(Mandatory=$true)]
     [string]$InstallerPath,
     [string]$OutputPath = ".\release-evidence\release-readiness.json",
@@ -150,6 +153,25 @@ function Test-LocalOffline($report) {
     return $errors
 }
 
+function Test-PrivacyGateway($report) {
+    $errors = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $report -or $report.TestId -ne 'PRIVACY-GATE-RUNTIME-001') {
+        $errors.Add('Unexpected/missing compiled AI Gateway privacy TestId.')
+        return $errors
+    }
+    if ([int]$report.EvidenceSchema -lt 1) { $errors.Add('Privacy runtime evidence schema is missing/invalid.') }
+    if (-not [bool]$report.OverallPass) { $errors.Add('Compiled AI Gateway privacy OverallPass is false.') }
+    if ([int]$report.LocalOnlyCloudRoutesTested -lt 7) { $errors.Add('LocalOnly privacy test did not exercise all built-in cloud routes.') }
+    if (-not [bool]$report.LocalOnlyAllCloudRoutesBlocked) { $errors.Add('LocalOnly did not block every registered cloud route.') }
+    if (-not [bool]$report.LocalOnlyFakeCloudSendPrevented) { $errors.Add('LocalOnly allowed the instrumented cloud SendAsync path.') }
+    if (-not [bool]$report.AskDeniedBlockedBeforeSend) { $errors.Add('AskBeforeSending denial did not block before provider SendAsync.') }
+    if (-not [bool]$report.AskApprovedBeforeSend) { $errors.Add('AskBeforeSending approval was not proven to occur before provider SendAsync.') }
+    if (-not [bool]$report.AskRememberSessionPass) { $errors.Add('AskBeforeSending remembered-session behavior failed.') }
+    if (-not [bool]$report.CloudAllowedNoPromptPass) { $errors.Add('CloudAllowed unexpectedly invoked confirmation or failed to route.') }
+    if (-not [bool]$report.LocalOnlyLocalRoutePass) { $errors.Add('LocalOnly did not preserve an explicitly available local route.') }
+    return $errors
+}
+
 function Test-ProviderRow($r, [string]$name) {
     $errors = New-Object System.Collections.Generic.List[string]
     if ($null -eq $r) {
@@ -234,6 +256,7 @@ $officeUi = Read-JsonFile $OfficeUiReport 'Office UI'
 $officeRestart = Read-JsonFile $OfficeRestartReport 'Windows restart persistence'
 $localOffline = Read-JsonFile $LocalOfflineReport 'Local-AI offline'
 $providers = Read-JsonFile $ProviderReport 'Provider'
+$privacyGateway = Read-JsonFile $PrivacyReport 'Compiled AI Gateway privacy'
 
 if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) { throw "Installer not found: $InstallerPath" }
 $installer = Get-Item -LiteralPath $InstallerPath
@@ -245,6 +268,7 @@ foreach ($e in @(Test-OfficeUi $officeUi)) { $failures.Add([string]$e) }
 foreach ($e in @(Test-OfficeRestart $officeRestart)) { $failures.Add([string]$e) }
 foreach ($e in @(Test-LocalOffline $localOffline)) { $failures.Add([string]$e) }
 foreach ($e in @(Test-Providers $providers ([bool]$RequireAllCloudProviders) ([bool]$RequireCustomProvider))) { $failures.Add([string]$e) }
+foreach ($e in @(Test-PrivacyGateway $privacyGateway)) { $failures.Add([string]$e) }
 
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $InstallerPath).Hash.ToLowerInvariant()
 $signature = Get-AuthenticodeSignature -FilePath $InstallerPath
@@ -290,7 +314,7 @@ $outDir = Split-Path -Parent $OutputPath
 if ($outDir) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
 
 $evidence = [ordered]@{
-    EvidenceSchema = 4
+    EvidenceSchema = 5
     TestId = 'OMNIX-RELEASE-READINESS-001'
     GeneratedUtc = (Get-Date).ToUniversalTime().ToString('o')
     SourceCommit = $sourceCommit
@@ -316,6 +340,17 @@ $evidence = [ordered]@{
         AtLeastOneLocalRuntimePass = [bool]$localOffline.AtLeastOneLocalRuntimePass
         OverallPass = [bool]$localOffline.OverallPass
     }
+    PrivacyGatewayRuntime = [ordered]@{
+        LocalOnlyCloudRoutesTested = [int]$privacyGateway.LocalOnlyCloudRoutesTested
+        LocalOnlyAllCloudRoutesBlocked = [bool]$privacyGateway.LocalOnlyAllCloudRoutesBlocked
+        CloudSendPreventedUnderLocalOnly = [bool]$privacyGateway.LocalOnlyFakeCloudSendPrevented
+        AskDeniedBlockedBeforeSend = [bool]$privacyGateway.AskDeniedBlockedBeforeSend
+        AskApprovedBeforeSend = [bool]$privacyGateway.AskApprovedBeforeSend
+        AskRememberSessionPass = [bool]$privacyGateway.AskRememberSessionPass
+        CloudAllowedNoPromptPass = [bool]$privacyGateway.CloudAllowedNoPromptPass
+        LocalOnlyLocalRoutePass = [bool]$privacyGateway.LocalOnlyLocalRoutePass
+        OverallPass = [bool]$privacyGateway.OverallPass
+    }
     Providers = Get-ProviderSummary $providers
     Requirements = [ordered]@{
         AllThreeOfficeHosts = $true
@@ -325,6 +360,7 @@ $evidence = [ordered]@{
         RibbonAndWorkspaceUi = $true
         LocalAiWithInternetDisconnected = $true
         AtLeastOneLocalAi = $true
+        GatewayPrivacyOrderingRuntime = $true
         LiveProviderModelDiscovery = $true
         StreamingProviderRoundTrips = $true
         OpenRouterFreeRoutePriority = [bool]$RequireAllCloudProviders
