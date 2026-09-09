@@ -182,7 +182,10 @@ jobs:
           }
 
           $text = if (Test-Path $log) { Get-Content $log -Raw } else { "" }
-          if ($text -match 'Microsoft Office .* was not detected' -or $text -match 'No supported Excel, Word or PowerPoint installation was found') {
+          $expectedOfficeLess =
+            ($text -match 'Microsoft Office .* was not detected') -or
+            ($text -match 'No supported (desktop )?Excel, Word or PowerPoint installation was (found|detected)')
+          if ($expectedOfficeLess) {
             Write-Host "Expected: GitHub-hosted runner has no supported Office host. Installer refused cleanly instead of crashing."
             exit 0
           }
