@@ -45,12 +45,17 @@ namespace OMNIX.Core.Storage
     /// Per-document chat history under %LOCALAPPDATA%\OMNIX\history.
     ///
     /// Privacy/storage rule: raw Office screenshots and uploaded image bytes are request-scoped
-    /// memory only. They are deliberately stripped before history is written to disk. Persisting
-    /// hundreds of PNGs would both leak document visuals at rest and allow history size to grow far
-    /// beyond the message-count cap. Text + non-sensitive image labels remain for conversation UI.
+    /// memory only and are stripped before disk persistence. History is bounded by age, message
+    /// count, per-turn text, total text and input-file size. This prevents a long assistant answer
+    /// or corrupted history file from consuming unbounded memory when Office starts.
     /// </summary>
     public sealed class ChatHistoryStore
     {
+        private const long MaxHistoryFileBytes = 8L * 1024L * 1024L;
+        private const int MaxPersistedTextChars = 2 * 1024 * 1024;
+        private const int MaxPersistedTurnChars = 128 * 1024;
+        private const string TruncatedMarker = "\n…[OMNIX local history truncated]…\n";
+
         private readonly string _dir;
 
         public ChatHistoryStore()
@@ -71,6 +76,16 @@ namespace OMNIX.Core.Storage
             {
                 string path = FileFor(docKey);
                 if (!File.Exists(path)) return list;
+
+                var file = new FileInfo(path);
+                if (file.Length > MaxHistoryFileBytes)
+                {
+                    Logger.Error("history",
+                        "History file exceeded the 8 MB safety limit and was not loaded: " + file.Name,
+                        null);
+                    return list;
+                }
+
                 string json = File.ReadAllText(path);
                 var loaded = JsonConvert.DeserializeObject<List<ChatTurn>>(json);
                 if (loaded != null) list.AddRange(loaded);
@@ -84,20 +99,44 @@ namespace OMNIX.Core.Storage
 
         public void Save(string docKey, List<ChatTurn> turns)
         {
+            string tmp = null;
             try
             {
                 Directory.CreateDirectory(_dir);
                 string path = FileFor(docKey);
                 var persistable = ApplyCaps(turns).Select(CloneForPersistence).ToList();
                 string json = JsonConvert.SerializeObject(persistable, Formatting.Indented);
-                string tmp = path + ".tmp";
-                File.WriteAllText(tmp, json);
-                if (File.Exists(path)) File.Delete(path);
-                File.Move(tmp, path);
+                byte[] encoded = Encoding.UTF8.GetBytes(json);
+                if (encoded.LongLength > MaxHistoryFileBytes)
+                {
+                    Logger.Error("history", "Bounded history serialization still exceeded the file safety limit; save skipped.", null);
+                    return;
+                }
+
+                tmp = path + ".tmp";
+                File.WriteAllBytes(tmp, encoded);
+                if (File.Exists(path))
+                {
+                    // Same-volume atomic replacement on supported Windows; avoids delete-then-move
+                    // gaps that can lose the previous history if Office exits mid-save.
+                    File.Replace(tmp, path, null);
+                }
+                else
+                {
+                    File.Move(tmp, path);
+                }
+                tmp = null;
             }
             catch (Exception ex)
             {
                 Logger.Error("history", "Failed to save local chat history.", ex);
+            }
+            finally
+            {
+                if (!string.IsNullOrEmpty(tmp))
+                {
+                    try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                }
             }
         }
 
@@ -123,7 +162,33 @@ namespace OMNIX.Core.Storage
             int max = Math.Max(10, settings.HistoryMaxMessages);
             if (trimmed.Count > max)
                 trimmed = trimmed.Skip(trimmed.Count - max).ToList();
-            return trimmed;
+            return ApplyTextBudget(trimmed);
+        }
+
+        private static List<ChatTurn> ApplyTextBudget(List<ChatTurn> source)
+        {
+            var newestFirst = new List<ChatTurn>();
+            int remaining = MaxPersistedTextChars;
+
+            for (int i = source.Count - 1; i >= 0 && remaining > 0; i--)
+            {
+                var turn = source[i];
+                if (turn == null) continue;
+
+                int cap = Math.Min(MaxPersistedTurnChars, remaining);
+                string text = TruncatePreservingEnds(turn.Text, cap);
+                newestFirst.Add(new ChatTurn
+                {
+                    Role = turn.Role,
+                    Text = text,
+                    Images = turn.Images,
+                    TimestampUtc = turn.TimestampUtc
+                });
+                remaining -= text != null ? text.Length : 0;
+            }
+
+            newestFirst.Reverse();
+            return newestFirst;
         }
 
         private static ChatTurn CloneForPersistence(ChatTurn turn)
@@ -135,7 +200,7 @@ namespace OMNIX.Core.Storage
                 TimestampUtc = turn.TimestampUtc
             };
 
-            // Retain only descriptive metadata. No image bytes are persisted.
+            // Retain descriptive metadata only. No image bytes are persisted.
             if (turn.Images != null && turn.Images.Count > 0)
             {
                 clone.Images = turn.Images
@@ -149,6 +214,19 @@ namespace OMNIX.Core.Storage
                     .ToList();
             }
             return clone;
+        }
+
+        private static string TruncatePreservingEnds(string value, int maxChars)
+        {
+            value = value ?? string.Empty;
+            if (maxChars <= 0) return string.Empty;
+            if (value.Length <= maxChars) return value;
+            if (maxChars <= TruncatedMarker.Length + 2) return value.Substring(value.Length - maxChars, maxChars);
+
+            int available = maxChars - TruncatedMarker.Length;
+            int head = available / 2;
+            int tail = available - head;
+            return value.Substring(0, head) + TruncatedMarker + value.Substring(value.Length - tail, tail);
         }
 
         private static string SafeLabel(string value, int max)
