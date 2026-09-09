@@ -86,7 +86,23 @@ Require-Contains 'tools/provider-acceptance.ps1' 'FirstStreamEventMs' 'Provider 
 Require-Contains 'tools/provider-acceptance.ps1' 'ModelSource' 'Provider evidence must record live model discovery source.'
 Require-Contains 'tools/provider-acceptance.ps1' "PreferredExact @('openrouter/free')" 'OpenRouter free router must be preferred first.'
 Require-Contains 'tools/provider-acceptance.ps1' "PreferredSuffix @(':free')" 'OpenRouter :free variants must be preferred before non-free routes.'
-Require-NotContains 'tools/provider-acceptance.ps1' 'gemini-3.8-flash' 'Provider acceptance must not depend on stale invented Gemini defaults.'
+Require-NotContains 'tools/provider-acceptance.ps1' 'gemini-3.8-flash' 'Provider acceptance must use live Gemini discovery instead of depending on one fixed model id.'
+
+# Privacy must be proven through the real AiGateway/PrivacyGate runtime, not only source strings.
+Require-PowerShellParses 'tools/privacy-acceptance.ps1'
+Require-Contains 'tools/privacy-acceptance.ps1' 'PRIVACY-GATE-RUNTIME-001' 'Privacy acceptance needs a stable evidence TestId.'
+Require-Contains 'tools/privacy-acceptance.ps1' 'LocalOnlyAllCloudRoutesBlocked' 'LocalOnly must be exercised across registered cloud routes.'
+Require-Contains 'tools/privacy-acceptance.ps1' 'LocalOnlyFakeCloudSendPrevented' 'Instrumented cloud SendAsync must remain untouched under LocalOnly.'
+Require-Contains 'tools/privacy-acceptance.ps1' 'AskDeniedBlockedBeforeSend' 'AskBeforeSending denial must prevent provider SendAsync.'
+Require-Contains 'tools/privacy-acceptance.ps1' 'AskApprovedBeforeSend' 'Approval callback must be observed before provider SendAsync.'
+Require-Contains 'tools/privacy-acceptance.ps1' 'AskRememberSessionPass' 'Session-scoped remembered approval behavior must be tested.'
+Require-Contains 'tools/privacy-acceptance.ps1' 'CloudAllowedNoPromptPass' 'CloudAllowed must bypass confirmation without bypassing gateway routing.'
+Require-Contains 'tools/privacy-acceptance.ps1' 'LocalOnlyLocalRoutePass' 'LocalOnly must still permit an explicitly available local route.'
+Require-NotContains 'tools/privacy-acceptance.ps1' 'HttpClient' 'Deterministic privacy acceptance must not create an outbound HTTP client.'
+Require-NotContains 'tools/privacy-acceptance.ps1' 'WebRequest' 'Deterministic privacy acceptance must not perform web requests.'
+Require-Contains '.github/workflows/build.yml' 'Runtime AI Gateway privacy acceptance' 'Windows CI must execute the privacy runtime test after OMNIX.Core builds.'
+Require-Contains '.github/workflows/build.yml' 'privacy-acceptance.json' 'CI artifacts must preserve privacy runtime evidence.'
+Require-Contains '.github/workflows/build.yml' 'PrivacyGatewayRuntimePass' 'Development artifact metadata must record privacy runtime result.'
 
 # Final readiness must consume strict persistence, UI, restart, offline-local and provider evidence.
 Require-PowerShellParses 'tools/release-readiness.ps1'
@@ -110,5 +126,5 @@ if ($failures.Count -gt 0) {
 }
 
 Write-Host 'OMNIX REAL-EVIDENCE CONTRACT: PASS'
-Write-Host 'Structural evidence gates are intact. Real Office/restart/provider/security execution is still required.'
+Write-Host 'Structural evidence gates are intact. Deterministic gateway privacy runtime is executed in build CI; real Office/restart/provider/consumer-machine security execution remains separate.'
 exit 0
