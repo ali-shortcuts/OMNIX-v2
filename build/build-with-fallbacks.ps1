@@ -13,11 +13,17 @@
 #              application manifest and UPDATE+sign the .vsto deployment
 #              manifest with Mage.exe using the certificate thumbprint.
 #
+# IMPORTANT POWERSHELL INVARIANT:
+# A function returns every object written to its success pipeline. Native build
+# output piped through Tee-Object must therefore continue to Out-Host; otherwise
+# the log lines become part of the function return value, turning a final $false
+# into a non-empty (truthy) array. That exact bug previously produced a false
+# "BUILD SUCCEEDED" even though OMNIX.Excel.dll was missing.
+#
 # Critical packaging boundary:
 # Once a strategy succeeds, the complete validated Release output of every
 # Office host is copied immediately into build/compiled-payload/<host>. The
-# packaging step consumes this immutable handoff rather than trusting that a
-# later workflow step will still see transient VSTO output folders identically.
+# packaging step consumes this validated handoff.
 # ============================================================================
 
 $ErrorActionPreference = 'Continue'
@@ -27,7 +33,6 @@ $Solution = $env:SOLUTION
 $Config   = $env:CONFIGURATION
 $Thumb    = $args[0]
 $TimestampUri = 'http://timestamp.digicert.com'
-$root = Split-Path -Parent $PSScriptRoot
 $handoffRoot = Join-Path $PSScriptRoot 'compiled-payload'
 
 $hostProjects = @(
@@ -38,8 +43,12 @@ $hostProjects = @(
 
 function Test-AllArtifactsExist {
     foreach ($p in $hostProjects) {
-        if (-not (Test-Path -LiteralPath $p.Dll -PathType Leaf) -or (Get-Item -LiteralPath $p.Dll).Length -eq 0) {
-            Write-Host "Missing or empty artifact: $($p.Dll)"
+        if (-not (Test-Path -LiteralPath $p.Dll -PathType Leaf)) {
+            Write-Host "Missing artifact: $($p.Dll)"
+            return $false
+        }
+        if ((Get-Item -LiteralPath $p.Dll).Length -eq 0) {
+            Write-Host "Empty artifact: $($p.Dll)"
             return $false
         }
     }
@@ -67,6 +76,13 @@ function Test-AllVstoManifestsExist {
     return $true
 }
 
+function Test-CompleteArtifactSet {
+    $dllsOk = Test-AllArtifactsExist
+    if (-not $dllsOk) { return $false }
+    $manifestsOk = Test-AllVstoManifestsExist
+    return [bool]$manifestsOk
+}
+
 function Show-ValidatedArtifacts {
     Write-Host '--- Validated VSTO build outputs ---'
     foreach ($p in $hostProjects) {
@@ -82,7 +98,7 @@ function Show-ValidatedArtifacts {
 }
 
 function Stage-ValidatedArtifacts {
-    if (-not (Test-AllArtifactsExist) -or -not (Test-AllVstoManifestsExist)) {
+    if (-not (Test-CompleteArtifactSet)) {
         throw 'Cannot create compiled-payload handoff: the validated VSTO artifact set is incomplete.'
     }
 
@@ -141,8 +157,13 @@ function Invoke-Strategy1-DirectMsbuild {
             /p:ManifestTimestampUrl=$TimestampUri `
             /p:BuildInParallel=false `
             /bl:build/logs/build-s1-attempt$i.binlog `
-            /maxcpucount:1 2>&1 | Tee-Object -FilePath "build_output_s1_$i.txt"
-        if ($LASTEXITCODE -eq 0 -and (Test-AllArtifactsExist) -and (Test-AllVstoManifestsExist)) { return $true }
+            /maxcpucount:1 2>&1 |
+            Tee-Object -FilePath "build_output_s1_$i.txt" |
+            Out-Host
+        $exitCode = $LASTEXITCODE
+        $artifactsOk = Test-CompleteArtifactSet
+        Write-Host "Strategy 1 attempt $i: msbuildExit=$exitCode completeArtifacts=$artifactsOk"
+        if ($exitCode -eq 0 -and $artifactsOk) { return $true }
         Start-Sleep -Seconds 10
     }
     return $false
@@ -156,10 +177,12 @@ function Invoke-Strategy2-Devenv {
     $devenv = Join-Path $vsPath 'Common7\IDE\devenv.com'
     if (-not (Test-Path $devenv)) { Write-Host "devenv.com not found at $devenv, skipping strategy 2"; return $false }
 
-    $env:ManifestCertificateThumbprint = $Thumb
     & $devenv $Solution /Build "$Config|Any CPU" /Out 'build_output_s2.txt'
-    Get-Content 'build_output_s2.txt' -ErrorAction SilentlyContinue | Write-Host
-    return ((Test-AllArtifactsExist) -and (Test-AllVstoManifestsExist))
+    $exitCode = $LASTEXITCODE
+    Get-Content 'build_output_s2.txt' -ErrorAction SilentlyContinue | Out-Host
+    $artifactsOk = Test-CompleteArtifactSet
+    Write-Host "Strategy 2: devenvExit=$exitCode completeArtifacts=$artifactsOk"
+    return [bool]($exitCode -eq 0 -and $artifactsOk)
 }
 
 function Find-Mage {
@@ -177,10 +200,13 @@ function Invoke-Strategy3-TwoPhaseSigning {
         /p:SignManifests=false `
         /p:BuildInParallel=false `
         /bl:build/logs/build-s3-compile.binlog `
-        /maxcpucount:1 2>&1 | Tee-Object -FilePath 'build_output_s3_compile.txt'
+        /maxcpucount:1 2>&1 |
+        Tee-Object -FilePath 'build_output_s3_compile.txt' |
+        Out-Host
+    $compileExit = $LASTEXITCODE
 
-    if ($LASTEXITCODE -ne 0 -or -not (Test-AllArtifactsExist) -or -not (Test-AllVstoManifestsExist)) {
-        Write-Host 'Strategy 3 compile phase did not produce the complete VSTO artifact set.'
+    if ($compileExit -ne 0 -or -not (Test-CompleteArtifactSet)) {
+        Write-Host "Strategy 3 compile phase incomplete (exit=$compileExit)."
         return $false
     }
 
@@ -201,29 +227,37 @@ function Invoke-Strategy3-TwoPhaseSigning {
         $deployManifest = [System.IO.Path]::ChangeExtension($p.Dll, '.vsto')
 
         Write-Host "Signing application manifest: $appManifest"
-        & $mage.FullName -Sign $appManifest -CertHash $Thumb -TimestampUri $TimestampUri 2>&1 | Tee-Object -FilePath "build_output_s3_sign_$($p.Name)_app.txt"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Application-manifest signing failed for $($p.Name)."
+        & $mage.FullName -Sign $appManifest -CertHash $Thumb -TimestampUri $TimestampUri 2>&1 |
+            Tee-Object -FilePath "build_output_s3_sign_$($p.Name)_app.txt" |
+            Out-Host
+        $signAppExit = $LASTEXITCODE
+        if ($signAppExit -ne 0) {
+            Write-Host "Application-manifest signing failed for $($p.Name) (exit=$signAppExit)."
             return $false
         }
 
         Write-Host "Updating/signing deployment manifest: $deployManifest"
-        & $mage.FullName -Update $deployManifest -AppManifest $appManifest -CertHash $Thumb -TimestampUri $TimestampUri 2>&1 | Tee-Object -FilePath "build_output_s3_sign_$($p.Name)_deploy.txt"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Deployment-manifest update/sign failed for $($p.Name)."
+        & $mage.FullName -Update $deployManifest -AppManifest $appManifest -CertHash $Thumb -TimestampUri $TimestampUri 2>&1 |
+            Tee-Object -FilePath "build_output_s3_sign_$($p.Name)_deploy.txt" |
+            Out-Host
+        $signDeployExit = $LASTEXITCODE
+        if ($signDeployExit -ne 0) {
+            Write-Host "Deployment-manifest update/sign failed for $($p.Name) (exit=$signDeployExit)."
             return $false
         }
     }
 
-    return ((Test-AllArtifactsExist) -and (Test-AllVstoManifestsExist))
+    return [bool](Test-CompleteArtifactSet)
 }
 
-$ok = Invoke-Strategy1-DirectMsbuild
-if (-not $ok) { $ok = Invoke-Strategy2-Devenv }
-if (-not $ok) { $ok = Invoke-Strategy3-TwoPhaseSigning }
+# Assign only the explicit Boolean returned by each strategy. Build log text is routed to Out-Host
+# above and can no longer contaminate these values.
+[bool]$ok = Invoke-Strategy1-DirectMsbuild
+if (-not $ok) { [bool]$ok = Invoke-Strategy2-Devenv }
+if (-not $ok) { [bool]$ok = Invoke-Strategy3-TwoPhaseSigning }
 
 if (-not $ok) {
-    Write-Host "`n=== ALL THREE BUILD STRATEGIES FAILED ==="
+    Write-Host "`n=== ALL THREE BUILD STRATEGIES FAILED TO PRODUCE A COMPLETE VSTO SET ==="
     exit 1
 }
 
