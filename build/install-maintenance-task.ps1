@@ -16,13 +16,14 @@ $taskName = 'OMNIX Office Registration Maintenance'
 $scriptPath = Join-Path $InstallDir 'office-registration-maintenance.ps1'
 $report = [ordered]@{
     TestId = 'OFFICE-MAINTENANCE-TASK-001'
-    EvidenceSchema = 1
+    EvidenceSchema = 2
     TimestampUtc = [DateTime]::UtcNow.ToString('o')
     TaskName = $taskName
     RequestedAction = if ($Remove) { 'Remove' } else { 'InstallOrRepair' }
     Registered = $false
     RunLevel = 'Limited'
     Trigger = 'AtLogOnCurrentUser'
+    ExecutionPolicyOverride = $false
     Pass = $false
     Error = $null
 }
@@ -44,7 +45,10 @@ try {
         }
 
         $exe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-        $args = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' +
+        # Do not override a user's/domain's PowerShell execution policy. If policy blocks scripts,
+        # setup reports that the optional automatic maintenance task could not be enabled and leaves
+        # current Office registration intact; the installer never weakens policy to force it.
+        $args = '-NoProfile -NonInteractive -WindowStyle Hidden -File "' +
                 $scriptPath + '" -InstallDir "' + $InstallDir + '" -Quiet'
         $action = New-ScheduledTaskAction -Execute $exe -Argument $args
 
@@ -55,7 +59,7 @@ try {
             -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal `
-            -Settings $settings -Description 'OMNIX checks supported Excel/Word/PowerPoint registration for the current user after sign-in. No elevation, Trust Center or Office Resiliency changes.' -Force | Out-Null
+            -Settings $settings -Description 'OMNIX checks supported Excel/Word/PowerPoint registration for the current user after sign-in. No elevation, Trust Center, Office Resiliency or execution-policy override.' -Force | Out-Null
 
         $created = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
         $report.Registered = ($null -ne $created)
