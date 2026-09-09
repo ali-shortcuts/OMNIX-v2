@@ -77,6 +77,17 @@ Require-NotContains 'tools/local-offline-acceptance.ps1' 'Disable-NetAdapter' 'A
 Require-NotContains 'tools/local-offline-acceptance.ps1' 'New-NetFirewallRule' 'Acceptance tooling must not alter firewall policy.'
 Require-NotContains 'tools/local-offline-acceptance.ps1' 'Set-NetFirewallProfile' 'Acceptance tooling must not alter firewall policy.'
 
+# Provider evidence must use live discovery and real streaming transport.
+Require-PowerShellParses 'tools/provider-acceptance.ps1'
+Require-Contains 'tools/provider-acceptance.ps1' 'Invoke-StreamingHttp' 'Provider acceptance must exercise streaming transport.'
+Require-Contains 'tools/provider-acceptance.ps1' 'ResponseHeadersRead' 'Streaming proof must not wait for the full response body before reading events.'
+Require-Contains 'tools/provider-acceptance.ps1' 'StreamingPass' 'Provider evidence must record streaming success separately.'
+Require-Contains 'tools/provider-acceptance.ps1' 'FirstStreamEventMs' 'Provider evidence must record first stream event timing.'
+Require-Contains 'tools/provider-acceptance.ps1' 'ModelSource' 'Provider evidence must record live model discovery source.'
+Require-Contains 'tools/provider-acceptance.ps1' "PreferredExact @('openrouter/free')" 'OpenRouter free router must be preferred first.'
+Require-Contains 'tools/provider-acceptance.ps1' "PreferredSuffix @(':free')" 'OpenRouter :free variants must be preferred before non-free routes.'
+Require-NotContains 'tools/provider-acceptance.ps1' 'gemini-3.8-flash' 'Provider acceptance must not depend on stale invented Gemini defaults.'
+
 # Final readiness must consume strict persistence, UI, restart, offline-local and provider evidence.
 Require-PowerShellParses 'tools/release-readiness.ps1'
 Require-Contains 'tools/release-readiness.ps1' 'OfficeRestartReport' 'Final readiness must consume Windows restart evidence.'
@@ -86,6 +97,9 @@ Require-Contains 'tools/release-readiness.ps1' 'Test-LocalOffline' 'Final readin
 Require-Contains 'tools/release-readiness.ps1' 'AutomaticLoadWithoutForceConnect' 'Final evidence must state the automatic-load invariant.'
 Require-Contains 'tools/release-readiness.ps1' 'WindowsRestartPersistence' 'Final evidence must state restart persistence as mandatory.'
 Require-Contains 'tools/release-readiness.ps1' 'LocalAiWithInternetDisconnected' 'Final evidence must state offline local AI as mandatory.'
+Require-Contains 'tools/release-readiness.ps1' 'LiveProviderModelDiscovery' 'Final release must require live provider model discovery.'
+Require-Contains 'tools/release-readiness.ps1' 'StreamingProviderRoundTrips' 'Final release must require provider streaming evidence.'
+Require-Contains 'tools/release-readiness.ps1' 'OpenRouterFreeRoutePriority' 'Final release must require OpenRouter free-route priority when cloud providers are required.'
 Require-Contains 'tools/release-readiness.ps1' 'WorkspaceEvidenceVisible' 'Ribbon/workspace proof must require visible rendered UI.'
 Require-Contains 'tools/release-readiness.ps1' 'ProductionAuthenticode' 'Production trust must remain a distinct release requirement.'
 
