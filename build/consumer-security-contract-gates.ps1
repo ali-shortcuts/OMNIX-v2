@@ -41,12 +41,22 @@ Forbid 'tools/consumer-security-acceptance.ps1' 'Remove-MpPreference' 'acceptanc
 Forbid 'tools/consumer-security-acceptance.ps1' 'Disable-NetAdapter' 'acceptance must never change networking.'
 Forbid 'tools/consumer-security-acceptance.ps1' 'New-NetFirewallRule' 'acceptance must never change firewall policy.'
 
+# Canonical entrypoint is intentionally a thin wrapper so policy logic is kept in one auditable core.
+# Contract therefore verifies both: wrapper delegation/parameter surface + fail-closed core validation.
 Parse-Ps 'tools/final-production-gate.ps1'
-Require 'tools/final-production-gate.ps1' 'ConsumerSecurityReport' 'final production gate must consume consumer security evidence.'
-Require 'tools/final-production-gate.ps1' 'CONSUMER-SECURITY-REAL-001' 'final gate must validate the consumer security TestId.'
-Require 'tools/final-production-gate.ps1' 'Defender.RealTimeProtectionEnabled' 'final gate must reject hosted-runner-like protection-off evidence.'
-Require 'tools/final-production-gate.ps1' 'SmartScreen.Disposition' 'final gate must reject missing/blocked SmartScreen evidence.'
-Require 'tools/final-production-gate.ps1' 'ConsumerDefenderAndSmartScreen = $true' 'final release requirements must expose consumer protection explicitly.'
+Require 'tools/final-production-gate.ps1' 'ConsumerSecurityReport' 'final production entrypoint must accept consumer security evidence.'
+Require 'tools/final-production-gate.ps1' 'final-production-core.ps1' 'canonical final entrypoint must delegate to the audited production core.'
+
+Parse-Ps 'tools/final-production-core.ps1'
+Require 'tools/final-production-core.ps1' 'ConsumerSecurityReport' 'final production core must consume consumer security evidence.'
+Require 'tools/final-production-core.ps1' 'CONSUMER-SECURITY-REAL-001' 'final core must validate the consumer security TestId.'
+Require 'tools/final-production-core.ps1' 'Defender.RealTimeProtectionEnabled' 'final core must reject hosted-runner-like protection-off evidence.'
+Require 'tools/final-production-core.ps1' 'Defender.BehaviorMonitorEnabled' 'final core must require behavior monitoring.'
+Require 'tools/final-production-core.ps1' 'Defender.InstallerDetectionCount' 'final core must fail on Defender detections for the exact installer.'
+Require 'tools/final-production-core.ps1' 'SmartScreen.Disposition' 'final core must reject missing/blocked SmartScreen evidence.'
+Require 'tools/final-production-core.ps1' 'ConsumerDefenderAndSmartScreen=$true' 'final release requirements must expose consumer protection explicitly.'
+Require 'tools/final-production-core.ps1' "OMNIX-FINAL-PRODUCTION-GATE-002" 'final production evidence must use the current stable TestId.'
+Forbid 'tools/final-production-core.ps1' 'AllowDevelopmentSignature' 'production core must have no development-signature escape hatch.'
 
 if($failures.Count -gt 0){
     Write-Host 'OMNIX CONSUMER-SECURITY CONTRACT: FAIL' -ForegroundColor Red
