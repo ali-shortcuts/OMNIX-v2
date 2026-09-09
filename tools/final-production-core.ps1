@@ -62,12 +62,21 @@ if([string]$base.Installer.SignatureStatus -ne 'Valid'){Fail $failures 'Producti
 if([bool]$base.Installer.SelfSigned){Fail $failures 'Production installer is self-signed.'}
 if(-not[bool]$base.Installer.Timestamped){Fail $failures 'Production installer signature is not timestamped.'}
 
-# Full Office install/persistence/UI/function/AI marker route.
+# Full Office install/persistence/UI/function/write-bounds/AI marker route.
 if($office.TestId -ne 'OFFICE-E2E-REAL-001'){Fail $failures 'Unexpected Office E2E TestId.'}
-if([int]$office.EvidenceSchema -lt 2){Fail $failures 'Office E2E schema is too old.'}
+if([int]$office.EvidenceSchema -lt 3){Fail $failures 'Office E2E schema is too old; approved-but-invalid write-boundary evidence is mandatory.'}
 if(-not[bool]$office.OverallPass){Fail $failures 'Full Office E2E failed.'}
 if([string]$office.Installer.Sha256 -ne $hash){Fail $failures 'Office E2E used a different installer.'}
 if($null -eq $office.Installer.HashMatchedExpected -or -not[bool]$office.Installer.HashMatchedExpected){Fail $failures 'Office E2E was not explicitly bound to the intended SHA256.'}
+
+if($null -eq $office.WriteBoundary){Fail $failures 'Office AI write-boundary evidence is missing.'}
+else{
+ if([string]$office.WriteBoundary.TestId -ne 'OFFICE-WRITE-BOUNDARY-REAL-001'){Fail $failures 'Unexpected Office write-boundary TestId.'}
+ if(-not[bool]$office.WriteBoundary.OverallPass){Fail $failures 'Approved-but-invalid Office AI write-boundary acceptance failed.'}
+ if(-not[bool]$office.WriteBoundary.RequiredHostCountPass){Fail $failures 'Write-boundary acceptance did not prove Excel + Word + PowerPoint.'}
+ if(-not[bool]$office.WriteBoundary.AllBoundaryChecksPass){Fail $failures 'One or more host-level write bounds failed.'}
+}
+
 if($null -eq $office.AiRoundTrip){Fail $failures 'Office AI E2E evidence is missing.'}
 else{
  if(-not[bool]$office.AiRoundTrip.Required){Fail $failures 'Office AI E2E was skipped.'}
@@ -117,13 +126,13 @@ if([string]::IsNullOrWhiteSpace($source)){Fail $failures 'Could not resolve sour
 if(-not[string]::IsNullOrWhiteSpace([string]$base.SourceCommit) -and -not[string]::IsNullOrWhiteSpace($source) -and [string]$base.SourceCommit -ne $source){Fail $failures 'Base readiness source commit does not match current checkout.'}
 
 $out=[ordered]@{
- TestId='OMNIX-FINAL-PRODUCTION-GATE-002';EvidenceSchema=2;GeneratedUtc=(Get-Date).ToUniversalTime().ToString('o');SourceCommit=$source
+ TestId='OMNIX-FINAL-PRODUCTION-GATE-002';EvidenceSchema=3;GeneratedUtc=(Get-Date).ToUniversalTime().ToString('o');SourceCommit=$source
  Installer=[ordered]@{FileName=$installer.Name;SizeBytes=[int64]$installer.Length;Sha256=$hash;SignatureStatus=[string]$base.Installer.SignatureStatus;SignerSubject=[string]$base.Installer.SignerSubject;SignerThumbprint=[string]$base.Installer.SignerThumbprint;Timestamped=[bool]$base.Installer.Timestamped}
  BaseReleaseReadinessPass=[bool]$base.OverallPass
- OfficeE2E=[ordered]@{Pass=[bool]$office.OverallPass;InstallerHashMatchedExpected=[bool]$office.Installer.HashMatchedExpected;AiRoundTripRequired=[bool]$office.AiRoundTrip.Required;AiRoundTripPass=[bool]$office.AiRoundTrip.OverallPass;AllThreeOfficeMarkerRoundTrips=[bool]$office.AiRoundTrip.AllMarkerRoundTripsPass}
+ OfficeE2E=[ordered]@{Pass=[bool]$office.OverallPass;InstallerHashMatchedExpected=[bool]$office.Installer.HashMatchedExpected;WriteBoundaryPass=[bool]$office.WriteBoundary.OverallPass;AllThreeOfficeWriteBounds=[bool]$office.WriteBoundary.AllBoundaryChecksPass;AiRoundTripRequired=[bool]$office.AiRoundTrip.Required;AiRoundTripPass=[bool]$office.AiRoundTrip.OverallPass;AllThreeOfficeMarkerRoundTrips=[bool]$office.AiRoundTrip.AllMarkerRoundTripsPass}
  Lifecycle=[ordered]@{Pass=[bool]$lifecycle.OverallPass;InstallerHashBound=([string]$lifecycle.InstallerSha256 -eq $hash);RepairPass=[bool]$lifecycle.RepairPass;SettingsPreserved=[bool]($lifecycle.SettingsPreservedAcrossRepair -and $lifecycle.SettingsPreservedAcrossUninstall);CorePreserved=[bool]$lifecycle.CorePreservedAcrossRepair;SharedOfficeRecoveryStatePreserved=[bool]($lifecycle.SharedOfficeRecoveryStatePreservedAcrossRepair -and $lifecycle.SharedOfficeRecoveryStatePreservedAcrossUninstall);RegistrationRemoved=[bool]$lifecycle.OmnixRegistrationRemoved;PayloadRemoved=[bool]$lifecycle.AppPayloadRemoved;DevelopmentCertificateRemoved=[bool]$lifecycle.DevelopmentCertificateRemoved}
  ConsumerSecurity=[ordered]@{Pass=[bool]$security.OverallPass;DefenderRealTimeProtectionEnabled=[bool]$security.Defender.RealTimeProtectionEnabled;DefenderDetectionCount=[int]$security.Defender.InstallerDetectionCount;SmartScreenDisposition=[string]$security.SmartScreen.Disposition;SmartScreenPass=[bool]$security.SmartScreen.Pass}
- Requirements=[ordered]@{ExactInstallerHashBinding=$true;ExcelWordPowerPoint=$true;RealOfficeAutomaticLoadAndUi=$true;RealOfficeContextToAiToRenderedUi=$true;RealWindowsRestartPersistence=$true;OfflineLocalAi=$true;LiveProviderMatrixAndStreaming=$true;GatewayPrivacyBeforeSend=$true;ExactBuildRepairAndUninstallLifecycle=$true;SharedOfficeRecoveryStatePreservation=$true;ConsumerDefenderAndSmartScreen=$true;TrustedTimestampedProductionAuthenticode=$true}
+ Requirements=[ordered]@{ExactInstallerHashBinding=$true;ExcelWordPowerPoint=$true;RealOfficeAutomaticLoadAndUi=$true;BoundedApprovedOfficeWrites=$true;RealOfficeContextToAiToRenderedUi=$true;RealWindowsRestartPersistence=$true;OfflineLocalAi=$true;LiveProviderMatrixAndStreaming=$true;GatewayPrivacyBeforeSend=$true;ExactBuildRepairAndUninstallLifecycle=$true;SharedOfficeRecoveryStatePreservation=$true;ConsumerDefenderAndSmartScreen=$true;TrustedTimestampedProductionAuthenticode=$true}
  FailureCount=$failures.Count;Failures=@($failures);OverallPass=($failures.Count -eq 0)
  Privacy='Sanitized aggregate only; no API keys, prompts, response bodies, machine names, settings contents or Office document contents.'
 }
