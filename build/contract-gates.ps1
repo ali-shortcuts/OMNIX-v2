@@ -52,6 +52,7 @@ foreach ($officeHost in @('Excel','Word','PowerPoint')) {
     Require-Contains "src/OMNIX.$officeHost/ThisAddIn.cs" 'CreateRibbonExtensibilityObject' "$officeHost must expose the OMNIX Ribbon."
     Require-Contains "src/OMNIX.$officeHost/OmnixRibbon.xml" 'OMNIX' "$officeHost must keep an OMNIX Ribbon definition."
 }
+Require-NotContains 'src/OMNIX.PowerPoint/OMNIX.PowerPoint.csproj' 'Microsoft.Office.Tools.PowerPoint' 'PowerPoint VSTO application-level add-ins must not reference a non-existent host-specific Tools.PowerPoint assembly.'
 Require-Contains 'build/post-install-verify.ps1' 'Excel.Application' 'Installer verification must cover Excel.'
 Require-Contains 'build/post-install-verify.ps1' 'Word.Application' 'Installer verification must cover Word.'
 Require-Contains 'build/post-install-verify.ps1' 'PowerPoint.Application' 'Installer verification must cover PowerPoint.'
@@ -150,13 +151,19 @@ Require-Contains 'tools/release-readiness.ps1' 'Get-AuthenticodeSignature' 'Prod
 Require-Contains 'tools/release-readiness.ps1' 'Get-FileHash -Algorithm SHA256' 'Release evidence must bind to exact installer bytes.'
 Require-Contains 'tools/release-readiness.ps1' 'At least one local AI runtime' 'Offline/local AI must be proven.'
 
-# 9. VSTO fallback signing must fail closed.
+# 9. VSTO build/signing must fail closed without changing machine-wide Office targets.
 Require-PowerShellParses 'build/build-with-fallbacks.ps1'
 Require-Contains 'build/build-with-fallbacks.ps1' 'Invoke-StrictBooleanStrategy' 'Every build strategy must fail closed on unexpected pipeline output.'
 Require-Contains 'build/build-with-fallbacks.ps1' 'unexpected success-pipeline output' 'Pipeline contamination must be explicitly rejected.'
-Require-Contains 'build/build-with-fallbacks.ps1' 'Refusing to treat unsigned VSTO manifests as success' 'Unsigned fallback cannot count as success.'
-Require-Contains 'build/build-with-fallbacks.ps1' '-AppManifest' 'Deployment manifest must be updated after application-manifest signing.'
-Require-Contains 'build/build-with-fallbacks.ps1' '-CertHash' 'Signing must use the actual certificate/private key in the Windows certificate store.'
+Require-Contains 'build/build-with-fallbacks.ps1' 'New-XmlRibbonOfficeToolsOverlay' 'Hosted VSTO builds need the isolated XML-Ribbon OfficeTools overlay.'
+Require-Contains 'build/build-with-fallbacks.ps1' 'Test-OmnixXmlRibbonArchitecture' 'FindRibbons may be bypassed only after proving the IRibbonExtensibility architecture.'
+Require-Contains 'build/build-with-fallbacks.ps1' 'Expected exactly one paired FindRibbons task invocation' 'Overlay patch must fail on ambiguous target shapes.'
+Require-Contains 'build/build-with-fallbacks.ps1' 'installed Visual Studio/MSBuild files are NEVER modified' 'Machine-wide Visual Studio targets must remain read-only.'
+Require-Contains 'build/build-with-fallbacks.ps1' 'GenerateOfficeAddInManifest' 'The overlay must preserve VSTO application-manifest generation.'
+Require-Contains 'build/build-with-fallbacks.ps1' 'GenerateDeploymentManifest' 'The overlay must preserve deployment-manifest generation.'
+Require-Contains 'build/build-with-fallbacks.ps1' '/p:VSToolsPath=' 'Overlay build must be selected explicitly through VSToolsPath.'
+Require-Contains 'build/build-with-fallbacks.ps1' '/p:SignManifests=true' 'Every valid VSTO build path must keep manifest signing enabled.'
+Require-NotContains 'build/build-with-fallbacks.ps1' 'SignManifests=false' 'Unsigned VSTO compilation is not a valid OMNIX packaging fallback.'
 Require-NotContains 'build/build-with-fallbacks.ps1' 'still installable via vstolocal' 'Do not describe unsigned manifests as a valid release fallback.'
 
 # 10. Packaging/CI evidence must prove a non-hollow installer from the exact branch head.
