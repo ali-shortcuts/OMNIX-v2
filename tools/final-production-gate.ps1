@@ -10,8 +10,9 @@
 #   - full Office E2E schema >= 2 PASS, cryptographically bound to THIS installer
 #   - real Office -> AI Gateway/provider -> rendered WPF marker round-trip PASS in all 3 hosts
 #   - lifecycle AfterUninstall PASS (repair/settings/registration/Resiliency/uninstall trust cleanup)
+#   - consumer-machine Defender + normal SmartScreen observation PASS on THIS installer
 #
-# This script intentionally has NO development-signature escape hatch.
+# This script intentionally has no development-signature bypass.
 
 [CmdletBinding()]
 param(
@@ -20,6 +21,7 @@ param(
 
     [string]$OfficeE2EReport = "$env:LOCALAPPDATA\OMNIX\logs\full-office-e2e.json",
     [string]$LifecycleReport = "$env:LOCALAPPDATA\OMNIX\logs\lifecycle-acceptance.json",
+    [string]$ConsumerSecurityReport = "$env:LOCALAPPDATA\OMNIX\logs\consumer-security-acceptance.json",
 
     [string]$OfficePersistenceReport = "$env:LOCALAPPDATA\OMNIX\logs\real-office-acceptance.json",
     [string]$OfficeUiReport = "$env:LOCALAPPDATA\OMNIX\logs\real-office-ui-acceptance.json",
@@ -68,7 +70,7 @@ $outDir = Split-Path -Parent $OutputPath
 if ($outDir) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
 
 # Run the existing base release gate with production signature requirements enabled.
-# Deliberately do NOT pass -AllowDevelopmentSignature.
+# No development-signature switch is supplied here.
 $baseArgs = @(
     '-NoProfile','-File',$readinessScript,
     '-OfficePersistenceReport',$OfficePersistenceReport,
@@ -88,6 +90,7 @@ if (-not (Test-Path -LiteralPath $BaseReadinessOutput -PathType Leaf)) {
 $base = Read-Json $BaseReadinessOutput 'Base release-readiness evidence'
 $officeE2E = Read-Json $OfficeE2EReport 'Full Office E2E evidence'
 $lifecycle = Read-Json $LifecycleReport 'Lifecycle evidence'
+$consumerSecurity = Read-Json $ConsumerSecurityReport 'Consumer security evidence'
 
 $failures = New-Object System.Collections.Generic.List[string]
 
@@ -100,6 +103,7 @@ if (-not [bool]$base.OverallPass) { Add-Failure $failures 'Base release-readines
 if ([string]$base.Installer.Sha256 -ne $installerHash) { Add-Failure $failures 'Base readiness installer SHA256 does not match the final installer.' }
 if ([string]$base.Installer.SignatureStatus -ne 'Valid') { Add-Failure $failures 'Final installer Authenticode status is not Valid.' }
 if ([bool]$base.Installer.SelfSigned) { Add-Failure $failures 'Final installer is self-signed; production requires a trusted publisher certificate.' }
+if (-not [bool]$base.Installer.Timestamped) { Add-Failure $failures 'Final installer Authenticode signature is not timestamped.' }
 
 # ---------------------------------------------------------------------------
 # Full Office E2E must prove the exact installer and the real AI route in all 3 hosts.
@@ -145,6 +149,24 @@ if (-not [bool]$lifecycle.AppPayloadRemoved) { Add-Failure $failures 'OMNIX appl
 if (-not [bool]$lifecycle.ResiliencyPreservedAcrossUninstall) { Add-Failure $failures 'Shared Office Resiliency changed during uninstall.' }
 if (-not [bool]$lifecycle.DevelopmentCertificateRemoved) { Add-Failure $failures 'OMNIX development trust material remains after uninstall.' }
 
+# ---------------------------------------------------------------------------
+# Consumer protection must be enabled and the SAME final installer must not be blocked/detected.
+# ---------------------------------------------------------------------------
+if ($consumerSecurity.TestId -ne 'CONSUMER-SECURITY-REAL-001') { Add-Failure $failures 'Unexpected consumer security TestId.' }
+if ([int]$consumerSecurity.EvidenceSchema -lt 1) { Add-Failure $failures 'Consumer security evidence schema is missing/invalid.' }
+if ([string]$consumerSecurity.Installer.Sha256 -ne $installerHash) { Add-Failure $failures 'Consumer security evidence was not produced for the final installer hash.' }
+if (-not [bool]$consumerSecurity.Defender.Available) { Add-Failure $failures 'Microsoft Defender was unavailable for consumer-machine evidence.' }
+if (-not [bool]$consumerSecurity.Defender.AntivirusEnabled) { Add-Failure $failures 'Microsoft Defender Antivirus was not enabled.' }
+if (-not [bool]$consumerSecurity.Defender.RealTimeProtectionEnabled) { Add-Failure $failures 'Defender real-time protection was not enabled during consumer acceptance.' }
+if (-not [bool]$consumerSecurity.Defender.BehaviorMonitorEnabled) { Add-Failure $failures 'Defender behavior monitoring was not enabled during consumer acceptance.' }
+if (-not [bool]$consumerSecurity.Defender.CustomScanCompleted) { Add-Failure $failures 'Defender custom scan did not complete.' }
+if ([int]$consumerSecurity.Defender.InstallerDetectionCount -ne 0) { Add-Failure $failures 'Defender recorded a detection for the final installer.' }
+if (-not [bool]$consumerSecurity.Defender.Pass) { Add-Failure $failures 'Consumer Defender acceptance did not pass.' }
+if ([string]$consumerSecurity.SmartScreen.Disposition -eq 'NotTested') { Add-Failure $failures 'SmartScreen normal-UI observation was not performed.' }
+if ([string]$consumerSecurity.SmartScreen.Disposition -eq 'Blocked') { Add-Failure $failures 'SmartScreen blocked the final installer.' }
+if (-not [bool]$consumerSecurity.SmartScreen.Pass) { Add-Failure $failures 'SmartScreen consumer acceptance did not pass.' }
+if (-not [bool]$consumerSecurity.OverallPass) { Add-Failure $failures 'Consumer-machine security OverallPass is false.' }
+
 $sourceCommit = Get-GitHead
 if ([string]::IsNullOrWhiteSpace($sourceCommit)) { Add-Failure $failures 'Could not resolve exact source Git commit.' }
 if (-not [string]::IsNullOrWhiteSpace([string]$base.SourceCommit) -and
@@ -155,7 +177,7 @@ if (-not [string]::IsNullOrWhiteSpace([string]$base.SourceCommit) -and
 
 $evidence = [ordered]@{
     TestId = 'OMNIX-FINAL-PRODUCTION-GATE-001'
-    EvidenceSchema = 1
+    EvidenceSchema = 2
     GeneratedUtc = (Get-Date).ToUniversalTime().ToString('o')
     SourceCommit = $sourceCommit
     Installer = [ordered]@{
@@ -184,6 +206,13 @@ $evidence = [ordered]@{
         PayloadRemoved = [bool]$lifecycle.AppPayloadRemoved
         DevelopmentCertificateRemoved = [bool]$lifecycle.DevelopmentCertificateRemoved
     }
+    ConsumerSecurity = [ordered]@{
+        Pass = [bool]$consumerSecurity.OverallPass
+        DefenderRealTimeProtectionEnabled = [bool]$consumerSecurity.Defender.RealTimeProtectionEnabled
+        DefenderDetectionCount = [int]$consumerSecurity.Defender.InstallerDetectionCount
+        SmartScreenDisposition = [string]$consumerSecurity.SmartScreen.Disposition
+        SmartScreenPass = [bool]$consumerSecurity.SmartScreen.Pass
+    }
     Requirements = [ordered]@{
         ExactInstallerHashBinding = $true
         ExcelWordPowerPoint = $true
@@ -194,6 +223,7 @@ $evidence = [ordered]@{
         LiveProviderMatrixAndStreaming = $true
         GatewayPrivacyBeforeSend = $true
         RepairAndUninstallLifecycle = $true
+        ConsumerDefenderAndSmartScreen = $true
         TrustedProductionAuthenticode = $true
     }
     FailureCount = $failures.Count
