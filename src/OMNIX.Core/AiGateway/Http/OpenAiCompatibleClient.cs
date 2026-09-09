@@ -16,8 +16,9 @@ namespace OMNIX.Core.AiGateway.Http
     /// <summary>
     /// Shared OpenAI-compatible chat-completions client (stream: true, SSE).
     /// Used by Groq, OpenRouter, LM Studio and Custom providers so behavior is identical
-    /// across them. Response/model bodies are bounded before full materialization so a malformed
-    /// endpoint cannot consume unbounded memory inside Excel/Word/PowerPoint.
+    /// across them. Request history plus response/model bodies are bounded before full
+    /// materialization so a malformed endpoint or long chat cannot consume unbounded memory
+    /// inside Excel/Word/PowerPoint.
     /// </summary>
     public sealed class OpenAiCompatibleClient
     {
@@ -84,6 +85,8 @@ namespace OMNIX.Core.AiGateway.Http
 
         public string BuildPayload(ChatRequest request, bool stream)
         {
+            request = ChatRequestBudgeter.Apply(request);
+
             var messages = new JArray();
             if (!string.IsNullOrEmpty(request.SystemPrompt))
                 messages.Add(new JObject { { "role", "system" }, { "content", request.SystemPrompt } });
