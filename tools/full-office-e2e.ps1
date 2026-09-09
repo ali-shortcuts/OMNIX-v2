@@ -2,11 +2,12 @@
 #
 # Intended for an interactive Windows desktop that has Excel + Word + PowerPoint installed.
 # It optionally installs a supplied OMNIX installer, then runs:
-#   1) strict two-launch COM automatic-load/persistence acceptance,
-#   2) real Ribbon + Open Workspace + visible task-pane UI Automation acceptance,
-#   3) real compiled OMNIX.Core Office-context/read/write/PowerPoint-Vision functional acceptance,
-#   4) approved-but-invalid write boundary rejection in ALL 3 Office hosts,
-#   5) real Office-context -> AiGateway/provider -> streaming WPF UI marker round-trip in ALL 3 hosts.
+#   1) automatic Office registration-maintenance/task safety acceptance,
+#   2) strict two-launch COM automatic-load/persistence acceptance,
+#   3) real Ribbon + Open Workspace + visible task-pane UI Automation acceptance,
+#   4) real compiled OMNIX.Core Office-context/read/write/PowerPoint-Vision functional acceptance,
+#   5) approved-but-invalid write boundary rejection in ALL 3 Office hosts,
+#   6) real Office-context -> AiGateway/provider -> streaming WPF UI marker round-trip in ALL 3 hosts.
 #
 # This script does NOT restart Windows, alter networking, clear Office Resiliency, change Trust Center,
 # or touch user Office documents. Reboot persistence remains a separate explicit before/after gate.
@@ -117,12 +118,15 @@ else {
 
 Assert-OfficeClosed
 
+$maintenancePath = Join-Path $logDir 'office-maintenance-real-acceptance.json'
 $persistencePath = Join-Path $logDir 'real-office-acceptance.json'
 $uiPath = Join-Path $logDir 'real-office-ui-acceptance.json'
 $functionalPath = Join-Path $logDir 'office-functional-acceptance.json'
 $writeBoundaryPath = Join-Path $logDir 'office-write-boundary-acceptance.json'
 $aiPath = Join-Path $logDir 'real-office-ai-e2e.json'
 
+$maintenance = Invoke-AcceptanceScript 'office-maintenance-real-acceptance.ps1' $maintenancePath @('-InstallDir',$InstallDir,'-RequiredHostCount','3')
+Assert-OfficeClosed
 $persistence = Invoke-AcceptanceScript 'real-office-acceptance.ps1' $persistencePath
 Assert-OfficeClosed
 $ui = Invoke-AcceptanceScript 'real-office-ui-acceptance.ps1' $uiPath
@@ -150,6 +154,7 @@ foreach ($name in @('Excel','Word','PowerPoint')) {
 
 $failures = New-Object System.Collections.Generic.List[string]
 if (-not [bool]$installerEvidence.Pass) { $failures.Add('Installer stage failed.') }
+if ($maintenance.ExitCode -ne 0 -or -not [bool]$maintenance.Report.OverallPass) { $failures.Add('Automatic Office registration maintenance/task acceptance failed.') }
 if ($persistence.ExitCode -ne 0 -or -not [bool]$persistence.Report.OverallPass) { $failures.Add('Strict Office automatic-load/persistence acceptance failed.') }
 if ($ui.ExitCode -ne 0 -or -not [bool]$ui.Report.OverallPass) { $failures.Add('Real Office Ribbon/workspace UI acceptance failed.') }
 if ($functional.ExitCode -ne 0 -or -not [bool]$functional.Report.OverallPass) { $failures.Add('Real Office functional context/read/write/Vision acceptance failed.') }
@@ -162,13 +167,27 @@ if (-not $SkipAiRoundTrip) {
 
 $report = [ordered]@{
     TestId = 'OFFICE-E2E-REAL-001'
-    EvidenceSchema = 3
+    EvidenceSchema = 4
     TimestampUtc = (Get-Date).ToUniversalTime().ToString('o')
     Windows = [Environment]::OSVersion.VersionString
     InteractiveSession = [Environment]::UserInteractive
     InstallDir = $InstallDir
     Installer = $installerEvidence
     OfficeVersions = $officeVersions
+    Maintenance = [ordered]@{
+        TestId = [string]$maintenance.Report.TestId
+        ExitCode = [int]$maintenance.ExitCode
+        OverallPass = [bool]$maintenance.Report.OverallPass
+        MaintenanceTaskPresent = [bool]$maintenance.Report.MaintenanceTaskPresent
+        MaintenanceTaskLimited = [bool]$maintenance.Report.MaintenanceTaskLimited
+        MaintenanceTaskCurrentUser = [bool]$maintenance.Report.MaintenanceTaskCurrentUser
+        MaintenanceTaskLogonTrigger = [bool]$maintenance.Report.MaintenanceTaskLogonTrigger
+        InstalledHostCount = [int]$maintenance.Report.InstalledHostCount
+        RegisteredHostCount = [int]$maintenance.Report.RegisteredHostCount
+        AllInstalledRegistrationsPass = [bool]$maintenance.Report.AllInstalledRegistrationsPass
+        SharedOfficeResiliencyPreserved = [bool]$maintenance.Report.SharedOfficeResiliencyPreserved
+        OfficeProcessesRemainedClosed = [bool]$maintenance.Report.OfficeProcessesRemainedClosed
+    }
     Persistence = [ordered]@{
         TestId = [string]$persistence.Report.TestId
         ExitCode = [int]$persistence.ExitCode
@@ -221,7 +240,7 @@ $report = [ordered]@{
         'consumer-machine Defender/SmartScreen with normal protections enabled',
         'trusted production Authenticode signature'
     )
-    Safety = 'Temporary unsaved Office files only. No automatic restart/network/firewall/Trust Center/Office Resiliency manipulation.'
+    Safety = 'Temporary unsaved Office files only. Automatic maintenance is per-user/limited and may change only OMNIX-owned Addins keys; no automatic restart/network/firewall/Trust Center/Office Resiliency manipulation.'
 }
 
 $report | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
