@@ -44,3 +44,7 @@ jobs:
       - name: Enforce consumer protection release contract
         shell: pwsh
         run: ./build/consumer-security-contract-gates.ps1
+
+      - name: Enforce runtime hardening contract
+        shell: pwsh
+        run: ./build/runtime-hardening-contract-gates.ps1
