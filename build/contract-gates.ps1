@@ -52,7 +52,7 @@ foreach ($officeHost in @('Excel','Word','PowerPoint')) {
     Require-Contains "src/OMNIX.$officeHost/ThisAddIn.cs" 'CreateRibbonExtensibilityObject' "$officeHost must expose the OMNIX Ribbon."
     Require-Contains "src/OMNIX.$officeHost/OmnixRibbon.xml" 'OMNIX' "$officeHost must keep an OMNIX Ribbon definition."
 }
-Require-NotContains 'src/OMNIX.PowerPoint/OMNIX.PowerPoint.csproj' 'Microsoft.Office.Tools.PowerPoint' 'PowerPoint VSTO application-level add-ins must not reference a non-existent host-specific Tools.PowerPoint assembly.'
+Require-NotContains 'src/OMNIX.PowerPoint/OMNIX.PowerPoint.csproj' 'Reference Include="Microsoft.Office.Tools.PowerPoint' 'PowerPoint VSTO application-level add-ins must not reference a non-existent host-specific Tools.PowerPoint assembly.'
 Require-Contains 'build/post-install-verify.ps1' 'Excel.Application' 'Installer verification must cover Excel.'
 Require-Contains 'build/post-install-verify.ps1' 'Word.Application' 'Installer verification must cover Word.'
 Require-Contains 'build/post-install-verify.ps1' 'PowerPoint.Application' 'Installer verification must cover PowerPoint.'
@@ -163,7 +163,7 @@ Require-Contains 'build/build-with-fallbacks.ps1' 'GenerateOfficeAddInManifest' 
 Require-Contains 'build/build-with-fallbacks.ps1' 'GenerateDeploymentManifest' 'The overlay must preserve deployment-manifest generation.'
 Require-Contains 'build/build-with-fallbacks.ps1' '/p:VSToolsPath=' 'Overlay build must be selected explicitly through VSToolsPath.'
 Require-Contains 'build/build-with-fallbacks.ps1' '/p:SignManifests=true' 'Every valid VSTO build path must keep manifest signing enabled.'
-Require-NotContains 'build/build-with-fallbacks.ps1' 'SignManifests=false' 'Unsigned VSTO compilation is not a valid OMNIX packaging fallback.'
+Require-NotContains 'build/build-with-fallbacks.ps1' '/p:SignManifests=false' 'Unsigned VSTO compilation is not a valid OMNIX packaging fallback.'
 Require-NotContains 'build/build-with-fallbacks.ps1' 'still installable via vstolocal' 'Do not describe unsigned manifests as a valid release fallback.'
 
 # 10. Packaging/CI evidence must prove a non-hollow installer from the exact branch head.
