@@ -6,13 +6,15 @@
 #   tools/reboot-persistence-acceptance.ps1 -Phase BeforeRestart
 #   (restart Windows normally)
 #   tools/reboot-persistence-acceptance.ps1 -Phase AfterRestart
+#   tools/local-offline-acceptance.ps1   (with Internet intentionally disconnected)
 #   tools/provider-acceptance.ps1
 #
-# This script does not run providers, Office, or restart Windows itself. It validates their evidence,
-# requires all three Office hosts to auto-load OMNIX on two independent launches, requires a genuine
-# Windows restart persistence proof, requires Ribbon/workspace UI proof, requires at least one local
-# AI runtime, optionally requires every built-in cloud provider + Custom, verifies the installer hash,
-# and requires a real trusted Authenticode signature for a production release.
+# This script does not run providers, Office, restart Windows, or alter networking itself. It
+# validates their evidence, requires all three Office hosts to auto-load OMNIX on two independent
+# launches, requires a genuine Windows restart persistence proof, requires Ribbon/workspace UI proof,
+# requires a real local-model round-trip while public Internet is observed disconnected, optionally
+# requires every built-in cloud provider + Custom, verifies the installer hash, and requires a real
+# trusted Authenticode signature for a production release.
 #
 # Output is intentionally sanitized: it does not copy machine names, API keys, prompts, response
 # bodies, Authorization headers, or document contents into release evidence.
@@ -22,6 +24,7 @@ param(
     [string]$OfficePersistenceReport = "$env:LOCALAPPDATA\OMNIX\logs\real-office-acceptance.json",
     [string]$OfficeUiReport = "$env:LOCALAPPDATA\OMNIX\logs\real-office-ui-acceptance.json",
     [string]$OfficeRestartReport = "$env:LOCALAPPDATA\OMNIX\logs\real-office-restart-acceptance.json",
+    [string]$LocalOfflineReport = "$env:LOCALAPPDATA\OMNIX\logs\local-ai-offline-acceptance.json",
     [string]$ProviderReport = "$env:LOCALAPPDATA\OMNIX\logs\provider-acceptance.json",
     [Parameter(Mandatory=$true)]
     [string]$InstallerPath,
@@ -127,6 +130,25 @@ function Test-OfficeUi($report) {
     return $errors
 }
 
+function Test-LocalOffline($report) {
+    $errors = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $report -or $report.TestId -ne 'LOCAL-AI-OFFLINE-REAL-001') {
+        $errors.Add('Unexpected/missing local-AI offline TestId.')
+        return $errors
+    }
+    if (-not [bool]$report.OverallPass) { $errors.Add('Local-AI offline OverallPass is false.') }
+    if (-not [bool]$report.InternetDisconnectedObserved) { $errors.Add('Offline local-AI evidence did not observe public Internet disconnected.') }
+    if (-not [bool]$report.AtLeastOneLocalRuntimePass) { $errors.Add('No local runtime completed a real model chat while Internet was disconnected.') }
+
+    $passing = @($report.LocalProviders | Where-Object {
+        ($_.Provider -eq 'Ollama' -or $_.Provider -eq 'LM Studio') -and $_.Pass -and $_.ModelsPass -and $_.ChatPass -and -not [string]::IsNullOrWhiteSpace([string]$_.Model)
+    })
+    if ($passing.Count -lt 1) {
+        $errors.Add('Offline local-AI evidence lacks a passing Ollama/LM Studio model-list + chat round-trip.')
+    }
+    return $errors
+}
+
 function Test-Providers($report, [bool]$requireAllCloud, [bool]$requireCustom) {
     $errors = New-Object System.Collections.Generic.List[string]
     if ($null -eq $report -or $report.TestId -ne 'PROVIDERS-RUNTIME-001') {
@@ -138,7 +160,7 @@ function Test-Providers($report, [bool]$requireAllCloud, [bool]$requireCustom) {
         ($_.Provider -eq 'Ollama' -or $_.Provider -eq 'LM Studio') -and $_.Configured -and $_.Pass
     })
     if ($localPass.Count -lt 1) {
-        $errors.Add('At least one local AI runtime (Ollama or LM Studio) must pass a real chat round-trip.')
+        $errors.Add('At least one local AI runtime (Ollama or LM Studio) must pass a real chat round-trip in the provider harness.')
     }
 
     if ($requireAllCloud) {
@@ -177,6 +199,7 @@ function Get-ProviderSummary($report) {
 $officePersistence = Read-JsonFile $OfficePersistenceReport 'Office persistence'
 $officeUi = Read-JsonFile $OfficeUiReport 'Office UI'
 $officeRestart = Read-JsonFile $OfficeRestartReport 'Windows restart persistence'
+$localOffline = Read-JsonFile $LocalOfflineReport 'Local-AI offline'
 $providers = Read-JsonFile $ProviderReport 'Provider'
 
 if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) { throw "Installer not found: $InstallerPath" }
@@ -187,6 +210,7 @@ $failures = New-Object System.Collections.Generic.List[string]
 foreach ($e in @(Test-OfficePersistence $officePersistence)) { $failures.Add([string]$e) }
 foreach ($e in @(Test-OfficeUi $officeUi)) { $failures.Add([string]$e) }
 foreach ($e in @(Test-OfficeRestart $officeRestart)) { $failures.Add([string]$e) }
+foreach ($e in @(Test-LocalOffline $localOffline)) { $failures.Add([string]$e) }
 foreach ($e in @(Test-Providers $providers ([bool]$RequireAllCloudProviders) ([bool]$RequireCustomProvider))) { $failures.Add([string]$e) }
 
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $InstallerPath).Hash.ToLowerInvariant()
@@ -233,7 +257,7 @@ $outDir = Split-Path -Parent $OutputPath
 if ($outDir) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
 
 $evidence = [ordered]@{
-    EvidenceSchema = 2
+    EvidenceSchema = 3
     TestId = 'OMNIX-RELEASE-READINESS-001'
     GeneratedUtc = (Get-Date).ToUniversalTime().ToString('o')
     SourceCommit = $sourceCommit
@@ -254,6 +278,11 @@ $evidence = [ordered]@{
         PostRestartPersistencePass = [bool]$officeRestart.PostRestartPersistencePass
         OverallPass = [bool]$officeRestart.OverallPass
     }
+    LocalOffline = [ordered]@{
+        InternetDisconnectedObserved = [bool]$localOffline.InternetDisconnectedObserved
+        AtLeastOneLocalRuntimePass = [bool]$localOffline.AtLeastOneLocalRuntimePass
+        OverallPass = [bool]$localOffline.OverallPass
+    }
     Providers = Get-ProviderSummary $providers
     Requirements = [ordered]@{
         AllThreeOfficeHosts = $true
@@ -261,6 +290,7 @@ $evidence = [ordered]@{
         AutomaticLoadWithoutForceConnect = $true
         WindowsRestartPersistence = $true
         RibbonAndWorkspaceUi = $true
+        LocalAiWithInternetDisconnected = $true
         AtLeastOneLocalAi = $true
         AllBuiltInCloudProviders = [bool]$RequireAllCloudProviders
         CustomProvider = [bool]$RequireCustomProvider
