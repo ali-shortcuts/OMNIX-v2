@@ -104,12 +104,16 @@ Require-Contains '.github/workflows/build.yml' 'Runtime AI Gateway privacy accep
 Require-Contains '.github/workflows/build.yml' 'privacy-acceptance.json' 'CI artifacts must preserve privacy runtime evidence.'
 Require-Contains '.github/workflows/build.yml' 'PrivacyGatewayRuntimePass' 'Development artifact metadata must record privacy runtime result.'
 
-# Final readiness must consume strict persistence, UI, restart, offline-local and provider evidence.
+# Final readiness must consume strict persistence, UI, restart, offline-local, provider and privacy evidence.
 Require-PowerShellParses 'tools/release-readiness.ps1'
 Require-Contains 'tools/release-readiness.ps1' 'OfficeRestartReport' 'Final readiness must consume Windows restart evidence.'
 Require-Contains 'tools/release-readiness.ps1' 'Test-OfficeRestart' 'Final readiness must validate restart evidence fail-closed.'
 Require-Contains 'tools/release-readiness.ps1' 'LocalOfflineReport' 'Final readiness must consume dedicated offline local-AI evidence.'
 Require-Contains 'tools/release-readiness.ps1' 'Test-LocalOffline' 'Final readiness must validate offline local-AI evidence fail-closed.'
+Require-Contains 'tools/release-readiness.ps1' 'PrivacyReport' 'Final readiness must consume compiled privacy runtime evidence.'
+Require-Contains 'tools/release-readiness.ps1' 'Test-PrivacyGateway' 'Final readiness must validate compiled gateway privacy behavior fail-closed.'
+Require-Contains 'tools/release-readiness.ps1' 'PrivacyGatewayRuntime' 'Final evidence must summarize privacy runtime results.'
+Require-Contains 'tools/release-readiness.ps1' 'GatewayPrivacyOrderingRuntime' 'Final release must require privacy enforcement before provider SendAsync.'
 Require-Contains 'tools/release-readiness.ps1' 'AutomaticLoadWithoutForceConnect' 'Final evidence must state the automatic-load invariant.'
 Require-Contains 'tools/release-readiness.ps1' 'WindowsRestartPersistence' 'Final evidence must state restart persistence as mandatory.'
 Require-Contains 'tools/release-readiness.ps1' 'LocalAiWithInternetDisconnected' 'Final evidence must state offline local AI as mandatory.'
