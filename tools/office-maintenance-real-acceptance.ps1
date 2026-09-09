@@ -74,15 +74,15 @@ function Get-ResiliencyFingerprint {
     $all = @()
     $hkcu = [Microsoft.Win32.Registry]::CurrentUser
     foreach ($version in @('16.0','15.0')) {
-        foreach ($host in @('Excel','Word','PowerPoint')) {
-            $sub = "Software\Microsoft\Office\$version\$host\Resiliency"
+        foreach ($officeHostName in @('Excel','Word','PowerPoint')) {
+            $sub = "Software\Microsoft\Office\$version\$officeHostName\Resiliency"
             $key = $null
             try {
                 $key = $hkcu.OpenSubKey($sub, $false)
                 if ($null -eq $key) {
-                    $all += "$version/$host|ABSENT"
+                    $all += "$version/$officeHostName|ABSENT"
                 } else {
-                    foreach ($line in Get-KeyDigest $key '') { $all += "$version/$host|$line" }
+                    foreach ($line in Get-KeyDigest $key '') { $all += "$version/$officeHostName|$line" }
                 }
             } finally {
                 if ($null -ne $key) { $key.Dispose() }
@@ -94,18 +94,18 @@ function Get-ResiliencyFingerprint {
     return [pscustomobject]@{ EntryCount=$all.Count; Sha256=(Get-Sha256Hex $bytes) }
 }
 
-function Get-RegistrationRow([string]$version,[string]$host) {
-    $path = "HKCU:\Software\Microsoft\Office\$version\$host\Addins\OMNIX"
+function Get-RegistrationRow([string]$version,[string]$officeHostName) {
+    $path = "HKCU:\Software\Microsoft\Office\$version\$officeHostName\Addins\OMNIX"
     if (-not (Test-Path -LiteralPath $path -PathType Container)) {
-        return [pscustomobject]@{ Version=$version; Host=$host; Exists=$false; LoadBehavior=$null; ManifestOk=$false; Pass=$false }
+        return [pscustomobject]@{ Version=$version; Host=$officeHostName; Exists=$false; LoadBehavior=$null; ManifestOk=$false; Pass=$false }
     }
     $p = Get-ItemProperty -LiteralPath $path -ErrorAction Stop
     $manifest = [string]$p.Manifest
-    $manifestFile = Join-Path $InstallDir ("OMNIX.$host.vsto")
+    $manifestFile = Join-Path $InstallDir ("OMNIX.$officeHostName.vsto")
     $uri = New-Object System.Uri -ArgumentList $manifestFile
     $expected = ($uri.AbsoluteUri + '|vstolocal')
     return [pscustomobject]@{
-        Version=$version; Host=$host; Exists=$true; LoadBehavior=$p.LoadBehavior
+        Version=$version; Host=$officeHostName; Exists=$true; LoadBehavior=$p.LoadBehavior
         ManifestOk=[string]::Equals($manifest,$expected,[StringComparison]::OrdinalIgnoreCase)
         Pass=($p.LoadBehavior -eq 3 -and [string]::Equals($manifest,$expected,[StringComparison]::OrdinalIgnoreCase))
     }
@@ -167,7 +167,7 @@ try {
 
     if (Test-Path -LiteralPath $maintenanceReport) { Remove-Item -LiteralPath $maintenanceReport -Force }
     $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
-        '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$maintenanceScript,
+        '-NoProfile','-NonInteractive','-File',$maintenanceScript,
         '-InstallDir',$InstallDir,'-OutputPath',$maintenanceReport,'-Quiet') -Wait -PassThru -WindowStyle Hidden
     if (-not (Test-Path -LiteralPath $maintenanceReport -PathType Leaf)) { throw "Maintenance scanner produced no report (exit=$($proc.ExitCode))." }
     $maintenance = Get-Content -LiteralPath $maintenanceReport -Raw | ConvertFrom-Json
