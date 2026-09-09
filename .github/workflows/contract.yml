@@ -40,3 +40,7 @@ jobs:
       - name: Enforce final Office AI and lifecycle evidence contract
         shell: pwsh
         run: ./build/final-evidence-contract-gates.ps1
+
+      - name: Enforce consumer protection release contract
+        shell: pwsh
+        run: ./build/consumer-security-contract-gates.ps1
