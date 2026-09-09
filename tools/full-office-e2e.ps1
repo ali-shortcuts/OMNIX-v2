@@ -5,7 +5,8 @@
 #   1) strict two-launch COM automatic-load/persistence acceptance,
 #   2) real Ribbon + Open Workspace + visible task-pane UI Automation acceptance,
 #   3) real compiled OMNIX.Core Office-context/read/write/PowerPoint-Vision functional acceptance,
-#   4) real Office-context -> AiGateway/provider -> streaming WPF UI marker round-trip in ALL 3 hosts.
+#   4) approved-but-invalid write boundary rejection in ALL 3 Office hosts,
+#   5) real Office-context -> AiGateway/provider -> streaming WPF UI marker round-trip in ALL 3 hosts.
 #
 # This script does NOT restart Windows, alter networking, clear Office Resiliency, change Trust Center,
 # or touch user Office documents. Reboot persistence remains a separate explicit before/after gate.
@@ -119,6 +120,7 @@ Assert-OfficeClosed
 $persistencePath = Join-Path $logDir 'real-office-acceptance.json'
 $uiPath = Join-Path $logDir 'real-office-ui-acceptance.json'
 $functionalPath = Join-Path $logDir 'office-functional-acceptance.json'
+$writeBoundaryPath = Join-Path $logDir 'office-write-boundary-acceptance.json'
 $aiPath = Join-Path $logDir 'real-office-ai-e2e.json'
 
 $persistence = Invoke-AcceptanceScript 'real-office-acceptance.ps1' $persistencePath
@@ -126,6 +128,8 @@ Assert-OfficeClosed
 $ui = Invoke-AcceptanceScript 'real-office-ui-acceptance.ps1' $uiPath
 Assert-OfficeClosed
 $functional = Invoke-AcceptanceScript 'office-functional-acceptance.ps1' $functionalPath @('-InstallDir',$InstallDir)
+Assert-OfficeClosed
+$writeBoundary = Invoke-AcceptanceScript 'office-write-boundary-acceptance.ps1' $writeBoundaryPath @('-InstallDir',$InstallDir)
 Assert-OfficeClosed
 
 $ai = $null
@@ -149,6 +153,7 @@ if (-not [bool]$installerEvidence.Pass) { $failures.Add('Installer stage failed.
 if ($persistence.ExitCode -ne 0 -or -not [bool]$persistence.Report.OverallPass) { $failures.Add('Strict Office automatic-load/persistence acceptance failed.') }
 if ($ui.ExitCode -ne 0 -or -not [bool]$ui.Report.OverallPass) { $failures.Add('Real Office Ribbon/workspace UI acceptance failed.') }
 if ($functional.ExitCode -ne 0 -or -not [bool]$functional.Report.OverallPass) { $failures.Add('Real Office functional context/read/write/Vision acceptance failed.') }
+if ($writeBoundary.ExitCode -ne 0 -or -not [bool]$writeBoundary.Report.OverallPass) { $failures.Add('Real Office approved-but-invalid AI write-boundary acceptance failed.') }
 if (-not $SkipAiRoundTrip) {
     if ($null -eq $ai -or $ai.ExitCode -ne 0 -or -not [bool]$ai.Report.OverallPass) {
         $failures.Add('Real Office context -> AI Gateway/provider -> rendered UI marker round-trip failed.')
@@ -157,7 +162,7 @@ if (-not $SkipAiRoundTrip) {
 
 $report = [ordered]@{
     TestId = 'OFFICE-E2E-REAL-001'
-    EvidenceSchema = 2
+    EvidenceSchema = 3
     TimestampUtc = (Get-Date).ToUniversalTime().ToString('o')
     Windows = [Environment]::OSVersion.VersionString
     InteractiveSession = [Environment]::UserInteractive
@@ -184,6 +189,13 @@ $report = [ordered]@{
         RequiredHostCountPass = [bool]$functional.Report.RequiredHostCountPass
         AllWritesGuarded = [bool]$functional.Report.AllWritesGuarded
         PowerPointVisionCapturePass = [bool]$functional.Report.PowerPointVisionCapturePass
+    }
+    WriteBoundary = [ordered]@{
+        TestId = [string]$writeBoundary.Report.TestId
+        ExitCode = [int]$writeBoundary.ExitCode
+        OverallPass = [bool]$writeBoundary.Report.OverallPass
+        RequiredHostCountPass = [bool]$writeBoundary.Report.RequiredHostCountPass
+        AllBoundaryChecksPass = [bool]$writeBoundary.Report.AllBoundaryChecksPass
     }
     AiRoundTrip = if ($SkipAiRoundTrip) {
         [ordered]@{ Required=$false; TestId=$null; ExitCode=$null; OverallPass=$null; AllMarkerRoundTripsPass=$null }
