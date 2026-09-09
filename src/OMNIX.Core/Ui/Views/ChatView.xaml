@@ -56,6 +56,8 @@
                            FontSize="10" Foreground="{DynamicResource B.ForegroundDim}"
                            VerticalAlignment="Center" Margin="0,0,5,0" />
                 <TextBlock x:Name="ContextText" Grid.Column="1" Text="—" FontSize="10"
+                           AutomationProperties.AutomationId="OMNIX.ContextText"
+                           AutomationProperties.Name="OMNIX Office context"
                            Foreground="{DynamicResource B.ForegroundDim}" TextTrimming="CharacterEllipsis"
                            VerticalAlignment="Center" />
             </Grid>
@@ -71,8 +73,11 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock x:Name="StatusText" Grid.Column="0" FontSize="10.5" TextWrapping="Wrap"
+                           AutomationProperties.AutomationId="OMNIX.StatusText"
+                           AutomationProperties.Name="OMNIX status"
                            Foreground="{DynamicResource B.Danger}" />
                 <Button x:Name="StatusClose" Grid.Column="1" Style="{StaticResource MiniButton}"
+                        AutomationProperties.AutomationId="OMNIX.StatusCloseButton"
                         Content="✕" Click="OnStatusClose" VerticalAlignment="Top" />
             </Grid>
         </Border>
@@ -82,11 +87,13 @@
                 BorderBrush="{DynamicResource B.Border}" BorderThickness="0,1,0,0"
                 Background="{DynamicResource B.Surface}" Padding="8,4">
             <StackPanel Orientation="Horizontal">
-                <Image x:Name="PendingImage" Width="64" Height="48" Stretch="Uniform" />
+                <Image x:Name="PendingImage" Width="64" Height="48" Stretch="Uniform"
+                       AutomationProperties.AutomationId="OMNIX.PendingImage" />
                 <TextBlock x:Name="PendingImageLabel" Text="{DynamicResource S.Chat.AttachedImage}"
                            FontSize="10.5" VerticalAlignment="Center" Margin="6,0,6,0"
                            Foreground="{DynamicResource B.ForegroundDim}" />
                 <Button x:Name="RemovePendingImage" Style="{StaticResource MiniButton}"
+                        AutomationProperties.AutomationId="OMNIX.RemovePendingImageButton"
                         Content="✕" Click="OnRemovePendingImage" VerticalAlignment="Center" />
             </StackPanel>
         </Border>
@@ -102,9 +109,11 @@
 
                 <StackPanel Grid.Column="0" Orientation="Vertical" VerticalAlignment="Bottom" Margin="0,0,4,0">
                     <Button x:Name="AttachDocButton" Style="{StaticResource MiniButton}"
+                            AutomationProperties.AutomationId="OMNIX.AttachDocumentButton"
                             Content="📎" ToolTip="{DynamicResource S.Chat.AttachImage}"
                             Click="OnAttachFromDocument" />
                     <Button x:Name="UploadButton" Style="{StaticResource MiniButton}"
+                            AutomationProperties.AutomationId="OMNIX.UploadImageButton"
                             Content="＋" ToolTip="{DynamicResource S.Chat.UploadImage}"
                             Click="OnUploadImage" Margin="0,2,0,0" />
                 </StackPanel>
@@ -126,6 +135,7 @@
                         Style="{StaticResource MiniButton}" Content="{DynamicResource S.Chat.Send}"
                         Click="OnSend" VerticalAlignment="Bottom" MinWidth="46" />
                 <Button x:Name="StopButton" Grid.Column="2" Margin="4,0,0,0"
+                        AutomationProperties.AutomationId="OMNIX.StopButton"
                         Style="{StaticResource MiniButton}" Content="{DynamicResource S.Chat.Stop}"
                         Click="OnStop" VerticalAlignment="Bottom" MinWidth="46" Visibility="Collapsed" />
             </Grid>
@@ -145,17 +155,22 @@
                             AutomationProperties.AutomationId="OMNIX.NewChatButton"
                             Content="{DynamicResource S.Chat.NewChat}" Click="OnNewChat" />
                     <Button x:Name="CopyButton" Style="{StaticResource MiniButton}"
+                            AutomationProperties.AutomationId="OMNIX.CopyButton"
                             Content="{DynamicResource S.Chat.Copy}" Click="OnCopy" Margin="4,0,0,0" />
                     <Button x:Name="RetryButton" Style="{StaticResource MiniButton}"
+                            AutomationProperties.AutomationId="OMNIX.RetryButton"
                             Content="{DynamicResource S.Chat.Retry}" Click="OnRetry" Margin="4,0,0,0" />
                     <Button x:Name="ClearButton" Style="{StaticResource MiniButton}"
+                            AutomationProperties.AutomationId="OMNIX.ClearButton"
                             Content="{DynamicResource S.Chat.Clear}" Click="OnClear" Margin="4,0,0,0" />
                 </StackPanel>
             </Border>
 
             <ScrollViewer x:Name="MessagesScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                          AutomationProperties.AutomationId="OMNIX.MessagesScroll"
                           Padding="4,4,4,2">
-                <StackPanel x:Name="MessagesPanel" />
+                <StackPanel x:Name="MessagesPanel"
+                            AutomationProperties.AutomationId="OMNIX.MessagesPanel" />
             </ScrollViewer>
         </Grid>
     </DockPanel>
