@@ -11,10 +11,13 @@ namespace OMNIX.Core.AiGateway
     /// Provider registry. Provider-owned setup URLs, access/cost hints and maintained default
     /// model ids are centralized here. Cloud free-tier metadata is informational: OMNIX still
     /// loads live model lists and surfaces provider quota/rate-limit errors instead of promising
-    /// that a cloud provider will remain free forever.
+    /// that a cloud provider will remain free forever. Every cloud access classification carries
+    /// an official verification source and date so stale claims remain visible to the user.
     /// </summary>
     public sealed class ProviderRegistry
     {
+        private const string AccessVerifiedDate = "2026-09-09";
+
         private readonly List<IProviderAdapter> _providers;
         private readonly Dictionary<string, bool> _localAvailability;
 
@@ -44,7 +47,9 @@ namespace OMNIX.Core.AiGateway
                 "https://aistudio.google.com/apikey",
                 "gemini-3.8-flash",
                 ProviderAccessProfile.FreeTierAvailable,
-                "Gemini Developer API currently offers free-tier usage for supported models; limits, data-use terms and regional availability apply.");
+                "Gemini Developer API currently lists free-tier input/output for Gemini 3.8 Flash. Free-tier quotas, regional availability and data-use terms still apply.",
+                "https://ai.google.dev/gemini-api/docs/pricing",
+                AccessVerifiedDate);
 
             SetMetadata("groq",
                 "https://groq.com/",
@@ -52,7 +57,9 @@ namespace OMNIX.Core.AiGateway
                 "https://console.groq.com/keys",
                 "openai/gpt-oss-120b",
                 ProviderAccessProfile.FreeTierAvailable,
-                "Groq currently publishes Free Plan rate limits for supported models. Quotas are account/model specific.");
+                "Groq currently publishes Free Plan rate limits for openai/gpt-oss-120b and other supported models. Quotas are account/model specific.",
+                "https://console.groq.com/docs/rate-limits",
+                AccessVerifiedDate);
 
             SetMetadata("openrouter",
                 "https://openrouter.ai/",
@@ -60,7 +67,9 @@ namespace OMNIX.Core.AiGateway
                 "https://openrouter.ai/settings/keys",
                 "openrouter/free",
                 ProviderAccessProfile.FreeModelsAvailable,
-                "OpenRouter exposes openrouter/free plus individual :free model variants. Free capacity, model inventory and provider privacy compatibility can change.");
+                "OpenRouter currently exposes openrouter/free plus individual :free variants. Free capacity, model inventory and provider privacy compatibility can change.",
+                "https://openrouter.ai/collections/free-models",
+                AccessVerifiedDate);
 
             SetMetadata("mistral",
                 "https://mistral.ai/",
@@ -68,7 +77,9 @@ namespace OMNIX.Core.AiGateway
                 "https://console.mistral.ai/",
                 "mistral-small-latest",
                 ProviderAccessProfile.FreeTierAvailable,
-                "Mistral Studio currently enables Free mode with limited included usage/rate limits and no credit card required for Free mode.");
+                "Mistral currently documents Free mode with API-key access, included usage and rate limits; no credit card is required for Free mode. Availability and included usage can change.",
+                "https://docs.mistral.ai/admin/billing-usage/subscriptions",
+                AccessVerifiedDate);
 
             SetMetadata("huggingface",
                 "https://huggingface.co/",
@@ -76,34 +87,52 @@ namespace OMNIX.Core.AiGateway
                 "https://huggingface.co/settings/tokens",
                 "openai/gpt-oss-120b:fastest",
                 ProviderAccessProfile.FreeCreditsAvailable,
-                "Hugging Face currently gives free users small monthly Inference Providers credits. The live model catalog can also mark temporary provider routes as free.");
+                "Hugging Face currently gives free users a small monthly Inference Providers credit allowance; the amount is explicitly subject to change. Live routing/model availability is still checked at runtime.",
+                "https://huggingface.co/docs/inference-providers/pricing",
+                AccessVerifiedDate);
 
             SetMetadata("cerebras",
                 "https://www.cerebras.ai/",
-                "https://www.cerebras.ai/inference",
+                "https://inference-docs.cerebras.ai/",
                 "https://cloud.cerebras.ai/",
                 "gpt-oss-120b",
                 ProviderAccessProfile.FreeCreditsAvailable,
-                "Cerebras currently advertises free trial credits for new accounts. Continued usage is account/plan dependent rather than a permanent unlimited free tier.");
+                "Cerebras currently advertises a free trial credit allowance for new accounts and separately publishes Free-tier rate limits. Continued usage beyond trial/free capacity is account/plan dependent.",
+                "https://www.cerebras.ai/pricing",
+                AccessVerifiedDate);
 
-            SetMetadata("ollama", "https://ollama.com/", "https://docs.ollama.com/", null, null,
+            SetMetadata("ollama",
+                "https://ollama.com/",
+                "https://docs.ollama.com/",
+                null,
+                null,
                 ProviderAccessProfile.LocalNoCost,
-                "Runs locally on this PC. Provider usage is not metered by OMNIX; model/resource cost is the user's local hardware usage.");
+                "Runs locally on this PC. OMNIX does not charge or meter local inference; compute/storage use comes from the user's own machine.",
+                "https://docs.ollama.com/",
+                AccessVerifiedDate);
 
-            SetMetadata("lmstudio", "https://lmstudio.ai/", "https://lmstudio.ai/docs", null, null,
+            SetMetadata("lmstudio",
+                "https://lmstudio.ai/",
+                "https://lmstudio.ai/docs",
+                null,
+                null,
                 ProviderAccessProfile.LocalNoCost,
-                "Runs locally on this PC through the LM Studio local server.");
+                "Runs locally on this PC through the LM Studio local server. OMNIX does not meter local inference.",
+                "https://lmstudio.ai/docs",
+                AccessVerifiedDate);
 
             var custom = Get("custom");
             if (custom != null)
             {
                 custom.Info.AccessProfile = ProviderAccessProfile.CustomEndpoint;
                 custom.Info.AccessNotes = "Cost, privacy, authentication and limits are defined entirely by the user-configured endpoint.";
+                custom.Info.AccessVerifiedUtc = null;
+                custom.Info.AccessVerificationUrl = null;
             }
 
             var gemini = Get("gemini");
             if (gemini != null)
-                gemini.Info.Notes = "Vision-capable Gemini provider. Models are loaded dynamically; free-tier availability depends on the Google account/region.";
+                gemini.Info.Notes = "Vision-capable Gemini provider. Models are loaded dynamically; free-tier eligibility still depends on the Google account/region and current provider policy.";
 
             var groq = Get("groq");
             if (groq != null)
@@ -114,8 +143,16 @@ namespace OMNIX.Core.AiGateway
                 openRouter.Info.Notes = "Multi-provider router. openrouter/free and :free variants are prioritized in the model list; account privacy policy can restrict routing.";
         }
 
-        private void SetMetadata(string id, string website, string docs, string apiKey, string defaultModel,
-            ProviderAccessProfile accessProfile, string accessNotes)
+        private void SetMetadata(
+            string id,
+            string website,
+            string docs,
+            string apiKey,
+            string defaultModel,
+            ProviderAccessProfile accessProfile,
+            string accessNotes,
+            string verificationUrl,
+            string verifiedUtc)
         {
             var provider = Get(id);
             if (provider == null) return;
@@ -124,6 +161,8 @@ namespace OMNIX.Core.AiGateway
             provider.Info.ApiKeyUrl = apiKey;
             provider.Info.AccessProfile = accessProfile;
             provider.Info.AccessNotes = accessNotes;
+            provider.Info.AccessVerificationUrl = verificationUrl;
+            provider.Info.AccessVerifiedUtc = verifiedUtc;
             if (!string.IsNullOrWhiteSpace(defaultModel)) provider.Info.DefaultModel = defaultModel;
         }
 
