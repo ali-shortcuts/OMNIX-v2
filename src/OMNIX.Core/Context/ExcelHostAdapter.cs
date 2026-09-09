@@ -12,9 +12,18 @@ namespace OMNIX.Core.Context
     /// <summary>
     /// Excel adapter (spec Section 3, Layer 3): Workbook, Worksheet, Selection, Values, Formulas,
     /// Named Ranges, Charts (as image for Vision). All calls assume the Office UI thread.
+    ///
+    /// Important performance invariant: context reads are bounded BEFORE COM asks Excel for Value2
+    /// or Formula arrays. Reading an entire-column / entire-sheet selection into memory and trimming
+    /// it afterward can allocate millions of cells and freeze Office, so all bulk reads first resize
+    /// to the configured context budget.
     /// </summary>
     public sealed class ExcelHostAdapter : IHostAdapter
     {
+        private const int DisplayMaxColumns = 8;
+        private const int FormulaCellCap = 60;
+        private const int CaptureCellCap = 5000;
+
         private readonly Excel.Application _app;
         private readonly Func<int> _maxCells;
         private readonly Func<int> _maxChars;
@@ -96,7 +105,10 @@ namespace OMNIX.Core.Context
                     var used = ws.UsedRange;
                     sb.AppendLine();
                     sb.AppendLine("--- Sheet '" + ws.Name + "' used range: " + used.Address[false, false] + " ---");
+                    // BuildValuesTable resizes before Value2 is requested, so a corrupted/oversized
+                    // UsedRange cannot force a full-sheet COM array allocation.
                     sb.Append(BuildValuesTable(used, 200));
+                    if (sb.Length >= Math.Min(maxChars, _maxChars())) break;
                 }
                 return TextUtil.Truncate(sb.ToString(), Math.Min(maxChars, _maxChars()));
             }
@@ -147,7 +159,8 @@ namespace OMNIX.Core.Context
 
         public byte[] CaptureCurrentViewAsImage()
         {
-            // Prefer the active chart; otherwise export the selected range via CopyPicture.
+            // Prefer the active chart. For a huge range selection, capture the visible window range
+            // instead of asking Excel/clipboard to render an entire column/sheet into one bitmap.
             try
             {
                 var chartImg = CaptureChartAsImage(null);
@@ -155,10 +168,32 @@ namespace OMNIX.Core.Context
 
                 var sel = _app.Selection as Excel.Range;
                 if (sel == null) return null;
+
+                Excel.Range captureRange = FirstArea(sel);
+                try
+                {
+                    if (Convert.ToDouble(captureRange.Cells.CountLarge) > CaptureCellCap)
+                    {
+                        var win = _app.ActiveWindow;
+                        var visible = win != null ? win.VisibleRange : null;
+                        if (visible != null)
+                        {
+                            captureRange = FirstArea(visible);
+                            Logging.Logger.Gateway("Excel Vision capture: huge selection replaced with bounded current visible range.");
+                        }
+                    }
+                }
+                catch { }
+
+                // Keep the final clipboard image bounded even on extreme zoom / unusually large windows.
+                int totalRows, totalCols, shownRows, shownCols, areaCount;
+                captureRange = CreateBoundedReadRange(
+                    captureRange, CaptureCellCap, 80,
+                    out totalRows, out totalCols, out shownRows, out shownCols, out areaCount);
+
                 return TempImageCapture.FromExporter(path =>
                 {
-                    sel.CopyPicture(Excel.XlPictureAppearance.xlScreen, Excel.XlCopyPictureFormat.xlPicture);
-                    // Paste the clipboard picture into a temporary chart sheet and export it.
+                    captureRange.CopyPicture(Excel.XlPictureAppearance.xlScreen, Excel.XlCopyPictureFormat.xlPicture);
                     var wb = _app.ActiveWorkbook;
                     Excel.Chart tempChart = (Excel.Chart)wb.Charts.Add();
                     try
@@ -212,7 +247,7 @@ namespace OMNIX.Core.Context
 
         private string BuildValuesPreview(Excel.Range sel)
         {
-            int cap = _maxCells();
+            int cap = Math.Max(1, _maxCells());
             var table = BuildValuesTable(sel, cap);
             return TextUtil.Truncate(table, _maxChars());
         }
@@ -220,20 +255,20 @@ namespace OMNIX.Core.Context
         private string BuildFormulasPreview(Excel.Range sel)
         {
             var sb = new StringBuilder();
-            int cap = Math.Min(60, _maxCells());
+            int cap = Math.Max(1, Math.Min(FormulaCellCap, _maxCells()));
             try
             {
-                if (Convert.ToInt64(sel.Cells.CountLarge) > cap)
-                {
-                    int rows = Math.Min(sel.Rows.Count, cap);
-                    var part = sel.Resize[rows, sel.Columns.Count];
-                    AppendFormulas(part, sb);
-                    sb.AppendLine("…(formulas truncated to first " + rows + " rows)");
-                }
-                else
-                {
-                    AppendFormulas(sel, sb);
-                }
+                int totalRows, totalCols, shownRows, shownCols, areaCount;
+                Excel.Range part = CreateBoundedReadRange(
+                    sel, cap, DisplayMaxColumns,
+                    out totalRows, out totalCols, out shownRows, out shownCols, out areaCount);
+
+                AppendFormulas(part, shownRows, shownCols, sb);
+                if (areaCount > 1)
+                    sb.AppendLine("…[multi-area selection: showing first area only]");
+                if (shownRows < totalRows || shownCols < totalCols)
+                    sb.AppendLine("…[formulas truncated: shown " + shownRows + "×" + shownCols +
+                                  " of " + totalRows + "×" + totalCols + "]");
             }
             catch (Exception ex)
             {
@@ -242,18 +277,23 @@ namespace OMNIX.Core.Context
             return TextUtil.Truncate(sb.ToString(), 1200);
         }
 
-        private void AppendFormulas(Excel.Range range, StringBuilder sb)
+        private static void AppendFormulas(Excel.Range range, int rows, int cols, StringBuilder sb)
         {
-            int rows = range.Rows.Count, cols = range.Columns.Count;
-            object[,] f = rows == 1 && cols == 1
-                ? new object[1, 1] { { range.Formula } }
-                : (object[,])range.Formula;
-            for (int r = 1; r <= Math.Min(rows, 60); r++)
+            object raw = range.Formula;
+            if (rows == 1 && cols == 1)
+            {
+                sb.AppendLine(raw == null ? "" : Convert.ToString(raw));
+                return;
+            }
+
+            var formulas = raw as object[,];
+            if (formulas == null) return;
+            for (int r = 1; r <= rows; r++)
             {
                 var line = new List<string>();
-                for (int c = 1; c <= Math.Min(cols, 8); c++)
+                for (int c = 1; c <= cols; c++)
                 {
-                    object v = f[r, c];
+                    object v = formulas[r, c];
                     line.Add(v == null ? "" : Convert.ToString(v));
                 }
                 sb.AppendLine(string.Join(" | ", line));
@@ -265,33 +305,88 @@ namespace OMNIX.Core.Context
             var sb = new StringBuilder();
             try
             {
-                int rows = range.Rows.Count, cols = range.Columns.Count;
-                int total = (int)Math.Min(rows * (double)cols, (double)cellCap);
-                object[,] vals;
-                if (rows == 1 && cols == 1)
-                {
-                    sb.AppendLine(range.Address[false, false] + " = " + SafeText(range.Value2));
-                    return sb.ToString();
-                }
-                vals = (object[,])range.Value2;
+                int totalRows, totalCols, shownRows, shownCols, areaCount;
+                Excel.Range part = CreateBoundedReadRange(
+                    range, Math.Max(1, cellCap), DisplayMaxColumns,
+                    out totalRows, out totalCols, out shownRows, out shownCols, out areaCount);
 
-                int rMax = Math.Min(rows, Math.Max(1, total / Math.Max(1, cols)));
-                int cMax = Math.Min(cols, 8);
-                for (int r = 1; r <= rMax; r++)
+                object raw = part.Value2;
+                if (shownRows == 1 && shownCols == 1)
                 {
-                    var line = new List<string>();
-                    for (int c = 1; c <= cMax; c++)
-                        line.Add(SafeText(vals[r, c]));
-                    sb.AppendLine(string.Join(" | ", line));
+                    sb.AppendLine(part.Address[false, false] + " = " + SafeText(raw));
                 }
-                if (rows > rMax || cols > cMax)
-                    sb.AppendLine("…[" + rows + " rows × " + cols + " cols total — shown " + rMax + "×" + cMax + "]");
+                else
+                {
+                    var vals = raw as object[,];
+                    if (vals != null)
+                    {
+                        for (int r = 1; r <= shownRows; r++)
+                        {
+                            var line = new List<string>();
+                            for (int c = 1; c <= shownCols; c++)
+                                line.Add(SafeText(vals[r, c]));
+                            sb.AppendLine(string.Join(" | ", line));
+                        }
+                    }
+                }
+
+                if (areaCount > 1)
+                    sb.AppendLine("…[multi-area selection: showing first area only]");
+                if (shownRows < totalRows || shownCols < totalCols)
+                    sb.AppendLine("…[" + totalRows + " rows × " + totalCols +
+                                  " cols in first area — shown " + shownRows + "×" + shownCols + "]");
             }
             catch (Exception ex)
             {
                 Logging.Logger.Error("startup-debug", "BuildValuesTable failed", ex);
             }
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Returns a rectangular first-area range whose cell count is within cellCap. Crucially,
+        /// callers must use the returned range for Value2/Formula access rather than reading the
+        /// original range and trimming the resulting COM array afterward.
+        /// </summary>
+        private static Excel.Range CreateBoundedReadRange(
+            Excel.Range range,
+            int cellCap,
+            int maxColumns,
+            out int totalRows,
+            out int totalCols,
+            out int shownRows,
+            out int shownCols,
+            out int areaCount)
+        {
+            if (range == null) throw new ArgumentNullException("range");
+
+            Excel.Range source = FirstArea(range);
+            areaCount = 1;
+            try { areaCount = Math.Max(1, range.Areas.Count); } catch { }
+
+            totalRows = Math.Max(1, source.Rows.Count);
+            totalCols = Math.Max(1, source.Columns.Count);
+            int safeCap = Math.Max(1, cellCap);
+            int safeMaxColumns = Math.Max(1, maxColumns);
+
+            shownCols = Math.Min(totalCols, Math.Min(safeMaxColumns, safeCap));
+            shownRows = Math.Min(totalRows, Math.Max(1, safeCap / Math.Max(1, shownCols)));
+
+            if (shownRows == totalRows && shownCols == totalCols)
+                return source;
+            return source.Resize[shownRows, shownCols];
+        }
+
+        private static Excel.Range FirstArea(Excel.Range range)
+        {
+            if (range == null) return null;
+            try
+            {
+                if (range.Areas != null && range.Areas.Count > 1)
+                    return range.Areas[1];
+            }
+            catch { }
+            return range;
         }
 
         private static string SafeText(object v)
@@ -377,7 +472,7 @@ namespace OMNIX.Core.Context
             };
         }
 
-        public static void Apply(ExcelHostAdapter adapter, string toolName, string argumentsJson)
+        public static void ApplyWrite(ExcelHostAdapter adapter, string toolName, string argumentsJson)
         {
             var args = ToolArguments.Parse(argumentsJson);
             string address = args.Get("address", args.Get("range", ""));
