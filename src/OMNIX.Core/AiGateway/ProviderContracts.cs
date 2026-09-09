@@ -48,6 +48,16 @@ namespace OMNIX.Core.AiGateway
         public string OfficialWebsiteUrl { get; set; }
         public string DocumentationUrl { get; set; }
         public string ApiKeyUrl { get; set; }
+
+        /// <summary>
+        /// UTC calendar date when OMNIX maintainers last checked AccessProfile/AccessNotes against
+        /// an official provider page. This is deliberately visible in Settings because cloud
+        /// pricing/free-tier rules can change without an OMNIX binary update.
+        /// </summary>
+        public string AccessVerifiedUtc { get; set; }
+
+        /// <summary>Official source used for the current access/free-tier classification.</summary>
+        public string AccessVerificationUrl { get; set; }
     }
 
     public interface IProviderAdapter
