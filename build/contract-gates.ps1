@@ -64,7 +64,7 @@ Require-Contains 'tools/real-office-ui-acceptance.ps1' 'WorkspaceEvidenceFound' 
 Require-Contains 'src/OMNIX.Core/Ui/Views/WorkspaceView.xaml' 'OMNIX.WorkspaceRoot' 'Workspace must expose a deterministic UI Automation identity.'
 Require-Contains 'src/OMNIX.Core/Ui/Views/ChatView.xaml' 'OMNIX.ChatInput' 'Chat input must expose a deterministic UI Automation identity.'
 Require-Contains 'tools/real-office-ui-acceptance.ps1' 'Find-UiElementByAutomationId' 'UI acceptance must use deterministic AutomationId lookup.'
-Require-Contains 'tools/real-office-ui-acceptance.ps1' "Find-UiElementByAutomationId $root 'OMNIX.ChatInput'" 'Workspace proof must target the actual chat input, not a generic OMNIX label.'
+Require-Contains 'tools/real-office-ui-acceptance.ps1' "Find-UiElementByAutomationId `$root 'OMNIX.ChatInput'" 'Workspace proof must target the actual chat input, not a generic OMNIX label.'
 Require-Contains 'tools/real-office-ui-acceptance.ps1' 'Test-UiElementVisible' 'Workspace evidence must also be visibly rendered.'
 
 # 2. Installer must preserve Office recovery/security state.
