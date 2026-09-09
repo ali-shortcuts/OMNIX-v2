@@ -13,7 +13,7 @@ function Read-Repo([string]$relative) {
         $failures.Add("Missing required file: $relative")
         return ''
     }
-    return Get-Content -LiteralPath $path -Raw
+    Get-Content -LiteralPath $path -Raw
 }
 function Need([string]$relative,[string]$needle,[string]$why) {
     $text = Read-Repo $relative
@@ -40,16 +40,18 @@ Parse-Ps $maint
 Parse-Ps $task
 
 # Supported Office detection/registration scope.
-Need $maint "@('16.0','15.0')" 'maintenance must stay within the tested Office 2013+ compatibility generations.'
+Need $maint "@('16.0','15.0')" 'maintenance detection must stay within the tested Office 2013+ compatibility generations.'
 Need $maint "Name='Excel'" 'Excel detection is required.'
 Need $maint "Name='Word'" 'Word detection is required.'
 Need $maint "Name='PowerPoint'" 'PowerPoint detection is required.'
-Need $maint 'HKCU:\Software\Microsoft\Office\$Version\$HostName\Addins\OMNIX' 'only per-user OMNIX add-in registration may be repaired.'
+Need $maint 'HKCU:\Software\Microsoft\Office\$HostName\Addins\OMNIX' 'VSTO registration must use the Microsoft-documented versionless per-user Office Addins path.'
+Need $maint 'Get-LegacyRegistrationPaths' 'old incorrect versioned OMNIX registration must be cleaned safely.'
 Need $maint "'LoadBehavior' -Value 3" 'automatic supported VSTO load registration must be repaired.'
 Need $maint "New-ItemProperty -LiteralPath `$path -Name 'Manifest'" 'registration must point at the installed signed VSTO manifest.'
 Need $maint 'OMNIX.Core.dll is missing' 'maintenance must fail closed if the installed OMNIX payload is incomplete.'
 Need $maint 'AuditOnly' 'a read-only diagnostic mode must remain available.'
-Need $maint 'never changes Trust Center' 'maintenance safety boundary must stay explicit.'
+Need $maint 'never' 'maintenance safety boundary must stay explicit.'
+Need $maint 'Trust Center' 'maintenance must explicitly state that Trust Center is untouched.'
 Need $maint 'New-Object System.Uri -ArgumentList $path' 'manifest URI construction must remain Windows PowerShell 5.1 compatible.'
 
 # No Office security/recovery manipulation or arbitrary persistence.
@@ -71,11 +73,14 @@ ForbidRegex $task '(?i)Register-ScheduledTask[^\r\n]*-Password' 'maintenance mus
 # Installer/package integration must be explicit and uninstall-clean.
 Need $package 'office-registration-maintenance.ps1' 'maintenance scanner must be packaged.'
 Need $package 'install-maintenance-task.ps1' 'maintenance task helper must be packaged.'
+Need $installer 'CanonicalRegAddinsFmt' 'installer must use the canonical versionless Office Addins path.'
+Need $installer 'Software\Microsoft\Office\%0:s\Addins\OMNIX' 'canonical per-user VSTO path must be encoded directly in installer.'
+Need $installer 'LegacyRegAddinsFmt' 'installer must remove old incorrect versioned OMNIX registration.'
 Need $installer 'InstallMaintenanceTask' 'installer must attempt transparent background maintenance registration.'
 Need $installer 'RunRegistrationMaintenance' 'installer must immediately re-scan/verify current Office hosts.'
 Need $installer 'RemoveMaintenanceTask' 'uninstall/reinstall must clean the OMNIX maintenance task.'
 Need $installer 'Rescan Office Integration' 'user needs a visible manual repair path if policy blocks the task.'
-Need $installer 'LIMITED current-user logon task' 'installer must disclose the background behavior before installation.'
+Need $installer 'current-user' 'installer must disclose current-user background maintenance scope.'
 Need $installer 'Office Resiliency state preserved unchanged' 'automatic integration may not bypass Office recovery/security state.'
 
 # Real acceptance stays compatible with Windows PowerShell 5.1 / .NET Framework.
