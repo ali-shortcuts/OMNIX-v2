@@ -3,12 +3,16 @@
 # Run this ONLY after building the exact code commit you intend to release and after running:
 #   tools/real-office-acceptance.ps1
 #   tools/real-office-ui-acceptance.ps1
+#   tools/reboot-persistence-acceptance.ps1 -Phase BeforeRestart
+#   (restart Windows normally)
+#   tools/reboot-persistence-acceptance.ps1 -Phase AfterRestart
 #   tools/provider-acceptance.ps1
 #
-# This script does not run providers or Office itself. It validates their evidence, requires the
-# three Office hosts to have passed, requires at least one local AI runtime, optionally requires
-# every built-in cloud provider + Custom to have passed, verifies the installer hash and requires
-# a real trusted Authenticode signature for a production release.
+# This script does not run providers, Office, or restart Windows itself. It validates their evidence,
+# requires all three Office hosts to auto-load OMNIX on two independent launches, requires a genuine
+# Windows restart persistence proof, requires Ribbon/workspace UI proof, requires at least one local
+# AI runtime, optionally requires every built-in cloud provider + Custom, verifies the installer hash,
+# and requires a real trusted Authenticode signature for a production release.
 #
 # Output is intentionally sanitized: it does not copy machine names, API keys, prompts, response
 # bodies, Authorization headers, or document contents into release evidence.
@@ -17,6 +21,7 @@
 param(
     [string]$OfficePersistenceReport = "$env:LOCALAPPDATA\OMNIX\logs\real-office-acceptance.json",
     [string]$OfficeUiReport = "$env:LOCALAPPDATA\OMNIX\logs\real-office-ui-acceptance.json",
+    [string]$OfficeRestartReport = "$env:LOCALAPPDATA\OMNIX\logs\real-office-restart-acceptance.json",
     [string]$ProviderReport = "$env:LOCALAPPDATA\OMNIX\logs\provider-acceptance.json",
     [Parameter(Mandatory=$true)]
     [string]$InstallerPath,
@@ -30,9 +35,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Read-JsonFile([string]$path, [string]$label) {
-    if (-not (Test-Path $path)) { throw "$label report not found: $path" }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "$label report not found: $path" }
     try {
-        return Get-Content -Raw -Path $path | ConvertFrom-Json
+        return Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
     } catch {
         throw "$label report is not valid JSON: $path — $($_.Exception.Message)"
     }
@@ -52,22 +57,51 @@ function Test-OfficePersistence($report) {
         $errors.Add('Unexpected/missing persistence TestId.')
         return $errors
     }
+
     if (-not [bool]$report.OverallPass) { $errors.Add('Office persistence OverallPass is false.') }
+    if (-not [bool]$report.RequiredHostCountPass) { $errors.Add('Office persistence did not prove all three required hosts.') }
+    if (-not [bool]$report.TwoRoundsPerHostPass) { $errors.Add('Office persistence did not prove two launches per host.') }
+    if (-not [bool]$report.AutomaticLoadEveryRoundPass) { $errors.Add('OMNIX did not auto-load on every Office launch.') }
 
     foreach ($name in @('Excel','Word','PowerPoint')) {
         $rows = @($report.Results | Where-Object { $_.Host -eq $name -and $_.Installed })
-        if ($rows.Count -lt 2) {
-            $errors.Add("$name persistence evidence must contain two installed launch rounds.")
+        if ($rows.Count -ne 2) {
+            $errors.Add("$name persistence evidence must contain exactly two installed launch rounds.")
             continue
         }
+
         foreach ($round in @(1,2)) {
             $r = @($rows | Where-Object { [int]$_.Round -eq $round }) | Select-Object -First 1
             if ($null -eq $r) { $errors.Add("$name persistence round $round is missing."); continue }
             if (-not [bool]$r.Pass) { $errors.Add("$name persistence round $round failed.") }
             if (-not [bool]$r.AddinFound) { $errors.Add("$name round ${round}: OMNIX add-in not found.") }
-            if (-not [bool]$r.FinalConnect) { $errors.Add("$name round ${round}: OMNIX Connect=False.") }
+            if (-not [bool]$r.InitialConnect) { $errors.Add("$name round ${round}: OMNIX was not already Connect=True after normal startup.") }
+            if (-not [bool]$r.AutomaticLoadPass) { $errors.Add("$name round ${round}: automatic-load proof failed.") }
+            if ([bool]$r.ForceConnectAttempted) { $errors.Add("$name round ${round}: force-connect was required; automatic persistence is not proven.") }
+
+            if ($null -eq $r.Registry -or -not [bool]$r.Registry.Found) {
+                $errors.Add("$name round ${round}: OMNIX registration not found.")
+            } else {
+                if ([int]$r.Registry.LoadBehavior -ne 3) { $errors.Add("$name round ${round}: LoadBehavior is not 3.") }
+                if ($null -eq $r.Registry.Manifest -or -not [bool]$r.Registry.Manifest.Exists) {
+                    $errors.Add("$name round ${round}: registered VSTO manifest target does not exist.")
+                }
+            }
         }
     }
+    return $errors
+}
+
+function Test-OfficeRestart($report) {
+    $errors = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $report -or $report.TestId -ne 'OFFICE-RESTART-PERSISTENCE-REAL-001') {
+        $errors.Add('Unexpected/missing Windows restart persistence TestId.')
+        return $errors
+    }
+    if (-not [bool]$report.OverallPass) { $errors.Add('Windows restart persistence OverallPass is false.') }
+    if (-not [bool]$report.BootSessionChanged) { $errors.Add('Windows boot session did not change; a real restart was not proven.') }
+    if (-not [bool]$report.PreRestartPersistencePass) { $errors.Add('Strict Office persistence failed before Windows restart.') }
+    if (-not [bool]$report.PostRestartPersistencePass) { $errors.Add('Strict Office persistence failed after Windows restart.') }
     return $errors
 }
 
@@ -84,9 +118,11 @@ function Test-OfficeUi($report) {
         if ($null -eq $r) { $errors.Add("$name UI evidence is missing or host was not installed."); continue }
         if (-not [bool]$r.Pass) { $errors.Add("$name UI acceptance failed.") }
         if (-not [bool]$r.RibbonTabFound) { $errors.Add("${name}: OMNIX Ribbon tab was not found.") }
+        if (-not [bool]$r.RibbonTabActivated) { $errors.Add("${name}: OMNIX Ribbon tab was not activated.") }
         if (-not [bool]$r.OpenWorkspaceButtonFound) { $errors.Add("${name}: Open Workspace button was not found.") }
         if (-not [bool]$r.OpenWorkspaceInvoked) { $errors.Add("${name}: Open Workspace was not invoked.") }
         if (-not [bool]$r.WorkspaceEvidenceFound) { $errors.Add("${name}: workspace UI evidence was not found.") }
+        if (-not [bool]$r.WorkspaceEvidenceVisible) { $errors.Add("${name}: workspace UI evidence was not visibly rendered.") }
     }
     return $errors
 }
@@ -140,18 +176,20 @@ function Get-ProviderSummary($report) {
 
 $officePersistence = Read-JsonFile $OfficePersistenceReport 'Office persistence'
 $officeUi = Read-JsonFile $OfficeUiReport 'Office UI'
+$officeRestart = Read-JsonFile $OfficeRestartReport 'Windows restart persistence'
 $providers = Read-JsonFile $ProviderReport 'Provider'
 
-if (-not (Test-Path $InstallerPath)) { throw "Installer not found: $InstallerPath" }
-$installer = Get-Item $InstallerPath
+if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) { throw "Installer not found: $InstallerPath" }
+$installer = Get-Item -LiteralPath $InstallerPath
 if ($installer.Length -lt 1MB) { throw "Installer is unexpectedly small ($($installer.Length) bytes)." }
 
 $failures = New-Object System.Collections.Generic.List[string]
 foreach ($e in @(Test-OfficePersistence $officePersistence)) { $failures.Add([string]$e) }
 foreach ($e in @(Test-OfficeUi $officeUi)) { $failures.Add([string]$e) }
+foreach ($e in @(Test-OfficeRestart $officeRestart)) { $failures.Add([string]$e) }
 foreach ($e in @(Test-Providers $providers ([bool]$RequireAllCloudProviders) ([bool]$RequireCustomProvider))) { $failures.Add([string]$e) }
 
-$hash = (Get-FileHash -Algorithm SHA256 -Path $InstallerPath).Hash.ToLowerInvariant()
+$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $InstallerPath).Hash.ToLowerInvariant()
 $signature = Get-AuthenticodeSignature -FilePath $InstallerPath
 $signer = $signature.SignerCertificate
 $selfSigned = $false
@@ -182,9 +220,12 @@ foreach ($name in @('Excel','Word','PowerPoint')) {
     $officeSummary += [ordered]@{
         Host = $name
         Version = if ($pRows.Count -gt 0) { [string]$pRows[0].Version } else { $null }
-        PersistenceRoundsPass = ($pRows.Count -ge 2 -and @($pRows | Where-Object { -not $_.Pass }).Count -eq 0)
-        RibbonPass = ($null -ne $uiRow -and [bool]$uiRow.RibbonTabFound)
-        WorkspacePass = ($null -ne $uiRow -and [bool]$uiRow.WorkspaceEvidenceFound)
+        PersistenceRoundsPass = ($pRows.Count -eq 2 -and @($pRows | Where-Object { -not $_.Pass }).Count -eq 0)
+        AutomaticLoadEveryRoundPass = ($pRows.Count -eq 2 -and @($pRows | Where-Object { -not $_.AutomaticLoadPass }).Count -eq 0)
+        NoForceConnectNeeded = ($pRows.Count -eq 2 -and @($pRows | Where-Object { $_.ForceConnectAttempted }).Count -eq 0)
+        RibbonPass = ($null -ne $uiRow -and [bool]$uiRow.RibbonTabFound -and [bool]$uiRow.RibbonTabActivated)
+        WorkspacePass = ($null -ne $uiRow -and [bool]$uiRow.WorkspaceEvidenceFound -and [bool]$uiRow.WorkspaceEvidenceVisible)
+        RestartPersistencePass = [bool]$officeRestart.OverallPass
     }
 }
 
@@ -192,7 +233,7 @@ $outDir = Split-Path -Parent $OutputPath
 if ($outDir) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
 
 $evidence = [ordered]@{
-    EvidenceSchema = 1
+    EvidenceSchema = 2
     TestId = 'OMNIX-RELEASE-READINESS-001'
     GeneratedUtc = (Get-Date).ToUniversalTime().ToString('o')
     SourceCommit = $sourceCommit
@@ -207,10 +248,18 @@ $evidence = [ordered]@{
         Timestamped = ($null -ne $signature.TimeStamperCertificate)
     }
     Office = $officeSummary
+    RestartPersistence = [ordered]@{
+        BootSessionChanged = [bool]$officeRestart.BootSessionChanged
+        PreRestartPersistencePass = [bool]$officeRestart.PreRestartPersistencePass
+        PostRestartPersistencePass = [bool]$officeRestart.PostRestartPersistencePass
+        OverallPass = [bool]$officeRestart.OverallPass
+    }
     Providers = Get-ProviderSummary $providers
     Requirements = [ordered]@{
         AllThreeOfficeHosts = $true
         OfficePersistenceTwoLaunches = $true
+        AutomaticLoadWithoutForceConnect = $true
+        WindowsRestartPersistence = $true
         RibbonAndWorkspaceUi = $true
         AtLeastOneLocalAi = $true
         AllBuiltInCloudProviders = [bool]$RequireAllCloudProviders
@@ -223,7 +272,7 @@ $evidence = [ordered]@{
     Privacy = 'Sanitized evidence only; no API keys, prompts, response bodies, machine names or Office document data copied.'
 }
 
-$evidence | ConvertTo-Json -Depth 10 | Set-Content -Path $OutputPath -Encoding UTF8
+$evidence | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
 $evidence | ConvertTo-Json -Depth 10
 
 if ($failures.Count -gt 0) { exit 1 }
