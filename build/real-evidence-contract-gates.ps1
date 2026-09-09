@@ -56,6 +56,31 @@ Require-Contains 'tools/real-office-acceptance.ps1' '$result.AutomaticLoadPass' 
 Require-Contains 'tools/real-office-acceptance.ps1' '$result.Registry.Manifest.Exists' 'Registered VSTO manifest target must exist.'
 Require-Contains 'tools/real-office-acceptance.ps1' '$installedHostNames.Count -eq $hosts.Count' 'Excel, Word and PowerPoint are all mandatory for final acceptance.'
 
+# Real compiled Office functional evidence across Excel, Word and PowerPoint.
+Require-PowerShellParses 'tools/office-functional-acceptance.ps1'
+Require-Contains 'tools/office-functional-acceptance.ps1' 'OFFICE-FUNCTIONAL-REAL-001' 'Functional Office evidence needs a stable TestId.'
+Require-Contains 'tools/office-functional-acceptance.ps1' 'OMNIX.Core.dll' 'Functional evidence must load the installed compiled core payload.'
+Require-Contains 'tools/office-functional-acceptance.ps1' 'ContextReadPass' 'Each Office host must prove real context extraction.'
+Require-Contains 'tools/office-functional-acceptance.ps1' 'WriteNoConfirmationBlockedPass' 'Write tools must fail closed without a confirmation callback.'
+Require-Contains 'tools/office-functional-acceptance.ps1' 'WriteDeniedBlockedPass' 'A denied preview must not modify Office content.'
+Require-Contains 'tools/office-functional-acceptance.ps1' 'WriteApprovedAppliedPass' 'An approved write must actually apply to the temporary Office document.'
+Require-Contains 'tools/office-functional-acceptance.ps1' 'PowerPointVisionCapturePass' 'Real PowerPoint slide PNG capture must be exercised.'
+Require-Contains 'tools/office-functional-acceptance.ps1' 'ProcessExitedCleanly' 'Each Office host must close without leaving an orphan process.'
+Require-NotContains 'tools/office-functional-acceptance.ps1' 'SaveAs' 'Functional acceptance must not save temporary test documents.'
+Require-NotContains 'tools/office-functional-acceptance.ps1' 'Restart-Computer' 'Functional acceptance must never restart Windows.'
+Require-NotContains 'tools/office-functional-acceptance.ps1' 'Disable-NetAdapter' 'Functional acceptance must never change network state.'
+
+# One-command real Office E2E orchestrator must bind install + persistence + UI + functional evidence.
+Require-PowerShellParses 'tools/full-office-e2e.ps1'
+Require-Contains 'tools/full-office-e2e.ps1' 'OFFICE-E2E-REAL-001' 'The full Office E2E run needs a stable TestId.'
+Require-Contains 'tools/full-office-e2e.ps1' 'real-office-acceptance.ps1' 'E2E must include strict automatic-load/persistence acceptance.'
+Require-Contains 'tools/full-office-e2e.ps1' 'real-office-ui-acceptance.ps1' 'E2E must include actual Ribbon/workspace UI acceptance.'
+Require-Contains 'tools/full-office-e2e.ps1' 'office-functional-acceptance.ps1' 'E2E must include compiled Office context/read/write/Vision acceptance.'
+Require-Contains 'tools/full-office-e2e.ps1' 'Get-FileHash -Algorithm SHA256' 'Installed E2E evidence must bind to the tested installer hash.'
+Require-NotContains 'tools/full-office-e2e.ps1' 'Restart-Computer' 'The E2E orchestrator must never restart the user machine.'
+Require-NotContains 'tools/full-office-e2e.ps1' 'shutdown.exe' 'The E2E orchestrator must never invoke shutdown/restart.'
+Require-NotContains 'tools/full-office-e2e.ps1' 'Disable-NetAdapter' 'The E2E orchestrator must never change network state.'
+
 # Real Windows restart persistence is a two-phase manual-restart gate.
 Require-PowerShellParses 'tools/reboot-persistence-acceptance.ps1'
 Require-Contains 'tools/reboot-persistence-acceptance.ps1' 'OFFICE-RESTART-PERSISTENCE-REAL-001' 'Release needs a real restart persistence artifact.'
@@ -130,5 +155,5 @@ if ($failures.Count -gt 0) {
 }
 
 Write-Host 'OMNIX REAL-EVIDENCE CONTRACT: PASS'
-Write-Host 'Structural evidence gates are intact. Deterministic gateway privacy runtime is executed in build CI; real Office/restart/provider/consumer-machine security execution remains separate.'
+Write-Host 'Structural evidence gates are intact. Deterministic gateway privacy runtime is executed in build CI; real Office E2E/restart/provider/consumer-machine security execution remains separate.'
 exit 0
