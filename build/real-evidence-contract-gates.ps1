@@ -81,8 +81,11 @@ Require-NotContains 'tools/local-offline-acceptance.ps1' 'Set-NetFirewallProfile
 Require-PowerShellParses 'tools/release-readiness.ps1'
 Require-Contains 'tools/release-readiness.ps1' 'OfficeRestartReport' 'Final readiness must consume Windows restart evidence.'
 Require-Contains 'tools/release-readiness.ps1' 'Test-OfficeRestart' 'Final readiness must validate restart evidence fail-closed.'
+Require-Contains 'tools/release-readiness.ps1' 'LocalOfflineReport' 'Final readiness must consume dedicated offline local-AI evidence.'
+Require-Contains 'tools/release-readiness.ps1' 'Test-LocalOffline' 'Final readiness must validate offline local-AI evidence fail-closed.'
 Require-Contains 'tools/release-readiness.ps1' 'AutomaticLoadWithoutForceConnect' 'Final evidence must state the automatic-load invariant.'
 Require-Contains 'tools/release-readiness.ps1' 'WindowsRestartPersistence' 'Final evidence must state restart persistence as mandatory.'
+Require-Contains 'tools/release-readiness.ps1' 'LocalAiWithInternetDisconnected' 'Final evidence must state offline local AI as mandatory.'
 Require-Contains 'tools/release-readiness.ps1' 'WorkspaceEvidenceVisible' 'Ribbon/workspace proof must require visible rendered UI.'
 Require-Contains 'tools/release-readiness.ps1' 'ProductionAuthenticode' 'Production trust must remain a distinct release requirement.'
 
