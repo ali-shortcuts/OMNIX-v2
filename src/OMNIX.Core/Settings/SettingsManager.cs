@@ -10,8 +10,8 @@ namespace OMNIX.Core.Settings
 {
     /// <summary>
     /// Layer 8 (Storage): settings + DPAPI-encrypted API keys at %LOCALAPPDATA%\OMNIX\settings.dat.
-    /// Ironclad Rule 6: API keys are never stored in plain text and never logged.
-    /// DPAPI (CurrentUser scope) ties the ciphertext to the Windows user; no password to remember.
+    /// API keys are never stored in plain text and never logged. Schema migrations preserve
+    /// explicit user choices and only replace model ids that exactly match known obsolete OMNIX defaults.
     /// </summary>
     public sealed class SettingsManager
     {
@@ -36,8 +36,6 @@ namespace OMNIX.Core.Settings
         private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("OMNIX::v1::DPAPI");
 
         private readonly string _path;
-
-        // Volatile only: plain keys live in memory for the current Windows session.
         private readonly Dictionary<string, string> _plainKeys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public OmnixSettings Settings { get; private set; }
@@ -79,6 +77,8 @@ namespace OMNIX.Core.Settings
                 }
 
                 Settings = dto.Settings;
+                bool migrated = MigrateSettingsIfNeeded();
+
                 lock (_plainKeys)
                 {
                     _plainKeys.Clear();
@@ -94,12 +94,18 @@ namespace OMNIX.Core.Settings
                             }
                             catch (Exception ex)
                             {
-                                // Possible cause: settings copied from another Windows user profile.
                                 Logger.Error("settings", "Could not unprotect API key for provider '" + kv.Key + "' — key reset.", ex);
                             }
                         }
                     }
                 }
+
+                if (migrated)
+                {
+                    Save();
+                    Logger.Startup("settings schema migrated to v" + Settings.SchemaVersion + " without replacing explicit user model choices");
+                }
+
                 Logger.Startup("settings loaded: provider=" + Settings.SelectedProviderId + " privacy=" + Settings.Privacy);
             }
             catch (Exception ex)
@@ -109,12 +115,113 @@ namespace OMNIX.Core.Settings
             }
         }
 
+        private bool MigrateSettingsIfNeeded()
+        {
+            bool changed = false;
+            if (Settings == null) return false;
+
+            if (Settings.Models == null)
+            {
+                Settings.Models = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                changed = true;
+            }
+
+            // v1 -> v2: replace only the exact cloud defaults previously shipped by OMNIX.
+            if (Settings.SchemaVersion < 2)
+            {
+                string model;
+                if (!Settings.Models.TryGetValue("gemini", out model) || string.IsNullOrWhiteSpace(model) ||
+                    string.Equals(model, "gemini-2.0-flash", StringComparison.OrdinalIgnoreCase))
+                    Settings.Models["gemini"] = "gemini-3.6-flash";
+
+                if (!Settings.Models.TryGetValue("groq", out model) || string.IsNullOrWhiteSpace(model) ||
+                    string.Equals(model, "llama-3.3-70b-versatile", StringComparison.OrdinalIgnoreCase))
+                    Settings.Models["groq"] = "openai/gpt-oss-120b";
+
+                if (!Settings.Models.ContainsKey("openrouter") || string.IsNullOrWhiteSpace(Settings.Models["openrouter"]))
+                    Settings.Models["openrouter"] = "openrouter/auto";
+
+                EnsureCommonDefaults();
+                Settings.SchemaVersion = 2;
+                changed = true;
+            }
+
+            // v2 -> v3: add researched cloud providers and update OMNIX-owned old defaults only.
+            if (Settings.SchemaVersion < 3)
+            {
+                string model;
+                if (!Settings.Models.TryGetValue("gemini", out model) || string.IsNullOrWhiteSpace(model) ||
+                    string.Equals(model, "gemini-3.6-flash", StringComparison.OrdinalIgnoreCase))
+                    Settings.Models["gemini"] = "gemini-3.8-flash";
+
+                if (!Settings.Models.TryGetValue("openrouter", out model) || string.IsNullOrWhiteSpace(model) ||
+                    string.Equals(model, "openrouter/auto", StringComparison.OrdinalIgnoreCase))
+                    Settings.Models["openrouter"] = "openrouter/free";
+
+                if (!Settings.Models.ContainsKey("mistral"))
+                    Settings.Models["mistral"] = "mistral-small-latest";
+                if (!Settings.Models.ContainsKey("cerebras"))
+                    Settings.Models["cerebras"] = "gpt-oss-120b";
+
+                EnsureCommonDefaults();
+                Settings.SchemaVersion = 3;
+                changed = true;
+            }
+
+            // v3 -> v4: add Hugging Face Inference Providers. Existing users keep every prior
+            // provider/model/API-key choice; this migration only introduces the new model slot.
+            if (Settings.SchemaVersion < 4)
+            {
+                if (!Settings.Models.ContainsKey("huggingface") ||
+                    string.IsNullOrWhiteSpace(Settings.Models["huggingface"]))
+                    Settings.Models["huggingface"] = "openai/gpt-oss-120b:fastest";
+
+                EnsureCommonDefaults();
+                Settings.SchemaVersion = 4;
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private void EnsureCommonDefaults()
+        {
+            if (!Settings.Models.ContainsKey("gemini")) Settings.Models["gemini"] = "gemini-3.8-flash";
+            if (!Settings.Models.ContainsKey("groq")) Settings.Models["groq"] = "openai/gpt-oss-120b";
+            if (!Settings.Models.ContainsKey("openrouter")) Settings.Models["openrouter"] = "openrouter/free";
+            if (!Settings.Models.ContainsKey("mistral")) Settings.Models["mistral"] = "mistral-small-latest";
+            if (!Settings.Models.ContainsKey("huggingface")) Settings.Models["huggingface"] = "openai/gpt-oss-120b:fastest";
+            if (!Settings.Models.ContainsKey("cerebras")) Settings.Models["cerebras"] = "gpt-oss-120b";
+            if (!Settings.Models.ContainsKey("ollama")) Settings.Models["ollama"] = "";
+            if (!Settings.Models.ContainsKey("lmstudio")) Settings.Models["lmstudio"] = "";
+            if (!Settings.Models.ContainsKey("custom")) Settings.Models["custom"] = "gpt-4o-mini";
+
+            if (string.IsNullOrWhiteSpace(Settings.PreferredLocalProviderId)) Settings.PreferredLocalProviderId = "ollama";
+            if (string.IsNullOrWhiteSpace(Settings.SelectedProviderId)) Settings.SelectedProviderId = "gemini";
+            if (string.IsNullOrWhiteSpace(Settings.UiLanguage)) Settings.UiLanguage = "en";
+
+            if (Settings.CustomProvider == null)
+            {
+                Settings.CustomProvider = new CustomProviderConfig
+                {
+                    Name = "My Endpoint",
+                    BaseUrl = "http://localhost:8080/v1",
+                    Model = "gpt-4o-mini"
+                };
+            }
+
+            if (Settings.HistoryMaxMessages <= 0) Settings.HistoryMaxMessages = 500;
+            if (Settings.HistoryMaxAgeDays <= 0) Settings.HistoryMaxAgeDays = 30;
+            if (Settings.ContextMaxCells <= 0) Settings.ContextMaxCells = 2000;
+            if (Settings.ContextMaxChars <= 0) Settings.ContextMaxChars = 6000;
+            if (Settings.ContextMaxTokens <= 0) Settings.ContextMaxTokens = 3000;
+        }
+
         public void Save()
         {
             try
             {
-                var dto = new SettingsDto();
-                dto.Settings = Settings;
+                var dto = new SettingsDto { Settings = Settings };
 
                 lock (_plainKeys)
                 {
@@ -140,7 +247,6 @@ namespace OMNIX.Core.Settings
             }
         }
 
-        /// <summary>Returns the plain API key for a provider (in-memory only; never log it).</summary>
         public string GetApiKey(string providerId)
         {
             if (string.IsNullOrEmpty(providerId)) return null;

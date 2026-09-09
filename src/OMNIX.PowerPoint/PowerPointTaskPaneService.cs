@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Windows.Forms;
 using Ppt = Microsoft.Office.Interop.PowerPoint;
 using Microsoft.Office.Tools;
 using OMNIX.Core.Context;
@@ -10,8 +9,8 @@ using OMNIX.Core.Ui;
 namespace OMNIX.PowerPoint
 {
     /// <summary>
-    /// Per-window task pane management for PowerPoint (spec Section 5). Every presentation
-    /// window gets its own pane/chat. Docked right, 360px default, width-clamped.
+    /// Per-window task pane management for PowerPoint. Every presentation window gets
+    /// its own pane/chat/context/provider state, docked right at a compact default width.
     /// </summary>
     public sealed class PowerPointTaskPaneService
     {
@@ -23,6 +22,7 @@ namespace OMNIX.PowerPoint
         private readonly Dictionary<int, CustomTaskPane> _panes = new Dictionary<int, CustomTaskPane>();
         private readonly Dictionary<int, WorkspaceController> _controllers = new Dictionary<int, WorkspaceController>();
         private bool _clamping;
+        private bool _disposed;
 
         public PowerPointTaskPaneService(ThisAddIn addIn, IHostAdapter adapter)
         {
@@ -32,6 +32,7 @@ namespace OMNIX.PowerPoint
 
         public void AttachEvents()
         {
+            if (_disposed) return;
             _addIn.Application.WindowActivate += OnWindowActivate;
             _addIn.Application.WindowSelectionChange += OnWindowSelectionChange;
             Logger.Startup("PowerPointTaskPaneService events attached");
@@ -82,13 +83,15 @@ namespace OMNIX.PowerPoint
 
         private CustomTaskPane EnsurePane(int key)
         {
+            if (_disposed || key == 0) return null;
+
             CustomTaskPane pane;
             if (_panes.TryGetValue(key, out pane) && pane != null) return pane;
 
             object window = _addIn.Application.ActiveWindow;
             if (window == null) return null;
 
-            var controller = new WorkspaceController(_adapter, ThisAddIn.SharedGateway, ThisAddIn.SharedHistory);
+            var controller = new WorkspaceController(_adapter, ThisAddIn.SharedHistory);
             _controllers[key] = controller;
 
             var hostControl = new TaskPaneHostControl(controller.View);
@@ -96,8 +99,6 @@ namespace OMNIX.PowerPoint
             pane.DockPosition = Microsoft.Office.Core.MsoCTPDockPosition.msoCTPDockPositionRight;
             try { pane.Width = DefaultWidth; } catch { }
             pane.VisibleChanged += OnPaneVisibleChanged;
-            // NOTE: Microsoft.Office.Tools.CustomTaskPane has no WidthChanged event in this VSTO runtime version;
-            // max-width clamping is disabled for now (non-critical UX nicety, not a spec requirement). OnPaneWidthChanged left as dead code for future re-wiring (e.g. a timer-based poll) if needed.
             _panes[key] = pane;
             Logger.Startup("PowerPoint task pane created for window " + key);
             return pane;
@@ -113,7 +114,6 @@ namespace OMNIX.PowerPoint
                 {
                     _clamping = true;
                     pane.Width = MaxWidth;
-                    _clamping = false;
                 }
             }
             catch { }
@@ -132,6 +132,7 @@ namespace OMNIX.PowerPoint
                         WorkspaceController controller;
                         if (_controllers.TryGetValue(kv.Key, out controller))
                             controller.OnPaneClosing();
+                        break;
                     }
                 }
             }
@@ -139,7 +140,9 @@ namespace OMNIX.PowerPoint
 
         public void ToggleActive()
         {
+            if (_disposed) return;
             int key = KeyOf(_addIn.Application.ActiveWindow);
+            if (key == 0) return;
             CustomTaskPane pane = EnsurePane(key);
             if (pane == null) return;
             pane.Visible = !pane.Visible;
@@ -147,6 +150,7 @@ namespace OMNIX.PowerPoint
 
         public void ShowSettings()
         {
+            if (_disposed) return;
             int key = KeyOf(_addIn.Application.ActiveWindow);
             CustomTaskPane pane = EnsurePane(key);
             if (pane == null) return;
@@ -154,6 +158,27 @@ namespace OMNIX.PowerPoint
             WorkspaceController controller;
             if (_controllers.TryGetValue(key, out controller))
                 controller.View.ShowSettingsTab();
+        }
+
+        public void DisposeAll()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            foreach (var controller in _controllers.Values)
+            {
+                try { if (controller != null) controller.Dispose(); } catch { }
+            }
+            _controllers.Clear();
+
+            foreach (var pane in _panes.Values)
+            {
+                if (pane == null) continue;
+                try { pane.VisibleChanged -= OnPaneVisibleChanged; } catch { }
+                try { _addIn.CustomTaskPanes.Remove(pane); } catch { }
+            }
+            _panes.Clear();
+            Logger.Startup("PowerPointTaskPaneService disposed all panes/controllers");
         }
     }
 }

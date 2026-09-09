@@ -16,7 +16,6 @@
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <!-- Office PIAs are marked x86; AnyCPU referencing them is intentional -->
     <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>None</ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
-    <!-- Standard PIA install location of the Visual Studio "Office development" tools (present on local VS and on GitHub windows-latest runners) -->
     <VSTOPIAPath Condition="'$(VSTOPIAPath)'==''">C:\Program Files (x86)\Microsoft Visual Studio\Shared\Visual Studio Tools for Office\PIA\Office15</VSTOPIAPath>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
@@ -54,7 +53,6 @@
       <HintPath>..\..\packages\Newtonsoft.Json.13.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <!-- Office 2013+ PIAs (work on Office 2013..365). Present with the VS "Office development" tools. -->
     <Reference Include="Microsoft.Office.Interop.Excel, Version=15.0.0.0, Culture=neutral, PublicKeyToken=71E9BCE111E9429C">
       <HintPath>$(VSTOPIAPath)\Microsoft.Office.Interop.Excel.dll</HintPath>
       <Private>False</Private>
@@ -82,10 +80,13 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AiGateway\Adapters\CerebrasAdapter.cs" />
     <Compile Include="AiGateway\Adapters\CustomOpenAiCompatibleAdapter.cs" />
     <Compile Include="AiGateway\Adapters\GeminiAdapter.cs" />
     <Compile Include="AiGateway\Adapters\GroqAdapter.cs" />
+    <Compile Include="AiGateway\Adapters\HuggingFaceAdapter.cs" />
     <Compile Include="AiGateway\Adapters\LmStudioAdapter.cs" />
+    <Compile Include="AiGateway\Adapters\MistralAdapter.cs" />
     <Compile Include="AiGateway\Adapters\OllamaAdapter.cs" />
     <Compile Include="AiGateway\Adapters\OpenRouterAdapter.cs" />
     <Compile Include="AiGateway\AiGateway.cs" />
@@ -118,54 +119,22 @@
     <Compile Include="Ui\Dialogs\OmnixDialogs.cs" />
     <Compile Include="Ui\Markdown\MarkdownRenderer.cs" />
     <Compile Include="Ui\TaskPaneHostControl.cs" />
-    <Compile Include="Ui\Views\AboutView.xaml.cs">
-      <DependentUpon>AboutView.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Ui\Views\ChatView.xaml.cs">
-      <DependentUpon>ChatView.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Ui\Views\SettingsView.xaml.cs">
-      <DependentUpon>SettingsView.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Ui\Views\WorkspaceView.xaml.cs">
-      <DependentUpon>WorkspaceView.xaml</DependentUpon>
-    </Compile>
+    <Compile Include="Ui\Views\AboutView.xaml.cs"><DependentUpon>AboutView.xaml</DependentUpon></Compile>
+    <Compile Include="Ui\Views\ChatView.xaml.cs"><DependentUpon>ChatView.xaml</DependentUpon></Compile>
+    <Compile Include="Ui\Views\SettingsView.xaml.cs"><DependentUpon>SettingsView.xaml</DependentUpon></Compile>
+    <Compile Include="Ui\Views\WorkspaceView.xaml.cs"><DependentUpon>WorkspaceView.xaml</DependentUpon></Compile>
     <Compile Include="Ui\WorkspaceController.cs" />
     <Compile Include="Util\Utils.cs" />
   </ItemGroup>
   <ItemGroup>
-    <Page Include="Localization\Strings.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Theming\Themes\Dark.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Theming\Themes\Light.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Ui\Views\AboutView.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Ui\Views\ChatView.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Ui\Views\SettingsView.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Ui\Views\WorkspaceView.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Ui\Resources\Icons.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
+    <Page Include="Localization\Strings.xaml"><SubType>Designer</SubType><Generator>MSBuild:Compile</Generator></Page>
+    <Page Include="Theming\Themes\Dark.xaml"><SubType>Designer</SubType><Generator>MSBuild:Compile</Generator></Page>
+    <Page Include="Theming\Themes\Light.xaml"><SubType>Designer</SubType><Generator>MSBuild:Compile</Generator></Page>
+    <Page Include="Ui\Views\AboutView.xaml"><SubType>Designer</SubType><Generator>MSBuild:Compile</Generator></Page>
+    <Page Include="Ui\Views\ChatView.xaml"><SubType>Designer</SubType><Generator>MSBuild:Compile</Generator></Page>
+    <Page Include="Ui\Views\SettingsView.xaml"><SubType>Designer</SubType><Generator>MSBuild:Compile</Generator></Page>
+    <Page Include="Ui\Views\WorkspaceView.xaml"><SubType>Designer</SubType><Generator>MSBuild:Compile</Generator></Page>
+    <Page Include="Ui\Resources\Icons.xaml"><SubType>Designer</SubType><Generator>MSBuild:Compile</Generator></Page>
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

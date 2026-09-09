@@ -6,6 +6,8 @@
              xmlns:local="clr-namespace:OMNIX.Core.Ui"
              mc:Ignorable="d"
              d:DesignWidth="360" d:DesignHeight="640"
+             AutomationProperties.AutomationId="OMNIX.WorkspaceRoot"
+             AutomationProperties.Name="OMNIX Workspace"
              Background="{DynamicResource B.Background}"
              KeyboardNavigation.TabNavigation="Cycle">
 

@@ -79,7 +79,9 @@
       <Private>False</Private>
       <EmbedInteropTypes>False</EmbedInteropTypes>
     </Reference>
-    <!-- VSTO runtime tool assemblies (installed into the GAC by the VSTO SDK / runtime) -->
+    <!-- VSTO runtime tool assemblies shared by application-level add-ins. PowerPoint does not
+         ship a Microsoft.Office.Tools.PowerPoint host assembly analogous to the Excel/Word
+         host-specific VSTO assemblies, so do not add that unresolved reference. -->
     <Reference Include="Microsoft.Office.Tools.v4.0.Framework, Version=10.0.0.0, Culture=neutral, PublicKeyToken=B03F5F7F11D50A3A, processorArchitecture=MSIL" />
     <Reference Include="Microsoft.VisualStudio.Tools.Applications.Runtime, Version=10.0.0.0, Culture=neutral, PublicKeyToken=B03F5F7F11D50A3A, processorArchitecture=MSIL" />
     <Reference Include="Microsoft.Office.Tools, Version=10.0.0.0, Culture=neutral, PublicKeyToken=B03F5F7F11D50A3A, processorArchitecture=MSIL" />
@@ -87,7 +89,6 @@
     <Reference Include="Microsoft.Office.Tools.Common.v4.0.Utilities, Version=10.0.0.0, Culture=neutral, PublicKeyToken=B03F5F7F11D50A3A, processorArchitecture=MSIL">
       <Private>True</Private>
     </Reference>
-    <Reference Include="Microsoft.Office.Tools.PowerPoint, Version=10.0.0.0, Culture=neutral, PublicKeyToken=B03F5F7F11D50A3A, processorArchitecture=MSIL" />
     <!-- WPF bridge (ElementHost) -->
     <Reference Include="WindowsBase" />
     <Reference Include="PresentationCore" />

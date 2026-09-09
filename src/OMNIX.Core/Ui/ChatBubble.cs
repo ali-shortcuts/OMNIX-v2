@@ -13,6 +13,10 @@ namespace OMNIX.Core.Ui
     /// One chat message (spec Section 5): user and AI bubbles with different colors and
     /// alignment; AI answers are rendered as Markdown (real tables, highlighted code blocks,
     /// monospace Excel formulas). Streaming appends text into the existing bubble.
+    ///
+    /// Deterministic UI Automation IDs are deliberately exposed on the bubble and message body.
+    /// Real Office acceptance can therefore prove that a provider response actually reached the
+    /// rendered OMNIX workspace instead of mistaking the Ribbon/task-pane shell for a chat PASS.
     /// </summary>
     public sealed class ChatBubble : Border
     {
@@ -27,6 +31,12 @@ namespace OMNIX.Core.Ui
         public ChatBubble(ChatTurn turn)
         {
             IsUser = turn.Role == ChatRole.User;
+
+            System.Windows.Automation.AutomationProperties.SetAutomationId(
+                this, IsUser ? "OMNIX.UserBubble" : "OMNIX.AssistantBubble");
+            System.Windows.Automation.AutomationProperties.SetName(
+                this, IsUser ? "OMNIX user message" : "OMNIX assistant message");
+
             CornerRadius = new CornerRadius(10);
             Padding = new Thickness(8, 6, 8, 6);
             Margin = new Thickness(IsUser ? 28 : 4, 3, IsUser ? 4 : 28, 3);
@@ -52,6 +62,8 @@ namespace OMNIX.Core.Ui
                 Opacity = 0.8,
                 Margin = new Thickness(0, 0, 0, 2)
             };
+            System.Windows.Automation.AutomationProperties.SetAutomationId(
+                _header, IsUser ? "OMNIX.UserMessageHeader" : "OMNIX.AssistantMessageHeader");
             _header.Text = (IsUser ? Localization.Strings.T("S.Chat.You") : Localization.Strings.T("S.Chat.Assistant"))
                            + "  ·  " + turn.TimestampUtc.ToLocalTime().ToString("HH:mm");
             stack.Children.Add(_header);
@@ -77,6 +89,11 @@ namespace OMNIX.Core.Ui
                 VerticalContentAlignment = VerticalAlignment.Top,
                 Cursor = Cursors.IBeam
             };
+            System.Windows.Automation.AutomationProperties.SetAutomationId(
+                _body, IsUser ? "OMNIX.UserMessageBody" : "OMNIX.AssistantMessageBody");
+            System.Windows.Automation.AutomationProperties.SetName(
+                _body, IsUser ? "OMNIX user message body" : "OMNIX assistant message body");
+
             // Width-adaptive wrapping inside the narrow pane (no horizontal scrolling).
             _body.Document.PageWidth = double.NaN;
             _body.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
@@ -91,6 +108,8 @@ namespace OMNIX.Core.Ui
                 Stretch = Stretch.Uniform,
                 Visibility = Visibility.Collapsed
             };
+            System.Windows.Automation.AutomationProperties.SetAutomationId(
+                _image, IsUser ? "OMNIX.UserMessageImage" : "OMNIX.AssistantMessageImage");
             stack.Children.Add(_image);
 
             Child = stack;

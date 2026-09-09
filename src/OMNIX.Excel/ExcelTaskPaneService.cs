@@ -12,13 +12,11 @@ namespace OMNIX.Excel
     /// <summary>
     /// Per-window task pane management for Excel (spec Section 5):
     /// every open workbook window gets its OWN pane + its own chat/context.
-    /// Docked RIGHT (msoCTPDockPositionRight), default width 360px, user-resizable,
-    /// width-clamped so the pane never covers the whole document area.
+    /// Docked RIGHT (msoCTPDockPositionRight), default width 360px, user-resizable.
     /// </summary>
     public sealed class ExcelTaskPaneService
     {
         private const int DefaultWidth = 360;
-        private const int MinWidth = 260;
         private const int MaxWidth = 640;
 
         private readonly ThisAddIn _addIn;
@@ -26,6 +24,7 @@ namespace OMNIX.Excel
         private readonly Dictionary<IntPtr, CustomTaskPane> _panes = new Dictionary<IntPtr, CustomTaskPane>();
         private readonly Dictionary<IntPtr, WorkspaceController> _controllers = new Dictionary<IntPtr, WorkspaceController>();
         private bool _clamping;
+        private bool _disposed;
 
         public ExcelTaskPaneService(ThisAddIn addIn, IHostAdapter adapter)
         {
@@ -35,6 +34,7 @@ namespace OMNIX.Excel
 
         public void AttachEvents()
         {
+            if (_disposed) return;
             _addIn.Application.WindowActivate += OnWindowActivate;
             _addIn.Application.WindowDeactivate += OnWindowDeactivate;
             _addIn.Application.SheetSelectionChange += OnSheetSelectionChange;
@@ -65,8 +65,9 @@ namespace OMNIX.Excel
             try
             {
                 IntPtr key = KeyOf(wn);
-                var controller = GetOrCreateController(key);
-                if (controller != null) controller.RefreshContextBar();
+                WorkspaceController controller;
+                if (_controllers.TryGetValue(key, out controller) && controller != null)
+                    controller.RefreshContextBar();
             }
             catch (Exception ex)
             {
@@ -90,25 +91,22 @@ namespace OMNIX.Excel
 
         private void OnWorkbookBeforeClose(XL.Workbook wb, ref bool cancel)
         {
-            // Pane cleanup happens through window teardown; nothing forced here.
-        }
-
-        private WorkspaceController GetOrCreateController(IntPtr key)
-        {
-            WorkspaceController controller;
-            if (_controllers.TryGetValue(key, out controller)) return controller;
-            return null;
+            // Excel may still cancel the close after this event handler returns, so we do not
+            // remove window-bound panes here. VSTO tears the pane down with the window; our
+            // own remaining controller references are deterministically released at add-in shutdown.
         }
 
         private CustomTaskPane EnsurePane(IntPtr key)
         {
+            if (_disposed || key == IntPtr.Zero) return null;
+
             CustomTaskPane pane;
             if (_panes.TryGetValue(key, out pane) && pane != null) return pane;
 
             object window = ActiveWindowObject();
             if (window == null) return null;
 
-            var controller = new WorkspaceController(_adapter, ThisAddIn.SharedGateway, ThisAddIn.SharedHistory);
+            var controller = new WorkspaceController(_adapter, ThisAddIn.SharedHistory);
             _controllers[key] = controller;
 
             var hostControl = new TaskPaneHostControl(controller.View);
@@ -116,11 +114,9 @@ namespace OMNIX.Excel
             pane.DockPosition = Microsoft.Office.Core.MsoCTPDockPosition.msoCTPDockPositionRight;
             try { pane.Width = DefaultWidth; } catch { }
             pane.VisibleChanged += OnPaneVisibleChanged;
-            // NOTE: Microsoft.Office.Tools.CustomTaskPane has no WidthChanged event in this VSTO runtime version;
-            // max-width clamping is disabled for now (non-critical UX nicety, not a spec requirement). OnPaneWidthChanged left as dead code for future re-wiring (e.g. a timer-based poll) if needed.
             _panes[key] = pane;
 
-            Logger.Startup("Task pane created for window " + key + " (width " + DefaultWidth + ", docked right)");
+            Logger.Startup("Excel task pane created for window " + key + " (width " + DefaultWidth + ", docked right)");
             return pane;
         }
 
@@ -141,7 +137,6 @@ namespace OMNIX.Excel
                 {
                     _clamping = true;
                     pane.Width = MaxWidth;
-                    _clamping = false;
                 }
             }
             catch { }
@@ -153,7 +148,6 @@ namespace OMNIX.Excel
             var pane = sender as CustomTaskPane;
             if (pane != null && !pane.Visible)
             {
-                // User closed the pane with the X — cancel any streaming request for this window.
                 foreach (var kv in _panes)
                 {
                     if (ReferenceEquals(kv.Value, pane))
@@ -161,6 +155,7 @@ namespace OMNIX.Excel
                         WorkspaceController controller;
                         if (_controllers.TryGetValue(kv.Key, out controller))
                             controller.OnPaneClosing();
+                        break;
                     }
                 }
             }
@@ -168,6 +163,7 @@ namespace OMNIX.Excel
 
         public void ToggleActive()
         {
+            if (_disposed) return;
             IntPtr key = KeyOf(_addIn.Application.ActiveWindow);
             if (key == IntPtr.Zero) return;
             CustomTaskPane pane = EnsurePane(key);
@@ -177,6 +173,7 @@ namespace OMNIX.Excel
 
         public void ShowSettings()
         {
+            if (_disposed) return;
             IntPtr key = KeyOf(_addIn.Application.ActiveWindow);
             CustomTaskPane pane = EnsurePane(key);
             if (pane == null) return;
@@ -184,6 +181,27 @@ namespace OMNIX.Excel
             WorkspaceController controller;
             if (_controllers.TryGetValue(key, out controller))
                 controller.View.ShowSettingsTab();
+        }
+
+        public void DisposeAll()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            foreach (var controller in _controllers.Values)
+            {
+                try { if (controller != null) controller.Dispose(); } catch { }
+            }
+            _controllers.Clear();
+
+            foreach (var pane in _panes.Values)
+            {
+                if (pane == null) continue;
+                try { pane.VisibleChanged -= OnPaneVisibleChanged; } catch { }
+                try { _addIn.CustomTaskPanes.Remove(pane); } catch { }
+            }
+            _panes.Clear();
+            Logger.Startup("ExcelTaskPaneService disposed all panes/controllers");
         }
     }
 }

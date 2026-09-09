@@ -25,7 +25,13 @@ namespace OMNIX.Core.Errors
     }
 
     /// <summary>
-    /// Categorized error: code + friendly message + technical details + suggested fix + log entry.
+    /// Categorized error: code + friendly message + technical details + suggested fix.
+    ///
+    /// SECURITY/PRIVACY INVARIANT: the constructor never writes TechnicalDetails to disk. Some
+    /// internal callers legitimately include local paths/host state in those details and provider
+    /// transports may inspect untrusted response bodies while classifying an error. Automatic log
+    /// output therefore records only the stable category/friendly message. Callers that need a
+    /// richer diagnostic log must construct a separate, explicitly sanitized summary.
     /// </summary>
     public class OmnixException : Exception
     {
@@ -39,7 +45,7 @@ namespace OMNIX.Core.Errors
             Code = code;
             TechnicalDetails = technicalDetails ?? string.Empty;
             SuggestedFix = suggestedFix ?? string.Empty;
-            Logging.Logger.Gateway("OmnixException " + code + ": " + friendlyMessage + " | " + TechnicalDetails);
+            Logging.Logger.Gateway("OmnixException category=" + code + "; message=" + SafeLogText(friendlyMessage, 240));
         }
 
         public static OmnixException Network(string details)
@@ -71,10 +77,31 @@ namespace OMNIX.Core.Errors
             return new OmnixException(ErrorCode.PROVIDER_ERROR, Strings.T("Err.Provider"),
                 details, Strings.T("Err.ProviderFix"));
         }
+
+        public static OmnixException PrivacyBlocked(string details)
+        {
+            return new OmnixException(ErrorCode.PRIVACY_BLOCKED, Strings.T("Err.ProviderPrivacy"),
+                details, Strings.T("Err.ProviderPrivacyFix"));
+        }
+
+        private static string SafeLogText(string value, int maxChars)
+        {
+            if (string.IsNullOrEmpty(value)) return string.Empty;
+            var sb = new StringBuilder(Math.Min(value.Length, maxChars));
+            for (int i = 0; i < value.Length && sb.Length < maxChars; i++)
+            {
+                char c = value[i];
+                if (c == '\r' || c == '\n' || c == '\t') sb.Append(' ');
+                else if (!char.IsControl(c)) sb.Append(c);
+            }
+            return sb.ToString();
+        }
     }
 
     /// <summary>
-    /// Formats and displays a categorized error to the user.
+    /// Formats a categorized error for the local user. TechnicalDetails are intentionally shown
+    /// only in the user's own UI; provider HTTP mapping must already redact response bodies before
+    /// they reach this layer. Nothing here writes TechnicalDetails to a log.
     /// </summary>
     public static class ErrorPresenter
     {

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -14,13 +15,18 @@ using OMNIX.Core.Storage;
 namespace OMNIX.Core.AiGateway.Adapters
 {
     /// <summary>
-    /// Gemini adapter — full Vision support (image + text), free daily tier.
-    /// Endpoint: POST /v1beta/models/{model}:streamGenerateContent?alt=sse (SSE streaming).
-    /// API key travels in the x-goog-api-key header (never in URLs that get logged).
+    /// Gemini adapter — multimodal Gemini models (image + text).
+    /// Endpoint: POST /v1beta/models/{model}:streamGenerateContent?alt=sse.
+    /// API key travels in x-goog-api-key (never a logged query string). Request history plus
+    /// responses/model catalogs are bounded before full materialization to protect Office hosts.
     /// </summary>
     public sealed class GeminiAdapter : IProviderAdapter
     {
         private const string Base = "https://generativelanguage.googleapis.com/v1beta";
+        private const int MaxAssistantChars = 2 * 1024 * 1024;
+        private const int MaxJsonBodyBytes = 8 * 1024 * 1024;
+        private const int MaxImageBytes = 20 * 1024 * 1024;
+        private const int MaxModels = 5000;
 
         private ProviderCredentials _creds;
 
@@ -34,17 +40,17 @@ namespace OMNIX.Core.AiGateway.Adapters
                 DisplayName = "Google Gemini",
                 Kind = ProviderKind.Cloud,
                 Vision = VisionSupport.Yes,
-                DefaultModel = "gemini-2.0-flash",
+                DefaultModel = "gemini-3.8-flash",
                 RequiresApiKey = true,
-                Notes = "Full Vision support. Free daily quota available."
+                Notes = "Multimodal Gemini provider. Current access/price metadata is maintained in ProviderRegistry."
             };
         }
 
-        public void Configure(ProviderCredentials credentials) { _creds = credentials; }
+        public void Configure(ProviderCredentials credentials) { _creds = credentials ?? new ProviderCredentials(); }
 
         private string Model
         {
-            get { return string.IsNullOrEmpty(_creds.Model) ? Info.DefaultModel : _creds.Model; }
+            get { return _creds == null || string.IsNullOrEmpty(_creds.Model) ? Info.DefaultModel : _creds.Model; }
         }
 
         private static JObject BuildPart(ChatTurn turn)
@@ -54,8 +60,10 @@ namespace OMNIX.Core.AiGateway.Adapters
                 parts.Add(new JObject { { "text", turn.Text } });
             if (turn.HasImages)
             {
-                foreach (var img in turn.Images)
+                foreach (var img in turn.Images.Where(i => i != null && i.PngBytes != null && i.PngBytes.Length > 0))
                 {
+                    if (img.PngBytes.Length > MaxImageBytes)
+                        throw OmnixException.Model("Image attachment exceeds the 20 MB OMNIX safety limit.");
                     parts.Add(new JObject
                     {
                         { "inline_data", new JObject { { "mime_type", "image/png" },
@@ -68,6 +76,8 @@ namespace OMNIX.Core.AiGateway.Adapters
 
         public string BuildPayload(ChatRequest request, bool stream)
         {
+            request = ChatRequestBudgeter.Apply(request);
+
             var contents = new JArray();
             if (request.History != null)
                 foreach (var t in request.History)
@@ -107,44 +117,53 @@ namespace OMNIX.Core.AiGateway.Adapters
                 {
                     req.Headers.TryAddWithoutValidation("x-goog-api-key", _creds.ApiKey);
                     req.Content = new StringContent(BuildPayload(request, onDelta != null), Encoding.UTF8, "application/json");
-                    var response = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-
-                    if (!response.IsSuccessStatusCode)
+                    using (var response = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
                     {
-                        string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
-                        throw HttpStatusMapper.Map((int)response.StatusCode, err, "Gemini");
-                    }
-
-                    var sb = new StringBuilder();
-                    if (onDelta == null)
-                    {
-                        string full = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                        var root = JObject.Parse(full);
-                        foreach (var part in root.SelectTokens("candidates[0].content.parts[*]"))
-                            sb.Append((string)part["text"]);
-                    }
-                    else
-                    {
-                        using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                        if (!response.IsSuccessStatusCode)
                         {
-                            foreach (string data in SseLineReader.ReadDataLines(stream, ct))
+                            string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
+                            throw HttpStatusMapper.Map((int)response.StatusCode, err, "Gemini");
+                        }
+
+                        var sb = new StringBuilder();
+                        if (onDelta == null)
+                        {
+                            string full = await ReadBodyBoundedAsync(response.Content, MaxJsonBodyBytes, ct).ConfigureAwait(false);
+                            var root = JObject.Parse(full);
+                            foreach (var part in root.SelectTokens("candidates[0].content.parts[*]"))
                             {
-                                JObject chunk;
-                                try { chunk = JObject.Parse(data); }
-                                catch { continue; }
-                                foreach (var part in chunk.SelectTokens("candidates[0].content.parts[*]"))
+                                string text = (string)part["text"];
+                                if (string.IsNullOrEmpty(text)) continue;
+                                if (sb.Length + text.Length > MaxAssistantChars)
+                                    throw OmnixException.Provider("Gemini returned an over-sized assistant response.");
+                                sb.Append(text);
+                            }
+                        }
+                        else
+                        {
+                            using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                            {
+                                foreach (string data in SseLineReader.ReadDataLines(stream, ct))
                                 {
-                                    string delta = (string)part["text"];
-                                    if (!string.IsNullOrEmpty(delta))
+                                    JObject chunk;
+                                    try { chunk = JObject.Parse(data); }
+                                    catch { continue; }
+                                    foreach (var part in chunk.SelectTokens("candidates[0].content.parts[*]"))
                                     {
-                                        sb.Append(delta);
-                                        onDelta(delta);
+                                        string delta = (string)part["text"];
+                                        if (!string.IsNullOrEmpty(delta))
+                                        {
+                                            if (sb.Length + delta.Length > MaxAssistantChars)
+                                                throw OmnixException.Provider("Gemini streamed an over-sized assistant response.");
+                                            sb.Append(delta);
+                                            onDelta(delta);
+                                        }
                                     }
                                 }
                             }
                         }
+                        return new ChatResponse { Text = sb.ToString(), Model = Model };
                     }
-                    return new ChatResponse { Text = sb.ToString(), Model = Model };
                 }
             }
             catch (OperationCanceledException) { throw; }
@@ -157,36 +176,60 @@ namespace OMNIX.Core.AiGateway.Adapters
         {
             if (_creds == null || string.IsNullOrEmpty(_creds.ApiKey))
                 throw OmnixException.Auth("No Gemini API key configured.");
+
             try
             {
+                var list = new List<string>();
+                string pageToken = null;
+                int pages = 0;
+
                 using (var client = HttpClientFactory.Create(TimeSpan.FromSeconds(20)))
-                using (var req = new HttpRequestMessage(HttpMethod.Get, Base + "/models"))
                 {
-                    req.Headers.TryAddWithoutValidation("x-goog-api-key", _creds.ApiKey);
-                    var response = await client.SendAsync(req, ct).ConfigureAwait(false);
-                    if (!response.IsSuccessStatusCode)
+                    do
                     {
-                        string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
-                        throw HttpStatusMapper.Map((int)response.StatusCode, err, "Gemini");
+                        ct.ThrowIfCancellationRequested();
+                        string url = Base + "/models?pageSize=1000" +
+                                     (string.IsNullOrEmpty(pageToken) ? "" : "&pageToken=" + Uri.EscapeDataString(pageToken));
+                        using (var req = new HttpRequestMessage(HttpMethod.Get, url))
+                        {
+                            req.Headers.TryAddWithoutValidation("x-goog-api-key", _creds.ApiKey);
+                            using (var response = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
+                            {
+                                if (!response.IsSuccessStatusCode)
+                                {
+                                    string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
+                                    throw HttpStatusMapper.Map((int)response.StatusCode, err, "Gemini");
+                                }
+
+                                string json = await ReadBodyBoundedAsync(response.Content, MaxJsonBodyBytes, ct).ConfigureAwait(false);
+                                var root = JObject.Parse(json);
+                                foreach (var m in root["models"] ?? new JArray())
+                                {
+                                    if (list.Count >= MaxModels) break;
+                                    string name = (string)m["name"] ?? "";
+                                    if (name.StartsWith("models/", StringComparison.Ordinal)) name = name.Substring(7);
+                                    var methods = m["supportedGenerationMethods"] as JArray;
+                                    if (methods != null && !methods.Any(t => (string)t == "generateContent")) continue;
+                                    if (!name.StartsWith("gemini-", StringComparison.OrdinalIgnoreCase)) continue;
+                                    if (!string.IsNullOrWhiteSpace(name) && !list.Contains(name, StringComparer.OrdinalIgnoreCase))
+                                        list.Add(name);
+                                }
+                                pageToken = list.Count >= MaxModels ? null : (string)root["nextPageToken"];
+                            }
+                        }
+                        pages++;
                     }
-                    string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                    var root = JObject.Parse(json);
-                    var list = new List<string>();
-                    foreach (var m in root["models"] ?? new JArray())
-                    {
-                        string name = (string)m["name"] ?? "";
-                        if (name.StartsWith("models/", StringComparison.Ordinal)) name = name.Substring(7);
-                        var methods = m["supportedGenerationMethods"] as JArray;
-                        if (methods != null && !methods.Any(t => (string)t == "generateContent")) continue;
-                        list.Add(name);
-                    }
-                    return list;
+                    while (!string.IsNullOrEmpty(pageToken) && pages < 5);
                 }
+                return list;
             }
+            catch (OperationCanceledException) { throw; }
             catch (HttpRequestException ex) { throw OmnixException.Network("Gemini models: " + ex.Message); }
+            catch (OmnixException) { throw; }
+            catch (Exception ex) { throw OmnixException.Provider("Gemini model discovery failure: " + ex.Message); }
         }
 
-        public Task<bool> TestConnectionAsync(CancellationToken ct)
+        public async Task<bool> TestConnectionAsync(CancellationToken ct)
         {
             var request = new ChatRequest
             {
@@ -198,24 +241,42 @@ namespace OMNIX.Core.AiGateway.Adapters
                     TimestampUtc = DateTime.UtcNow
                 }
             };
-            var minimal = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, minimal.Token);
-            return TestInner(request, linked.Token);
-        }
-
-        private async Task<bool> TestInner(ChatRequest request, CancellationToken ct)
-        {
-            try
+            using (var minimal = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
+            using (var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, minimal.Token))
             {
-                var resp = await SendAsync(request, null, ct).ConfigureAwait(false);
-                return resp != null && resp.Text != null;
-            }
-            catch
-            {
-                return false;
+                try
+                {
+                    var resp = await SendAsync(request, null, linked.Token).ConfigureAwait(false);
+                    return resp != null && resp.Text != null;
+                }
+                catch
+                {
+                    return false;
+                }
             }
         }
 
         public bool SupportsVisionNow() { return true; }
+
+        private static async Task<string> ReadBodyBoundedAsync(HttpContent content, int maxBytes, CancellationToken ct)
+        {
+            if (content == null) return string.Empty;
+            using (var stream = await content.ReadAsStreamAsync().ConfigureAwait(false))
+            using (var ms = new MemoryStream())
+            {
+                var buffer = new byte[8192];
+                while (true)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    int remaining = maxBytes + 1 - (int)ms.Length;
+                    if (remaining <= 0) throw new InvalidDataException("Gemini response exceeded OMNIX safety limit.");
+                    int read = await stream.ReadAsync(buffer, 0, Math.Min(buffer.Length, remaining), ct).ConfigureAwait(false);
+                    if (read <= 0) break;
+                    ms.Write(buffer, 0, read);
+                    if (ms.Length > maxBytes) throw new InvalidDataException("Gemini response exceeded OMNIX safety limit.");
+                }
+                return Encoding.UTF8.GetString(ms.ToArray());
+            }
+        }
     }
 }

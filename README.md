@@ -1,110 +1,212 @@
-# OMNIX — AI Office Bridge
+# OMNIX — Native AI Bridge for Microsoft Office
 
-**OMNIX** is a bridge between Microsoft Office (Excel, Word, PowerPoint) and AI models — local and cloud, including Vision — that lives directly inside Office as a **VSTO add-in** (C# / WPF). Download ONE `.exe`, run it, open Excel — the OMNIX ribbon tab is simply there.
+OMNIX is a Windows Office AI bridge: a native **C# / WPF / VSTO** add-in that connects **Excel, Word and PowerPoint** to local AI runtimes, cloud providers and custom OpenAI-compatible endpoints from one docked workspace inside Office.
 
-> This repository is built against a single source of truth: [`OMNIX-MASTER-SPEC.md`](./OMNIX-MASTER-SPEC.md). Every architectural decision maps to it — see [docs/SPEC-COMPLIANCE.md](./docs/SPEC-COMPLIANCE.md).
+> **Release status:** active v3 rebuild. The code compiles and the development installer is produced in CI, but this repository does **not** call the current branch production-ready until the real-machine release gates in [issue #53](https://github.com/ali-shortcuts/OMNIX-v2/issues/53) pass. A green hosted CI build is not a substitute for opening real desktop Excel/Word/PowerPoint.
 
+## Product contract
+
+```text
+Microsoft Office
+  Excel / Word / PowerPoint
+        │
+        ▼
+Native OMNIX Ribbon + docked WPF Workspace
+        │
+        ▼
+Office Context Engine
+  structured selection/document/slide context
+  + bounded visual capture when needed
+        │
+        ▼
+Privacy Gate + Context Limiter + Whitelisted Tool Executor
+        │
+        ▼
+OMNIX AI Gateway
+        │
+        ├── Local AI: Ollama / LM Studio
+        ├── Cloud: Gemini / Groq / OpenRouter / Mistral / Hugging Face / Cerebras
+        └── Custom OpenAI-compatible endpoint
 ```
-Run the single .exe installer (per-user, no admin knowledge needed)
-      ↓
-Open Excel / Word / PowerPoint
-      ↓
-The OMNIX ribbon tab is there (right after Home)
-      ↓
-Click "Open Workspace" → docked side panel next to your document (not full-screen)
-      ↓
-Chat with AI — text or images (Vision) — with context of the current document
-      ↓
-Close, reopen, even restart Windows → everything stays
+
+OMNIX is the bridge, not the destination. The user works in Office; OMNIX obtains the minimum relevant Office context, routes it according to the privacy policy, streams the model response back into the side panel and exposes only narrowly scoped Office actions.
+
+## What the rebuilt version contains
+
+- **Three native Office hosts** — `OMNIX.Excel`, `OMNIX.Word`, `OMNIX.PowerPoint` share one `OMNIX.Core`.
+- **No browser/Web UI/Node.js dependency** for normal operation. The main UI is WPF hosted in a VSTO Custom Task Pane.
+- **Compact docked workspace** — designed around a narrow Office side panel rather than a web page squeezed into Office.
+- **Per-window isolation** — each Office document window owns its own workspace controller, AI gateway, provider state, cancellation token, cloud-consent session and conversation context.
+- **Streaming + cancellation** — provider responses stream into the rendered chat; Stop cancels the active request.
+- **Structured Office context** — bounded Excel ranges/values/formulas, Word selection/document structure, and PowerPoint slide/presentation text are read through host adapters.
+- **Vision** — current Office view/selection capture, Excel chart capture and PowerPoint slide capture can be attached to Vision-capable models. The model is explicitly told not to claim visibility outside the captured/structured scope.
+- **Local AI** — Ollama and LM Studio are discovered in the background and can be preferred when available.
+- **Cloud/custom providers** — Gemini, Groq, OpenRouter, Mistral AI, Hugging Face Inference Providers, Cerebras and custom OpenAI-compatible endpoints.
+- **Dynamic provider behavior** — live model discovery is used where supported. OpenRouter runtime acceptance prefers `openrouter/free` and current `:free` routes before paid routes. Free/free-tier/trial status is treated as provider/account dependent rather than guaranteed forever.
+- **Privacy modes** — `Local Only`, `Cloud Allowed`, `Ask Before Sending`. Enforcement occurs in the AI Gateway before a cloud provider's send path, not just in the UI.
+- **DPAPI-protected API keys** — provider keys are protected for the current Windows user in `%LOCALAPPDATA%\OMNIX\settings.dat`; plaintext keys are not written to logs or reports.
+- **Untrusted Office data boundary** — document content is data, never executable instructions. Prompt-like content from a workbook/document/presentation remains inside the untrusted-data boundary.
+- **Whitelisted Office tools only** — no unrestricted PowerShell, CMD, registry, process-control or arbitrary filesystem tool is exposed to the model.
+- **Fail-closed writes** — a write tool requires a before/after preview and explicit user approval. If the confirmation callback is unavailable or the user denies the preview, no write is applied. Runtime acceptance tests this behavior against temporary Office documents.
+- **Categorized errors** — network/auth/model/privacy/provider/local-runtime failures are kept distinct instead of turning every failure into “check your Internet.”
+- **Bounded storage** — chat history is per-document-key, bounded by configured age/count limits, and raw attached Office screenshots are not persisted into history.
+
+## Provider matrix
+
+| Provider | Kind | API key | Notes |
+| --- | --- | --- | --- |
+| Ollama | Local | No | Local models discovered from the runtime |
+| LM Studio | Local | No | OpenAI-compatible local runtime |
+| Google Gemini | Cloud | Yes | Model/capability availability is account/API dependent |
+| Groq | Cloud | Yes | Free-plan eligibility/limits are account dependent |
+| OpenRouter | Cloud | Yes | Supports live discovery; free router/free routes are preferred when available |
+| Mistral AI | Cloud | Yes | Account/free-mode eligibility can change |
+| Hugging Face Inference Providers | Cloud | Yes | Routes/models/credits are account and provider dependent |
+| Cerebras | Cloud | Yes | Access/trial/quota are account dependent |
+| Custom OpenAI-compatible | Local or Cloud | Optional | User supplies base URL, model and optional key |
+
+OMNIX does not hard-code a permanent promise that a third-party cloud model is “free.” Provider availability, quotas and pricing can change independently of this repository.
+
+## Office integration scope
+
+The native v3 architecture targets **Windows desktop Microsoft Office environments that support VSTO**. The installer detects the Office generation/platform and only registers hosts found on the machine. Compatibility must be reported from evidence, not assumed.
+
+Use these support states when documenting a tested environment:
+
+```text
+UNSUPPORTED / LEGACY / PARTIAL / SUPPORTED / FULLY_TESTED
 ```
 
-## Highlights
+`FULLY_TESTED` is reserved for a specific Office/Windows environment with real-machine evidence. OMNIX does not claim that one VSTO build universally supports every historical Office version or non-Windows Office.
 
-- **Real VSTO add-in** — three thin hosts (`OMNIX.Excel`, `OMNIX.Word`, `OMNIX.PowerPoint`) + one shared core (`OMNIX.Core`). No browser, no web app, no Node.js — WPF/C# only (Ironclad rules of the spec).
-- **Docked Task Pane** — `CustomTaskPanes` docked right, 360 px default, resizable, width-clamped so it never covers your document. One pane + one chat context per document window.
-- **AI Gateway** — the UI never talks to providers directly. The gateway routes Local-first, enforces Privacy Mode *before* every cloud call, streams tokens word-by-word, supports real cancellation (Stop truly aborts the HTTP request), retries transient network failures with backoff and suggests failover after repeated provider errors.
-- **Providers** — Ollama (11434), LM Studio (1234), Google Gemini, Groq, OpenRouter (dynamic model list), and any OpenAI-compatible custom endpoint.
-- **Vision** — chart/slide capture to in-memory PNG (temporary file deleted immediately), image attachments from the document or disk, and clear messaging when a model cannot accept images.
-- **Whitelisted tools only** — read tools (`read_selection`, `read_document`, `read_presentation`, `capture_chart_as_image`, `capture_slide_as_image`) and write tools (`write_to_cell`, `insert_formula`, `rewrite_selected_text`, `insert_slide`, `add_speaker_notes`, `highlight_range`). Write tools always show a **before/after preview** and require your confirmation; changes are undoable with **Ctrl+Z** via native Office undo.
-- **Privacy Mode** (default: **Ask before sending**) — `Local Only` / `Cloud Allowed` / `Ask before sending`, enforced in the Gateway layer, not only in the UI.
-- **DPAPI-encrypted API keys** — stored in `%LOCALAPPDATA%\OMNIX\settings.dat`; never plain text, never logged.
-- **Prompt-injection defense** — document content is always wrapped as untrusted data and never treated as instructions; suspicious payloads add an explicit guard reminder and are logged.
-- **Honest errors** — categorized error codes (`NETWORK_ERROR`, `AUTH_ERROR`, `MODEL_ERROR`, `TIMEOUT`, …) with technical details and suggested fixes; never a generic "check your internet".
+## Installation model
 
-## Repository layout
+The development installer is an Inno Setup per-user installer. Its supported path is:
 
+```text
+intentional user install
+  → detect Office / host apps / platform
+  → ensure official Microsoft VSTO Runtime prerequisite when genuinely required
+  → copy validated Excel + Word + PowerPoint + Core payload
+  → register only OMNIX-owned Office add-in keys
+  → preserve shared Office Resiliency state
+  → perform post-install diagnostics
 ```
-OMNIX.sln
-src/
-  OMNIX.Core/          # everything shared: context engine, gateway, providers,
-                       # tools, storage, theming, localization, WPF workspace UI
-  OMNIX.Excel/         # thin VSTO host (ribbon XML + per-window task panes)
-  OMNIX.Word/          # thin VSTO host
-  OMNIX.PowerPoint/    # thin VSTO host
-installer/
-  installer.iss        # Inno Setup: per-user install, office detection, registry,
-                       # cert trust, DisabledItems cleanup, install-debug.log
-build/
-  build.bat            # local one-click build (restore → msbuild → installer)
-  create-signing-cert.ps1, package.ps1, ensure-vsto-sdk.ps1, defender-check.ps1
-.github/workflows/build.yml   # windows-latest CI: build → single exe → release
-docs/                 # architecture, install guide, CI verification, spec compliance
+
+OMNIX does **not** clear shared `DisabledItems`/`CrashingAddinList` state to force itself enabled. It does not bypass Trust Center or organizational Office policy.
+
+### Development manifest trust
+
+Current CI development builds use a temporary development manifest certificate. The installer only performs development trust handling when the bundled public certificate is classified as self-signed, records its exact thumbprint, and uninstall targets only that recorded development thumbprint. This is **development-only**, not the production trust model.
+
+Production release requires a normal trusted code-signing certificate and valid timestamped Authenticode evidence. `build/sign-production.ps1` signs using an already provisioned certificate in the Windows certificate/key provider; it does not create/export a private key or handle a PFX password.
+
+## Real release gates
+
+The repository contains executable acceptance tooling rather than relying on a “looks okay” checklist:
+
+- `tools/real-office-acceptance.ps1` — Excel/Word/PowerPoint must auto-load OMNIX on two independent launches; diagnostic force-connect cannot turn failure into PASS.
+- `tools/real-office-ui-acceptance.ps1` — verifies the real OMNIX Ribbon, `Open Workspace`, and visible WPF task-pane evidence through UI Automation.
+- `tools/office-functional-acceptance.ps1` — exercises the installed compiled Core against temporary unsaved Office documents: context/read tools, denied/approved writes and PowerPoint visual capture.
+- `tools/real-office-ai-e2e.ps1` — creates a random marker inside a temporary Excel/Word/PowerPoint document and requires that marker to travel through **Office Context → Workspace → AI Gateway/provider → streaming rendered assistant UI**. The prompt itself never contains the marker.
+- `tools/full-office-e2e.ps1` — binds the intended installer SHA-256 to install + persistence + UI + functional + real AI round-trip evidence.
+- `tools/reboot-persistence-acceptance.ps1` — before/after a normal user-initiated Windows restart; the test never restarts the machine itself.
+- `tools/local-offline-acceptance.ps1` — requires public Internet to be observed disconnected while a real Ollama/LM Studio model completes a local chat; the script never changes networking/firewall state.
+- `tools/provider-acceptance.ps1` — live model discovery + real streaming provider evidence without copying API keys/prompts/responses into reports.
+- `tools/privacy-acceptance.ps1` — deterministic compiled Gateway test proving privacy enforcement occurs before cloud `SendAsync`.
+- `tools/lifecycle-acceptance.ps1` — exact-build repair + uninstall lifecycle. It hashes settings and precisely fingerprints shared Office `DisabledItems`, `CrashingAddinList` and `DoNotDisableAddinList` state without dumping their raw values.
+- `tools/consumer-security-acceptance.ps1` — requires normal Defender real-time/behavior protection, scans the exact installer, and records a normal SmartScreen UI observation without disabling/bypassing protection.
+- `tools/release-readiness.ps1` — base fail-closed evidence aggregator.
+- `tools/final-production-gate.ps1` — final production aggregator. It requires exact installer hash binding, all real Office/AI/lifecycle/security evidence, offline/provider/privacy gates and trusted timestamped Authenticode.
+
+The final production result must be:
+
+```json
+{
+  "TestId": "OMNIX-FINAL-PRODUCTION-GATE-002",
+  "FailureCount": 0,
+  "OverallPass": true
+}
 ```
+
+Anything else is not a production release.
 
 ## Building
 
-### GitHub Actions (recommended)
-Push to GitHub; the included workflow builds on `windows-latest`, produces `OMNIX-Setup-1.0.0.exe` and attaches it to a Release on `v*` tags. Details: [docs/CI-VERIFICATION.md](./docs/CI-VERIFICATION.md).
+Local build prerequisites:
 
-### Local (Windows)
-Requirements: Visual Studio 2022 with **.NET desktop development** + **Office development (VSTO)** workloads.
+- Windows
+- Visual Studio 2022 with .NET desktop development
+- Visual Studio Tools for Office / Office development build targets
+- .NET Framework 4.8 targeting pack
+- Inno Setup for installer compilation (the CI workflow provisions it)
 
-```
+Local entry point:
+
+```bat
 build\build.bat
 ```
-Output: `installer\Output\OMNIX-Setup-1.0.0.exe`.
 
-## Installing (end users)
+GitHub Actions builds a **development artifact**. It does not automatically publish a production release merely because a tag exists or CI is green.
 
-1. Download `OMNIX-Setup-1.0.0.exe` from Releases — one file, nothing else.
-2. Run it. Office is closed best; the installer detects your Office bitness and which apps you actually have.
-3. Open Excel/Word/PowerPoint → the **OMNIX** tab → **Open Workspace**.
-4. Open **Settings**, pick a provider, paste an API key (encrypted with DPAPI), test the connection.
-5. If Windows SmartScreen shows "Windows protected your PC": More info → Run anyway (see honesty notes below).
+## Security and data locations
 
-Full guide + troubleshooting: [docs/INSTALL.md](./docs/INSTALL.md).
+```text
+Settings / protected keys  %LOCALAPPDATA%\OMNIX\settings.dat
+Logs                       %LOCALAPPDATA%\OMNIX\logs\
+Chat history               %LOCALAPPDATA%\OMNIX\history\
+Application                %LOCALAPPDATA%\Programs\OMNIX\
+```
 
-## Honesty notes (from the spec — we keep them visible)
+Logs and acceptance reports are designed not to contain API keys or full private Office documents. Real release evidence stores hashes/status/timing where possible instead of copying sensitive content.
 
-- **Unsigned installer**: the shipped build uses a *temporary self-signed* certificate for the VSTO manifests. Until a real Authenticode certificate is bought (spec §10.2), SmartScreen may warn. The manifest certificate is imported into your *CurrentUser* TrustedPublisher + Root stores during install — no admin needed — so Office accepts the add-in silently.
-- **Defender test**: CI runs a real scan with real-time protection ON and publishes `defender-report.txt`. That is CI-level evidence; consumer-machine behavior still needs human verification (spec Rule 9).
-- **Per-user install**: each Windows user installs OMNIX separately (spec §10.4 documents this limitation).
-- **CI cannot click Office**: a green CI build proves compilation + packaging; the *acceptance* is a human seeing the OMNIX tab inside real Office (spec §12) — that screenshot is the milestone proof.
+## Repository layout
 
-## Chat history & data
+```text
+OMNIX.sln
+src/
+  OMNIX.Core/
+  OMNIX.Excel/
+  OMNIX.Word/
+  OMNIX.PowerPoint/
+installer/
+  installer.iss
+build/
+  build-with-fallbacks.ps1
+  package.ps1
+  contract-gates.ps1
+  real-evidence-contract-gates.ps1
+  final-evidence-contract-gates.ps1
+  consumer-security-contract-gates.ps1
+  sign-production.ps1
+tools/
+  real-office-acceptance.ps1
+  real-office-ui-acceptance.ps1
+  office-functional-acceptance.ps1
+  real-office-ai-e2e.ps1
+  full-office-e2e.ps1
+  reboot-persistence-acceptance.ps1
+  local-offline-acceptance.ps1
+  provider-acceptance.ps1
+  privacy-acceptance.ps1
+  lifecycle-acceptance.ps1
+  consumer-security-acceptance.ps1
+  release-readiness.ps1
+  final-production-gate.ps1
+```
 
-- Settings + keys: `%LOCALAPPDATA%\OMNIX\settings.dat` (DPAPI-encrypted)
-- Logs: `%LOCALAPPDATA%\OMNIX\logs\` (`startup-debug.log`, `gateway-debug.log`, `ui-debug.log`, `install-debug.log`)
-- Chat history: `%LOCALAPPDATA%\OMNIX\history\` — per document, capped (default 500 messages / 30 days, configurable)
+## Current honesty boundary
+
+Hosted Windows CI can compile VSTO, validate payloads, build the installer, execute deterministic Core privacy tests and scan the development installer. Hosted CI does **not** provide desktop Excel/Word/PowerPoint and therefore cannot produce the real Office/UI/restart evidence required for production.
+
+Do not merge/publish the v3 rebuild as production until issue #53 and `OMNIX-FINAL-PRODUCTION-GATE-002` are satisfied on the intended Windows/Office environment.
 
 ## License
 
 MIT — see [LICENSE](./LICENSE).
 
----
-
 ## About
 
 **Powered by Mr Ali**
 
-Created and developed by Mr Ali, an independent developer building practical digital tools, automation solutions, and useful projects. Follow the channels above for updates, new projects, and useful content.
-
-| Channel | Link |
-| --- | --- |
-| Email | mailto:Ali.hekmati2026@gmail.com |
-| Telegram | https://t.me/Mr_Ali_2025 |
-| Telegram Channel | https://t.me/Ali_shortcuts |
-| Facebook | https://www.facebook.com/AliShortcuts |
-| TikTok | https://www.tiktok.com/@ali_shortcuts |
-| Instagram | https://www.instagram.com/ali_shortcuts |
-| YouTube | https://www.youtube.com/@Ali_Shortcuts |
+OMNIX is developed as an independent Office/AI integration project. Public contact links should be maintained in the product's About view and repository documentation as current, user-approved project metadata.

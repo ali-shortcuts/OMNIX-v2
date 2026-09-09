@@ -46,6 +46,10 @@
     <sys:String x:Key="S.Settings.Model">Model</sys:String>
     <sys:String x:Key="S.Settings.ApiKey">API Key</sys:String>
     <sys:String x:Key="S.Settings.ApiKeyStored">Stored encrypted (DPAPI)</sys:String>
+    <sys:String x:Key="S.Settings.GetApiKey">Get API Key</sys:String>
+    <sys:String x:Key="S.Settings.ProviderDocs">Provider docs</sys:String>
+    <sys:String x:Key="S.Settings.OfficialLinkOnly">Opens the provider's verified official website.</sys:String>
+    <sys:String x:Key="S.Settings.NoApiKeyRequired">No API key required for this provider.</sys:String>
     <sys:String x:Key="S.Settings.LoadModels">Load models</sys:String>
     <sys:String x:Key="S.Settings.TestConnection">Test connection</sys:String>
     <sys:String x:Key="S.Settings.TestOk">Connection OK</sys:String>
@@ -98,6 +102,8 @@
     <sys:String x:Key="Err.ModelFix">Use "Load models" in Settings and pick a model the provider actually offers.</sys:String>
     <sys:String x:Key="Err.Provider">The AI provider reported an error.</sys:String>
     <sys:String x:Key="Err.ProviderFix">Retry. If it persists, switch provider/model in Settings.</sys:String>
+    <sys:String x:Key="Err.ProviderPrivacy">The AI provider could not route this request because of its privacy/data-policy restrictions.</sys:String>
+    <sys:String x:Key="Err.ProviderPrivacyFix">Review the provider privacy settings or choose another model/provider. For OpenRouter, review https://openrouter.ai/settings/privacy. Do not weaken privacy settings unless you understand and accept how your data may be handled.</sys:String>
     <sys:String x:Key="Err.Generic">An unexpected error occurred inside OMNIX.</sys:String>
     <sys:String x:Key="Err.GenericFix">Please retry. Details were written to the OMNIX log folder.</sys:String>
     <sys:String x:Key="Err.TechnicalDetails">Technical details:</sys:String>
