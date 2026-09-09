@@ -86,6 +86,13 @@ jobs:
         shell: pwsh
         run: ./build/build-with-fallbacks.ps1 ${{ steps.cert.outputs.thumbprint }}
 
+      - name: Runtime AI Gateway privacy acceptance
+        shell: powershell
+        run: |
+          .\tools\privacy-acceptance.ps1 `
+            -CorePath .\src\OMNIX.Core\bin\Release\OMNIX.Core.dll `
+            -OutputPath .\build\artifact\privacy-acceptance.json
+
       - name: Stage installer payload and enforce complete Office payload
         shell: pwsh
         run: ./build/package.ps1
@@ -223,6 +230,13 @@ jobs:
           if (-not (Test-Path $inventoryPath)) { throw "Payload inventory missing from artifact evidence." }
           $inventoryHash = (Get-FileHash -Algorithm SHA256 $inventoryPath).Hash.ToLowerInvariant()
 
+          $privacyPath = 'build\artifact\privacy-acceptance.json'
+          if (-not (Test-Path $privacyPath)) { throw "Privacy runtime acceptance evidence is missing." }
+          $privacy = Get-Content $privacyPath -Raw | ConvertFrom-Json
+          if ($privacy.TestId -ne 'PRIVACY-GATE-RUNTIME-001' -or -not [bool]$privacy.OverallPass) {
+            throw "Privacy runtime acceptance did not PASS."
+          }
+
           $hash = (Get-FileHash -Algorithm SHA256 $exe.FullName).Hash.ToLowerInvariant()
           $sig = Get-AuthenticodeSignature $exe.FullName
 
@@ -240,12 +254,14 @@ jobs:
             Sha256 = $hash
             PayloadInventorySha256 = $inventoryHash
             RequiredOfficePayloadPresent = $true
+            PrivacyGatewayRuntimeTested = $true
+            PrivacyGatewayRuntimePass = [bool]$privacy.OverallPass
             AuthenticodeStatus = [string]$sig.Status
             DefenderCustomScanCompleted = [bool](Test-Path $defenderReport)
             DefenderRealTimeProtectionEnabled = $rtp
             RealOfficeRuntimeTested = $false
             ProductionReleaseApproved = $false
-            Note = 'CI development artifact only. Real Office/UI/provider acceptance, consumer-machine security verification and trusted production signing remain mandatory.'
+            Note = 'CI development artifact only. Deterministic gateway privacy runtime logic is tested, but real Office/UI/provider/consumer-machine security verification and trusted production signing remain mandatory.'
           }
           $manifest | ConvertTo-Json -Depth 6 | Set-Content build\artifact\manifest.json -Encoding UTF8
           $hash | Set-Content build\artifact\installer.sha256 -Encoding ASCII
@@ -260,6 +276,7 @@ jobs:
             build/artifact/manifest.json
             build/artifact/installer.sha256
             build/artifact/payload-inventory.json
+            build/artifact/privacy-acceptance.json
             build/artifact/inno-compile.log
             build/defender-report.txt
             build/logs/*.binlog
