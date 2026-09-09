@@ -13,7 +13,9 @@ namespace OMNIX.Core.AiGateway.Adapters
     /// Custom provider: any OpenAI-compatible endpoint (Name + Base URL + optional API Key + Model).
     /// Loopback endpoints (localhost / 127.0.0.1 / ::1) are classified as Local after Configure,
     /// so Privacy Mode can use a local custom server without pretending data leaves the PC.
-    /// All other custom endpoints remain Cloud and pass through the normal cloud privacy gate.
+    /// Remote custom endpoints MUST use HTTPS because Office context and optional API credentials
+    /// must never be sent over clear-text HTTP. All remote endpoints remain Cloud and pass through
+    /// the normal cloud privacy gate.
     /// </summary>
     public sealed class CustomOpenAiCompatibleAdapter : IProviderAdapter
     {
@@ -30,10 +32,9 @@ namespace OMNIX.Core.AiGateway.Adapters
                 Kind = ProviderKind.Cloud,
                 Vision = VisionSupport.DependsOnModel,
                 DefaultModel = "gpt-4o-mini",
-                // True means Settings should expose the key field. The key itself remains optional.
                 RequiresApiKey = true,
                 AccessProfile = ProviderAccessProfile.CustomEndpoint,
-                AccessNotes = "API key is optional. Loopback endpoints are treated as local; other endpoints are treated as cloud.",
+                AccessNotes = "API key is optional. Loopback http/https endpoints are local; every non-loopback custom endpoint must use HTTPS and is treated as cloud.",
                 Notes = "Configure an OpenAI-compatible Base URL, model, and optional API key."
             };
         }
@@ -47,22 +48,12 @@ namespace OMNIX.Core.AiGateway.Adapters
             var cp = SettingsManager.Instance.Settings.CustomProvider;
             if (string.IsNullOrWhiteSpace(url) && cp != null) url = cp.BaseUrl;
 
-            if (string.IsNullOrWhiteSpace(url))
-                throw OmnixException.Provider("Custom provider Base URL is not configured. Set it in Settings.");
-
-            Uri parsed;
-            if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out parsed) ||
-                !(string.Equals(parsed.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
-                  string.Equals(parsed.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
-            {
-                throw OmnixException.Provider("Custom provider Base URL must be an absolute http:// or https:// URL.");
-            }
-
+            Uri parsed = ValidateEndpoint(url);
             _baseUrl = parsed.GetLeftPart(UriPartial.Path).TrimEnd('/');
             Info.Kind = IsLoopbackEndpoint(parsed) ? ProviderKind.Local : ProviderKind.Cloud;
             Info.AccessNotes = Info.Kind == ProviderKind.Local
                 ? "Loopback custom endpoint: treated as Local AI; request data stays on this PC unless that local server forwards it elsewhere."
-                : "Remote custom endpoint: treated as Cloud; OMNIX cloud privacy rules apply. Cost, retention and limits are defined by the endpoint owner.";
+                : "Remote HTTPS custom endpoint: treated as Cloud; OMNIX cloud privacy rules apply. Cost, retention and limits are defined by the endpoint owner.";
 
             if (string.IsNullOrWhiteSpace(_creds.Model) && cp != null) _creds.Model = cp.Model;
             if (string.IsNullOrWhiteSpace(_creds.Model)) _creds.Model = Info.DefaultModel;
@@ -145,6 +136,35 @@ namespace OMNIX.Core.AiGateway.Adapters
                 string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase));
         }
 
+        private static Uri ValidateEndpoint(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                throw OmnixException.Provider("Custom provider Base URL is not configured. Set it in Settings.");
+
+            Uri parsed;
+            if (!Uri.TryCreate(raw.Trim(), UriKind.Absolute, out parsed) ||
+                !(string.Equals(parsed.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+                  string.Equals(parsed.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw OmnixException.Provider("Custom provider Base URL must be an absolute http:// or https:// URL.");
+            }
+
+            if (!string.IsNullOrEmpty(parsed.UserInfo))
+                throw OmnixException.Provider("Custom provider Base URL must not embed a username or password. Store the API key in OMNIX Settings instead.");
+
+            bool loopback = IsLoopbackEndpoint(parsed);
+            if (!loopback && !string.Equals(parsed.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            {
+                throw OmnixException.Provider(
+                    "Remote custom providers must use HTTPS. Clear-text HTTP is allowed only for localhost/loopback endpoints.");
+            }
+
+            if (!string.IsNullOrEmpty(parsed.Fragment))
+                throw OmnixException.Provider("Custom provider Base URL must not contain a URL fragment (#...).");
+
+            return parsed;
+        }
+
         private OpenAiCompatibleClient ActiveClient()
         {
             if (string.IsNullOrWhiteSpace(_baseUrl))
@@ -152,9 +172,9 @@ namespace OMNIX.Core.AiGateway.Adapters
                 string raw = _creds != null ? _creds.BaseUrl : null;
                 if (string.IsNullOrWhiteSpace(raw) && SettingsManager.Instance.Settings.CustomProvider != null)
                     raw = SettingsManager.Instance.Settings.CustomProvider.BaseUrl;
-                if (string.IsNullOrWhiteSpace(raw))
-                    throw OmnixException.Provider("Custom provider Base URL is not configured.");
-                _baseUrl = raw.Trim().TrimEnd('/');
+                Uri parsed = ValidateEndpoint(raw);
+                _baseUrl = parsed.GetLeftPart(UriPartial.Path).TrimEnd('/');
+                Info.Kind = IsLoopbackEndpoint(parsed) ? ProviderKind.Local : ProviderKind.Cloud;
             }
             return new OpenAiCompatibleClient(_baseUrl, "Custom Provider");
         }
