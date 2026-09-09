@@ -56,3 +56,7 @@ jobs:
       - name: Enforce image input and capture safety contract
         shell: pwsh
         run: ./build/image-safety-contract-gates.ps1
+
+      - name: Enforce automatic Office registration maintenance contract
+        shell: pwsh
+        run: ./build/office-maintenance-contract-gates.ps1
