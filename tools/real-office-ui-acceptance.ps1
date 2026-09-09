@@ -42,15 +42,9 @@ function Release-ComObjectSafe($obj) {
 
 function Add-TemporaryDocument($app, [string]$hostName) {
     switch ($hostName) {
-        'Excel' {
-            return $app.Workbooks.Add()
-        }
-        'Word' {
-            return $app.Documents.Add()
-        }
-        'PowerPoint' {
-            return $app.Presentations.Add()
-        }
+        'Excel' { return $app.Workbooks.Add() }
+        'Word' { return $app.Documents.Add() }
+        'PowerPoint' { return $app.Presentations.Add() }
         default { return $null }
     }
 }
@@ -60,7 +54,7 @@ function Close-TemporaryDocument($doc, [string]$hostName) {
     try {
         switch ($hostName) {
             'Excel'      { $doc.Close($false) }
-            'Word'       { $doc.Close(0) } # wdDoNotSaveChanges
+            'Word'       { $doc.Close(0) }
             'PowerPoint' { $doc.Close() }
         }
     } catch { }
@@ -69,9 +63,7 @@ function Close-TemporaryDocument($doc, [string]$hostName) {
 function Get-OfficeWindowHandle($app, [string]$hostName) {
     try {
         switch ($hostName) {
-            'Excel' {
-                return [IntPtr]([int64]$app.Hwnd)
-            }
+            'Excel' { return [IntPtr]([int64]$app.Hwnd) }
             'Word' {
                 if ($null -ne $app.ActiveWindow) { return [IntPtr]([int64]$app.ActiveWindow.Hwnd) }
             }
@@ -90,9 +82,7 @@ function Find-UiElementByExactName($root, [string]$name) {
         $condition = New-Object System.Windows.Automation.PropertyCondition(
             [System.Windows.Automation.AutomationElement]::NameProperty, $name)
         return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
-    } catch {
-        return $null
-    }
+    } catch { return $null }
 }
 
 function Find-UiElementByAutomationId($root, [string]$automationId) {
@@ -101,9 +91,7 @@ function Find-UiElementByAutomationId($root, [string]$automationId) {
         $condition = New-Object System.Windows.Automation.PropertyCondition(
             [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $automationId)
         return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
-    } catch {
-        return $null
-    }
+    } catch { return $null }
 }
 
 function Find-UiElementByNameFragment($root, [string[]]$fragments) {
@@ -116,9 +104,7 @@ function Find-UiElementByNameFragment($root, [string[]]$fragments) {
                 $name = [string]$element.Current.Name
                 if ([string]::IsNullOrWhiteSpace($name)) { continue }
                 foreach ($fragment in $fragments) {
-                    if ($name.IndexOf($fragment, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-                        return $element
-                    }
+                    if ($name.IndexOf($fragment, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $element }
                 }
             } catch { }
         }
@@ -132,9 +118,7 @@ function Test-UiElementVisible($element) {
         if ([bool]$element.Current.IsOffscreen) { return $false }
         $rect = $element.Current.BoundingRectangle
         return ($rect.Width -ge 20 -and $rect.Height -ge 10)
-    } catch {
-        return $false
-    }
+    } catch { return $false }
 }
 
 function Activate-UiElement($element) {
@@ -159,12 +143,12 @@ function Activate-UiElement($element) {
     return $false
 }
 
-function Test-HostUi($host) {
+function Test-HostUi($officeHost) {
     $app = $null
     $doc = $null
     $started = Get-Date
     $result = [ordered]@{
-        Host = $host.Name
+        Host = $officeHost.Name
         Installed = $true
         Started = $false
         Version = $null
@@ -183,29 +167,24 @@ function Test-HostUi($host) {
     }
 
     try {
-        $app = New-Object -ComObject $host.ProgId
+        $app = New-Object -ComObject $officeHost.ProgId
         $result.Started = $true
         try { $app.Visible = $true } catch { }
         try { $app.DisplayAlerts = $false } catch { }
 
-        $doc = Add-TemporaryDocument $app $host.Name
+        $doc = Add-TemporaryDocument $app $officeHost.Name
         Start-Sleep -Milliseconds $StartupDelayMs
         try { $result.Version = [string]$app.Version } catch { $result.Version = 'unknown' }
 
-        $hwnd = Get-OfficeWindowHandle $app $host.Name
-        if ($hwnd -eq [IntPtr]::Zero) {
-            throw "Could not obtain the active Office window handle."
-        }
+        $hwnd = Get-OfficeWindowHandle $app $officeHost.Name
+        if ($hwnd -eq [IntPtr]::Zero) { throw 'Could not obtain the active Office window handle.' }
         $result.WindowHandleFound = $true
 
         $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
-        if ($null -eq $root) { throw "UI Automation could not attach to the Office window." }
+        if ($null -eq $root) { throw 'UI Automation could not attach to the Office window.' }
 
-        # The OMNIX tab label is fixed by our Ribbon XML and is independent of the Office UI language.
         $tab = Find-UiElementByExactName $root 'OMNIX'
-        if ($null -eq $tab) {
-            $tab = Find-UiElementByNameFragment $root @('OMNIX')
-        }
+        if ($null -eq $tab) { $tab = Find-UiElementByNameFragment $root @('OMNIX') }
         $result.RibbonTabFound = ($null -ne $tab)
         if ($tab) {
             $result.RibbonTabActivated = Activate-UiElement $tab
@@ -213,25 +192,16 @@ function Test-HostUi($host) {
         }
 
         $openButton = Find-UiElementByExactName $root 'Open Workspace'
-        if ($null -eq $openButton) {
-            $openButton = Find-UiElementByNameFragment $root @('Open Workspace')
-        }
+        if ($null -eq $openButton) { $openButton = Find-UiElementByNameFragment $root @('Open Workspace') }
         $result.OpenWorkspaceButtonFound = ($null -ne $openButton)
         if ($openButton) {
             $result.OpenWorkspaceInvoked = Activate-UiElement $openButton
             Start-Sleep -Milliseconds $WorkspaceDelayMs
         }
 
-        # Fail-closed workspace proof. The task pane must expose one of our explicit WPF UIA IDs.
-        # A generic element named "OMNIX" is deliberately NOT accepted because that could simply
-        # be the Ribbon tab that was already present before Open Workspace was invoked.
         $workspace = Find-UiElementByAutomationId $root 'OMNIX.ChatInput'
-        if ($null -eq $workspace) {
-            $workspace = Find-UiElementByAutomationId $root 'OMNIX.WorkspaceRoot'
-        }
-        if ($null -eq $workspace) {
-            $workspace = Find-UiElementByExactName $root 'OMNIX chat input'
-        }
+        if ($null -eq $workspace) { $workspace = Find-UiElementByAutomationId $root 'OMNIX.WorkspaceRoot' }
+        if ($null -eq $workspace) { $workspace = Find-UiElementByExactName $root 'OMNIX chat input' }
 
         if ($workspace) {
             $result.WorkspaceEvidenceVisible = Test-UiElementVisible $workspace
@@ -261,10 +231,8 @@ function Test-HostUi($host) {
         $result.Error = "$($_.Exception.GetType().FullName): $($_.Exception.Message)"
     }
     finally {
-        Close-TemporaryDocument $doc $host.Name
-        if ($null -ne $app) {
-            try { $app.Quit() } catch { }
-        }
+        Close-TemporaryDocument $doc $officeHost.Name
+        if ($null -ne $app) { try { $app.Quit() } catch { } }
         Release-ComObjectSafe $doc
         Release-ComObjectSafe $app
         [GC]::Collect()
@@ -275,18 +243,17 @@ function Test-HostUi($host) {
     return [pscustomobject]$result
 }
 
-# Do not interfere with a user's existing Office work.
 $running = @()
-foreach ($host in $hosts) {
-    if (Get-Process -Name $host.Process -ErrorAction SilentlyContinue) { $running += $host.Name }
+foreach ($officeHost in $hosts) {
+    if (Get-Process -Name $officeHost.Process -ErrorAction SilentlyContinue) { $running += $officeHost.Name }
 }
 if ($running.Count -gt 0) {
     throw "Close Office before running the OMNIX UI acceptance gate. Currently running: $($running -join ', ')"
 }
 
 $results = New-Object System.Collections.Generic.List[object]
-foreach ($host in $hosts) {
-    $results.Add((Test-HostUi $host))
+foreach ($officeHost in $hosts) {
+    $results.Add((Test-HostUi $officeHost))
     Start-Sleep -Milliseconds 900
 }
 
