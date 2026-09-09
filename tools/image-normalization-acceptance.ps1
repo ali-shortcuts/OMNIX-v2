@@ -13,6 +13,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Windows PowerShell does not necessarily preload WPF assemblies in a headless CI session.
+# Load them explicitly before resolving BitmapFrame/Point types used by the compiled harness.
+Add-Type -AssemblyName WindowsBase -ErrorAction Stop
+Add-Type -AssemblyName PresentationCore -ErrorAction Stop
+
 $core = (Resolve-Path -LiteralPath $CorePath -ErrorAction Stop).Path
 [void][Reflection.Assembly]::LoadFrom($core)
 $presentationCore = [System.Windows.Media.Imaging.BitmapFrame].Assembly.Location
