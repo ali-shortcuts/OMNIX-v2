@@ -162,7 +162,7 @@ function Invoke-Strategy1-DirectMsbuild {
             Out-Host
         $exitCode = $LASTEXITCODE
         $artifactsOk = Test-CompleteArtifactSet
-        Write-Host "Strategy 1 attempt $i: msbuildExit=$exitCode completeArtifacts=$artifactsOk"
+        Write-Host "Strategy 1 attempt ${i}: msbuildExit=$exitCode completeArtifacts=$artifactsOk"
         if ($exitCode -eq 0 -and $artifactsOk) { return $true }
         Start-Sleep -Seconds 10
     }
