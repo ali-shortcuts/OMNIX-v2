@@ -34,7 +34,6 @@ $baseScript=Join-Path $scriptDir 'release-readiness.ps1'
 if(-not(Test-Path -LiteralPath $baseScript -PathType Leaf)){throw 'release-readiness.ps1 is missing.'}
 foreach($dir in @((Split-Path -Parent $BaseReadinessOutput),(Split-Path -Parent $OutputPath))){if($dir){New-Item -ItemType Directory -Force -Path $dir|Out-Null}}
 
-# Production path: intentionally no development signature override exists here.
 $args=@('-NoProfile','-File',$baseScript,
  '-OfficePersistenceReport',$OfficePersistenceReport,
  '-OfficeUiReport',$OfficeUiReport,
@@ -53,7 +52,6 @@ $lifecycle=Read-Json $LifecycleReport 'Lifecycle'
 $security=Read-Json $ConsumerSecurityReport 'Consumer security'
 $failures=New-Object System.Collections.Generic.List[string]
 
-# Base release requirements.
 if($baseProc.ExitCode -ne 0){Fail $failures "Base release-readiness exited $($baseProc.ExitCode)."}
 if($base.TestId -ne 'OMNIX-RELEASE-READINESS-001'){Fail $failures 'Unexpected base readiness TestId.'}
 if(-not[bool]$base.OverallPass){Fail $failures 'Base release-readiness failed.'}
@@ -62,12 +60,27 @@ if([string]$base.Installer.SignatureStatus -ne 'Valid'){Fail $failures 'Producti
 if([bool]$base.Installer.SelfSigned){Fail $failures 'Production installer is self-signed.'}
 if(-not[bool]$base.Installer.Timestamped){Fail $failures 'Production installer signature is not timestamped.'}
 
-# Full Office install/persistence/UI/function/write-bounds/AI marker route.
+# Full Office install + automatic maintenance + persistence/UI/function/write-bounds/AI marker route.
 if($office.TestId -ne 'OFFICE-E2E-REAL-001'){Fail $failures 'Unexpected Office E2E TestId.'}
-if([int]$office.EvidenceSchema -lt 3){Fail $failures 'Office E2E schema is too old; approved-but-invalid write-boundary evidence is mandatory.'}
+if([int]$office.EvidenceSchema -lt 4){Fail $failures 'Office E2E schema is too old; automatic Office-maintenance evidence is mandatory.'}
 if(-not[bool]$office.OverallPass){Fail $failures 'Full Office E2E failed.'}
 if([string]$office.Installer.Sha256 -ne $hash){Fail $failures 'Office E2E used a different installer.'}
 if($null -eq $office.Installer.HashMatchedExpected -or -not[bool]$office.Installer.HashMatchedExpected){Fail $failures 'Office E2E was not explicitly bound to the intended SHA256.'}
+
+if($null -eq $office.Maintenance){Fail $failures 'Automatic Office registration-maintenance evidence is missing.'}
+else{
+ if([string]$office.Maintenance.TestId -ne 'OFFICE-MAINTENANCE-REAL-001'){Fail $failures 'Unexpected Office maintenance TestId.'}
+ if(-not[bool]$office.Maintenance.OverallPass){Fail $failures 'Automatic Office registration-maintenance acceptance failed.'}
+ if(-not[bool]$office.Maintenance.MaintenanceTaskPresent){Fail $failures 'Automatic Office maintenance task is missing.'}
+ if(-not[bool]$office.Maintenance.MaintenanceTaskLimited){Fail $failures 'Office maintenance task is not limited privilege.'}
+ if(-not[bool]$office.Maintenance.MaintenanceTaskCurrentUser){Fail $failures 'Office maintenance task is not scoped to the current user.'}
+ if(-not[bool]$office.Maintenance.MaintenanceTaskLogonTrigger){Fail $failures 'Office maintenance task has no user-logon trigger.'}
+ if([int]$office.Maintenance.InstalledHostCount -lt 3){Fail $failures 'Office maintenance did not detect Excel + Word + PowerPoint.'}
+ if([int]$office.Maintenance.RegisteredHostCount -lt 3){Fail $failures 'Office maintenance did not prove OMNIX registration in all three Office hosts.'}
+ if(-not[bool]$office.Maintenance.AllInstalledRegistrationsPass){Fail $failures 'One or more Office registrations are unhealthy after maintenance.'}
+ if(-not[bool]$office.Maintenance.SharedOfficeResiliencyPreserved){Fail $failures 'Office Resiliency changed during automatic maintenance.'}
+ if(-not[bool]$office.Maintenance.OfficeProcessesRemainedClosed){Fail $failures 'Automatic maintenance launched or left an Office process.'}
+}
 
 if($null -eq $office.WriteBoundary){Fail $failures 'Office AI write-boundary evidence is missing.'}
 else{
@@ -87,7 +100,6 @@ else{
  if(-not[bool]$office.AiRoundTrip.AllProcessesExitedPass){Fail $failures 'Office AI E2E left an orphan Office process.'}
 }
 
-# Exact-build repair/uninstall lifecycle and precise shared recovery-state preservation.
 if($lifecycle.TestId -ne 'LIFECYCLE-REAL-002'){Fail $failures 'Lifecycle v2 evidence is required.'}
 if([int]$lifecycle.EvidenceSchema -lt 2){Fail $failures 'Lifecycle evidence schema is too old.'}
 if([string]$lifecycle.Phase -ne 'AfterUninstall'){Fail $failures 'Lifecycle must finish at AfterUninstall.'}
@@ -106,7 +118,6 @@ if(-not[bool]$lifecycle.AppPayloadRemoved){Fail $failures 'OMNIX application pay
 if(-not[bool]$lifecycle.SharedOfficeRecoveryStatePreservedAcrossUninstall){Fail $failures 'Shared Office recovery state changed during uninstall.'}
 if(-not[bool]$lifecycle.DevelopmentCertificateRemoved){Fail $failures 'Exact OMNIX development trust material remains after uninstall.'}
 
-# Real consumer protections on the exact installer.
 if($security.TestId -ne 'CONSUMER-SECURITY-REAL-001'){Fail $failures 'Unexpected consumer security TestId.'}
 if([int]$security.EvidenceSchema -lt 1){Fail $failures 'Consumer security evidence schema is invalid.'}
 if([string]$security.Installer.Sha256 -ne $hash){Fail $failures 'Consumer security evidence is for a different installer.'}
@@ -126,13 +137,25 @@ if([string]::IsNullOrWhiteSpace($source)){Fail $failures 'Could not resolve sour
 if(-not[string]::IsNullOrWhiteSpace([string]$base.SourceCommit) -and -not[string]::IsNullOrWhiteSpace($source) -and [string]$base.SourceCommit -ne $source){Fail $failures 'Base readiness source commit does not match current checkout.'}
 
 $out=[ordered]@{
- TestId='OMNIX-FINAL-PRODUCTION-GATE-002';EvidenceSchema=3;GeneratedUtc=(Get-Date).ToUniversalTime().ToString('o');SourceCommit=$source
+ TestId='OMNIX-FINAL-PRODUCTION-GATE-002';EvidenceSchema=4;GeneratedUtc=(Get-Date).ToUniversalTime().ToString('o');SourceCommit=$source
  Installer=[ordered]@{FileName=$installer.Name;SizeBytes=[int64]$installer.Length;Sha256=$hash;SignatureStatus=[string]$base.Installer.SignatureStatus;SignerSubject=[string]$base.Installer.SignerSubject;SignerThumbprint=[string]$base.Installer.SignerThumbprint;Timestamped=[bool]$base.Installer.Timestamped}
  BaseReleaseReadinessPass=[bool]$base.OverallPass
- OfficeE2E=[ordered]@{Pass=[bool]$office.OverallPass;InstallerHashMatchedExpected=[bool]$office.Installer.HashMatchedExpected;WriteBoundaryPass=[bool]$office.WriteBoundary.OverallPass;AllThreeOfficeWriteBounds=[bool]$office.WriteBoundary.AllBoundaryChecksPass;AiRoundTripRequired=[bool]$office.AiRoundTrip.Required;AiRoundTripPass=[bool]$office.AiRoundTrip.OverallPass;AllThreeOfficeMarkerRoundTrips=[bool]$office.AiRoundTrip.AllMarkerRoundTripsPass}
+ OfficeE2E=[ordered]@{
+  Pass=[bool]$office.OverallPass
+  InstallerHashMatchedExpected=[bool]$office.Installer.HashMatchedExpected
+  AutomaticMaintenancePass=[bool]$office.Maintenance.OverallPass
+  AutomaticMaintenanceLimited=[bool]$office.Maintenance.MaintenanceTaskLimited
+  AutomaticMaintenanceAllThreeHosts=[bool]([int]$office.Maintenance.RegisteredHostCount -ge 3)
+  AutomaticMaintenancePreservedResiliency=[bool]$office.Maintenance.SharedOfficeResiliencyPreserved
+  WriteBoundaryPass=[bool]$office.WriteBoundary.OverallPass
+  AllThreeOfficeWriteBounds=[bool]$office.WriteBoundary.AllBoundaryChecksPass
+  AiRoundTripRequired=[bool]$office.AiRoundTrip.Required
+  AiRoundTripPass=[bool]$office.AiRoundTrip.OverallPass
+  AllThreeOfficeMarkerRoundTrips=[bool]$office.AiRoundTrip.AllMarkerRoundTripsPass
+ }
  Lifecycle=[ordered]@{Pass=[bool]$lifecycle.OverallPass;InstallerHashBound=([string]$lifecycle.InstallerSha256 -eq $hash);RepairPass=[bool]$lifecycle.RepairPass;SettingsPreserved=[bool]($lifecycle.SettingsPreservedAcrossRepair -and $lifecycle.SettingsPreservedAcrossUninstall);CorePreserved=[bool]$lifecycle.CorePreservedAcrossRepair;SharedOfficeRecoveryStatePreserved=[bool]($lifecycle.SharedOfficeRecoveryStatePreservedAcrossRepair -and $lifecycle.SharedOfficeRecoveryStatePreservedAcrossUninstall);RegistrationRemoved=[bool]$lifecycle.OmnixRegistrationRemoved;PayloadRemoved=[bool]$lifecycle.AppPayloadRemoved;DevelopmentCertificateRemoved=[bool]$lifecycle.DevelopmentCertificateRemoved}
  ConsumerSecurity=[ordered]@{Pass=[bool]$security.OverallPass;DefenderRealTimeProtectionEnabled=[bool]$security.Defender.RealTimeProtectionEnabled;DefenderDetectionCount=[int]$security.Defender.InstallerDetectionCount;SmartScreenDisposition=[string]$security.SmartScreen.Disposition;SmartScreenPass=[bool]$security.SmartScreen.Pass}
- Requirements=[ordered]@{ExactInstallerHashBinding=$true;ExcelWordPowerPoint=$true;RealOfficeAutomaticLoadAndUi=$true;BoundedApprovedOfficeWrites=$true;RealOfficeContextToAiToRenderedUi=$true;RealWindowsRestartPersistence=$true;OfflineLocalAi=$true;LiveProviderMatrixAndStreaming=$true;GatewayPrivacyBeforeSend=$true;ExactBuildRepairAndUninstallLifecycle=$true;SharedOfficeRecoveryStatePreservation=$true;ConsumerDefenderAndSmartScreen=$true;TrustedTimestampedProductionAuthenticode=$true}
+ Requirements=[ordered]@{ExactInstallerHashBinding=$true;ExcelWordPowerPoint=$true;AutomaticSupportedOfficeHostDiscoveryAndRegistration=$true;LimitedCurrentUserMaintenanceTask=$true;OfficeResiliencyPreservedDuringMaintenance=$true;RealOfficeAutomaticLoadAndUi=$true;BoundedApprovedOfficeWrites=$true;RealOfficeContextToAiToRenderedUi=$true;RealWindowsRestartPersistence=$true;OfflineLocalAi=$true;LiveProviderMatrixAndStreaming=$true;GatewayPrivacyBeforeSend=$true;ExactBuildRepairAndUninstallLifecycle=$true;SharedOfficeRecoveryStatePreservation=$true;ConsumerDefenderAndSmartScreen=$true;TrustedTimestampedProductionAuthenticode=$true}
  FailureCount=$failures.Count;Failures=@($failures);OverallPass=($failures.Count -eq 0)
  Privacy='Sanitized aggregate only; no API keys, prompts, response bodies, machine names, settings contents or Office document contents.'
 }
