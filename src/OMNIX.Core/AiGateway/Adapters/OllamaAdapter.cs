@@ -15,11 +15,17 @@ namespace OMNIX.Core.AiGateway.Adapters
 {
     /// <summary>
     /// Ollama adapter (local AI, port 11434). NDJSON streaming via /api/chat.
-    /// Vision is enabled only when the installed model is multimodal (llava and friends),
-    /// detected via /api/show (spec Section 6).
+    /// Vision is enabled only when the installed model is multimodal. Request/history replay,
+    /// streamed assistant output and model discovery are bounded so a local endpoint cannot grow
+    /// memory without limit inside an Office host.
     /// </summary>
     public sealed class OllamaAdapter : IProviderAdapter
     {
+        private const int MaxAssistantChars = 2 * 1024 * 1024;
+        private const int MaxJsonBodyBytes = 8 * 1024 * 1024;
+        private const int MaxImageBytes = 20 * 1024 * 1024;
+        private const int MaxModels = 5000;
+
         private ProviderCredentials _creds;
         private static readonly string[] KnownVisionMarkers =
         {
@@ -37,15 +43,23 @@ namespace OMNIX.Core.AiGateway.Adapters
                 Vision = VisionSupport.DependsOnModel,
                 DefaultModel = "",
                 RequiresApiKey = false,
-                Notes = "Runs on this PC (port 11434). Vision requires a multimodal model such as llava."
+                Notes = "Runs on this PC (port 11434). Vision requires a multimodal local model."
             };
         }
 
         public ProviderInfo Info { get; private set; }
 
-        public void Configure(ProviderCredentials credentials) { _creds = credentials; }
+        public void Configure(ProviderCredentials credentials) { _creds = credentials ?? new ProviderCredentials(); }
 
-        private string BaseUrl { get { return (_creds != null && !string.IsNullOrEmpty(_creds.BaseUrl)) ? _creds.BaseUrl.TrimEnd('/') : "http://localhost:11434"; } }
+        private string BaseUrl
+        {
+            get
+            {
+                return (_creds != null && !string.IsNullOrEmpty(_creds.BaseUrl))
+                    ? _creds.BaseUrl.TrimEnd('/')
+                    : "http://localhost:11434";
+            }
+        }
 
         private string Model
         {
@@ -66,8 +80,12 @@ namespace OMNIX.Core.AiGateway.Adapters
             if (turn.HasImages)
             {
                 var images = new JArray();
-                foreach (var img in turn.Images)
+                foreach (var img in turn.Images.Where(i => i != null && i.PngBytes != null && i.PngBytes.Length > 0))
+                {
+                    if (img.PngBytes.Length > MaxImageBytes)
+                        throw OmnixException.Model("Image attachment exceeds the 20 MB OMNIX safety limit.");
                     images.Add(Convert.ToBase64String(img.PngBytes));
+                }
                 msg["images"] = images;
             }
             return msg;
@@ -75,7 +93,11 @@ namespace OMNIX.Core.AiGateway.Adapters
 
         public string BuildPayload(ChatRequest request)
         {
+            request = ChatRequestBudgeter.Apply(request);
+
             var messages = new JArray();
+            if (!string.IsNullOrEmpty(request.SystemPrompt))
+                messages.Add(new JObject { { "role", "system" }, { "content", request.SystemPrompt } });
             if (request.History != null)
                 foreach (var t in request.History)
                     messages.Add(BuildMessage(t));
@@ -86,7 +108,7 @@ namespace OMNIX.Core.AiGateway.Adapters
             {
                 { "model", Model },
                 { "messages", messages },
-                { "stream", request.UserTurn != null }
+                { "stream", true }
             };
             return payload.ToString(Formatting.None);
         }
@@ -99,36 +121,36 @@ namespace OMNIX.Core.AiGateway.Adapters
                 using (var req = new HttpRequestMessage(HttpMethod.Post, BaseUrl + "/api/chat"))
                 {
                     req.Content = new StringContent(BuildPayload(request), Encoding.UTF8, "application/json");
-                    var response = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-                    if (!response.IsSuccessStatusCode)
+                    using (var response = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
                     {
-                        string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
-                        throw HttpStatusMapper.Map((int)response.StatusCode, err, "Ollama");
-                    }
-
-                    var sb = new StringBuilder();
-                    using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
-                    {
-                        foreach (string line in SseLineReader.ReadNdjsonLines(stream, ct))
+                        if (!response.IsSuccessStatusCode)
                         {
-                            JObject obj;
-                            try { obj = JObject.Parse(line); }
-                            catch { continue; }
-                            string delta = (string)obj.SelectToken("message.content");
-                            if (!string.IsNullOrEmpty(delta) && onDelta != null)
-                            {
-                                sb.Append(delta);
-                                onDelta(delta);
-                            }
-                            else if (!string.IsNullOrEmpty(delta))
-                            {
-                                sb.Append(delta);
-                            }
-                            bool done = (bool?)obj["done"] == true;
-                            if (done) break;
+                            string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
+                            throw HttpStatusMapper.Map((int)response.StatusCode, err, "Ollama");
                         }
+
+                        var sb = new StringBuilder();
+                        using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                        {
+                            foreach (string line in SseLineReader.ReadNdjsonLines(stream, ct))
+                            {
+                                JObject obj;
+                                try { obj = JObject.Parse(line); }
+                                catch { continue; }
+
+                                string delta = (string)obj.SelectToken("message.content");
+                                if (!string.IsNullOrEmpty(delta))
+                                {
+                                    if (sb.Length + delta.Length > MaxAssistantChars)
+                                        throw OmnixException.Provider("Ollama streamed an over-sized assistant response.");
+                                    sb.Append(delta);
+                                    if (onDelta != null) onDelta(delta);
+                                }
+                                if ((bool?)obj["done"] == true) break;
+                            }
+                        }
+                        return new ChatResponse { Text = sb.ToString(), Model = Model };
                     }
-                    return new ChatResponse { Text = sb.ToString(), Model = Model };
                 }
             }
             catch (OperationCanceledException) { throw; }
@@ -143,23 +165,34 @@ namespace OMNIX.Core.AiGateway.Adapters
             {
                 using (var client = HttpClientFactory.Create(TimeSpan.FromSeconds(10)))
                 using (var req = new HttpRequestMessage(HttpMethod.Get, BaseUrl + "/api/tags"))
+                using (var response = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
                 {
-                    var response = await client.SendAsync(req, ct).ConfigureAwait(false);
                     if (!response.IsSuccessStatusCode)
-                        throw HttpStatusMapper.Map((int)response.StatusCode, "(Ollama /api/tags)", "Ollama");
-                    string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    {
+                        string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
+                        throw HttpStatusMapper.Map((int)response.StatusCode, err, "Ollama");
+                    }
+
+                    string json = await SseLineReader.ReadBodyBoundedAsync(response.Content, MaxJsonBodyBytes, ct).ConfigureAwait(false);
                     var root = JObject.Parse(json);
                     var list = new List<string>();
                     foreach (var m in root["models"] ?? new JArray())
-                        list.Add((string)m["name"]);
+                    {
+                        if (list.Count >= MaxModels) break;
+                        string name = (string)m["name"];
+                        if (!string.IsNullOrWhiteSpace(name)) list.Add(name);
+                    }
                     _firstModel = list.FirstOrDefault();
                     return list;
                 }
             }
+            catch (OperationCanceledException) { throw; }
             catch (HttpRequestException ex)
             {
                 throw OmnixException.Network("Ollama is not reachable at " + BaseUrl + ": " + ex.Message);
             }
+            catch (OmnixException) { throw; }
+            catch (Exception ex) { throw OmnixException.Provider("Ollama model discovery failure: " + ex.Message); }
         }
 
         public async Task<bool> TestConnectionAsync(CancellationToken ct)
