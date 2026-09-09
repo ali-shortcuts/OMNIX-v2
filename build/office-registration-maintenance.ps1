@@ -104,7 +104,9 @@ function Get-ManifestUri([string]$HostName) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required VSTO deployment manifest is missing: OMNIX.$HostName.vsto"
     }
-    return ((New-Object System.Uri($path)).AbsoluteUri + '|vstolocal')
+    # Keep this compatible with Windows PowerShell 5.1/.NET Framework used on consumer Office PCs.
+    $uri = New-Object System.Uri -ArgumentList $path
+    return ($uri.AbsoluteUri + '|vstolocal')
 }
 
 function Get-RegistrationState([string]$Version, [string]$HostName, [string]$ExpectedManifest) {
