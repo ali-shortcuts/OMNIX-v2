@@ -7,14 +7,15 @@
 #   (restart Windows normally)
 #   tools/reboot-persistence-acceptance.ps1 -Phase AfterRestart
 #   tools/local-offline-acceptance.ps1   (with Internet intentionally disconnected)
-#   tools/provider-acceptance.ps1
+#   tools/provider-acceptance.ps1        (online again for cloud provider evidence)
 #
 # This script does not run providers, Office, restart Windows, or alter networking itself. It
 # validates their evidence, requires all three Office hosts to auto-load OMNIX on two independent
 # launches, requires a genuine Windows restart persistence proof, requires Ribbon/workspace UI proof,
-# requires a real local-model round-trip while public Internet is observed disconnected, optionally
-# requires every built-in cloud provider + Custom, verifies the installer hash, and requires a real
-# trusted Authenticode signature for a production release.
+# requires a real local-model round-trip while public Internet is observed disconnected, requires live
+# provider model discovery + streaming evidence, optionally requires every built-in cloud provider +
+# Custom, verifies the installer hash, and requires a real trusted Authenticode signature for a
+# production release.
 #
 # Output is intentionally sanitized: it does not copy machine names, API keys, prompts, response
 # bodies, Authorization headers, or document contents into release evidence.
@@ -149,34 +150,60 @@ function Test-LocalOffline($report) {
     return $errors
 }
 
+function Test-ProviderRow($r, [string]$name) {
+    $errors = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $r) {
+        $errors.Add("Provider evidence missing: $name")
+        return $errors
+    }
+    if (-not [bool]$r.Configured) {
+        $errors.Add("Provider not configured/tested: $name")
+        return $errors
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$r.Model)) { $errors.Add("Provider live model selection failed: $name") }
+    if ([string]::IsNullOrWhiteSpace([string]$r.ModelSource) -or [string]$r.ModelSource -notlike 'live:*') {
+        $errors.Add("Provider model was not selected from live discovery: $name")
+    }
+    if (-not [bool]$r.ModelsPass) { $errors.Add("Provider live model list failed: $name") }
+    if (-not [bool]$r.ChatPass) { $errors.Add("Provider chat request failed: $name ($($r.ErrorCategory))") }
+    if (-not [bool]$r.StreamingPass) { $errors.Add("Provider streaming evidence failed: $name ($($r.ErrorCategory))") }
+    if ([int]$r.StreamEventCount -lt 1) { $errors.Add("Provider produced no streaming events: $name") }
+    if ($null -eq $r.FirstStreamEventMs) { $errors.Add("Provider first-stream-event timing is missing: $name") }
+    if (-not [bool]$r.Pass) { $errors.Add("Provider runtime test failed: $name ($($r.ErrorCategory))") }
+    return $errors
+}
+
 function Test-Providers($report, [bool]$requireAllCloud, [bool]$requireCustom) {
     $errors = New-Object System.Collections.Generic.List[string]
     if ($null -eq $report -or $report.TestId -ne 'PROVIDERS-RUNTIME-001') {
         $errors.Add('Unexpected/missing provider TestId.')
         return $errors
     }
+    if ([int]$report.EvidenceSchema -lt 2) {
+        $errors.Add('Provider evidence schema is too old; live-discovery + streaming evidence is required.')
+    }
 
-    $localPass = @($report.Results | Where-Object {
-        ($_.Provider -eq 'Ollama' -or $_.Provider -eq 'LM Studio') -and $_.Configured -and $_.Pass
+    $localRows = @($report.Results | Where-Object { $_.Provider -eq 'Ollama' -or $_.Provider -eq 'LM Studio' })
+    $localPass = @($localRows | Where-Object {
+        $_.Configured -and $_.Pass -and $_.ModelsPass -and $_.StreamingPass -and -not [string]::IsNullOrWhiteSpace([string]$_.Model)
     })
     if ($localPass.Count -lt 1) {
-        $errors.Add('At least one local AI runtime (Ollama or LM Studio) must pass a real chat round-trip in the provider harness.')
+        $errors.Add('At least one local AI runtime (Ollama or LM Studio) must pass live model discovery + a real streaming chat round-trip in the provider harness.')
     }
 
     if ($requireAllCloud) {
         foreach ($name in @('Gemini','Groq','OpenRouter','Mistral AI','Hugging Face','Cerebras')) {
             $r = @($report.Results | Where-Object { $_.Provider -eq $name }) | Select-Object -First 1
-            if ($null -eq $r) { $errors.Add("Provider evidence missing: $name"); continue }
-            if (-not [bool]$r.Configured) { $errors.Add("Provider not configured/tested: $name") }
-            elseif (-not [bool]$r.Pass) { $errors.Add("Provider runtime test failed: $name ($($r.ErrorCategory))") }
+            foreach ($e in @(Test-ProviderRow $r $name)) { $errors.Add([string]$e) }
+            if ($name -eq 'OpenRouter' -and $null -ne $r -and -not [bool]$r.FreeRoutePreferencePass) {
+                $errors.Add('OpenRouter did not select openrouter/free or a live :free route before non-free routes.')
+            }
         }
     }
 
     if ($requireCustom) {
         $custom = @($report.Results | Where-Object { $_.Provider -eq 'Custom' }) | Select-Object -First 1
-        if ($null -eq $custom) { $errors.Add('Custom provider evidence is missing.') }
-        elseif (-not [bool]$custom.Configured) { $errors.Add('Custom provider was not configured/tested.') }
-        elseif (-not [bool]$custom.Pass) { $errors.Add("Custom provider runtime test failed ($($custom.ErrorCategory)).") }
+        foreach ($e in @(Test-ProviderRow $custom 'Custom')) { $errors.Add([string]$e) }
     }
 
     return $errors
@@ -190,6 +217,12 @@ function Get-ProviderSummary($report) {
             Configured = [bool]$r.Configured
             Pass = [bool]$r.Pass
             Model = [string]$r.Model
+            ModelSource = if ($null -eq $r.ModelSource) { $null } else { [string]$r.ModelSource }
+            ModelsPass = [bool]$r.ModelsPass
+            StreamingPass = [bool]$r.StreamingPass
+            StreamEventCount = [int]$r.StreamEventCount
+            FirstStreamEventMs = $r.FirstStreamEventMs
+            FreeRoutePreferencePass = $r.FreeRoutePreferencePass
             ErrorCategory = if ($null -eq $r.ErrorCategory) { $null } else { [string]$r.ErrorCategory }
         }
     }
@@ -257,7 +290,7 @@ $outDir = Split-Path -Parent $OutputPath
 if ($outDir) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
 
 $evidence = [ordered]@{
-    EvidenceSchema = 3
+    EvidenceSchema = 4
     TestId = 'OMNIX-RELEASE-READINESS-001'
     GeneratedUtc = (Get-Date).ToUniversalTime().ToString('o')
     SourceCommit = $sourceCommit
@@ -292,6 +325,9 @@ $evidence = [ordered]@{
         RibbonAndWorkspaceUi = $true
         LocalAiWithInternetDisconnected = $true
         AtLeastOneLocalAi = $true
+        LiveProviderModelDiscovery = $true
+        StreamingProviderRoundTrips = $true
+        OpenRouterFreeRoutePriority = [bool]$RequireAllCloudProviders
         AllBuiltInCloudProviders = [bool]$RequireAllCloudProviders
         CustomProvider = [bool]$RequireCustomProvider
         ProductionAuthenticode = (-not [bool]$AllowDevelopmentSignature)
