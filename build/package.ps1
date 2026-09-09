@@ -1,6 +1,9 @@
 # ============================================================================
-# package.ps1 — stages the complete VSTO outputs of Excel, Word and PowerPoint
-# into installer/payload/ so Inno Setup can build one installer.
+# package.ps1 — stages the validated VSTO handoff into installer/payload/.
+#
+# The build step must first create build/compiled-payload/<host>. Packaging no
+# longer reads transient src/<host>/bin/Release folders directly. This creates
+# a strict boundary: source compilation -> validated immutable handoff -> setup.
 #
 # Release-safety invariants:
 #   * Packaging MUST fail if any host DLL/.vsto/.dll.manifest is missing.
@@ -13,7 +16,12 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $root = Split-Path -Parent $PSScriptRoot
+$handoffRoot = Join-Path $PSScriptRoot 'compiled-payload'
 $payload = Join-Path $root 'installer\payload'
+
+if (-not (Test-Path -LiteralPath $handoffRoot -PathType Container)) {
+    throw "COMPILED_HANDOFF_GUARD: validated build handoff is missing: $handoffRoot"
+}
 
 if (Test-Path $payload) { Remove-Item -Recurse -Force $payload }
 New-Item -ItemType Directory -Force -Path $payload | Out-Null
@@ -34,35 +42,34 @@ function Copy-PayloadFile([string]$sourcePath) {
     [void]$copiedSources.Add($item.FullName)
 }
 
-# $Host is a built-in read-only PowerShell automatic variable, and variable names are
-# case-insensitive. Use $hostProject rather than $host so StrictMode works on every runner.
 foreach ($hostProject in $hosts) {
-    $bin = Join-Path $root "src\$hostProject\bin\Release"
-    if (-not (Test-Path -LiteralPath $bin -PathType Container)) {
-        throw "Build output directory missing: $bin — run the Release build first."
+    $sourceDir = Join-Path $handoffRoot $hostProject
+    if (-not (Test-Path -LiteralPath $sourceDir -PathType Container)) {
+        throw "COMPILED_HANDOFF_GUARD: host handoff directory missing: $sourceDir"
     }
 
-    # These three files are the minimum valid VSTO deployment identity for each host.
-    $hostDll = Join-Path $bin "$hostProject.dll"
-    $appManifest = "$hostDll.manifest"
-    $deployManifest = Join-Path $bin "$hostProject.vsto"
-    foreach ($required in @($hostDll, $appManifest, $deployManifest)) {
-        Copy-PayloadFile $required
+    # These files are the minimum valid VSTO deployment identity for each host.
+    foreach ($requiredName in @(
+        "$hostProject.dll",
+        "$hostProject.dll.manifest",
+        "$hostProject.vsto"
+    )) {
+        Copy-PayloadFile (Join-Path $sourceDir $requiredName)
     }
 
-    # Stage runtime dependencies/configuration from the same verified Release folder.
-    $runtimeFiles = @(Get-ChildItem -LiteralPath $bin -File -ErrorAction Stop | Where-Object {
+    # Stage runtime dependencies/configuration from the already-validated handoff.
+    $runtimeFiles = @(Get-ChildItem -LiteralPath $sourceDir -File -ErrorAction Stop | Where-Object {
         $allowedExtensions -contains $_.Extension
     })
-    if ($runtimeFiles.Count -eq 0) {
-        throw "No runtime files were discovered in $bin even though the build reported success."
+    if ($runtimeFiles.Count -lt 3) {
+        throw "COMPILED_HANDOFF_GUARD: too few runtime files for $hostProject ($($runtimeFiles.Count))."
     }
     foreach ($file in $runtimeFiles) {
         Copy-PayloadFile $file.FullName
     }
 }
 
-# Validate the staged payload itself, not merely the source directories.
+# Validate the flattened installer payload itself, not merely the handoff folders.
 $requiredPayload = @(
     'OMNIX.Excel.dll',
     'OMNIX.Excel.dll.manifest',
@@ -139,7 +146,7 @@ Logs: %LOCALAPPDATA%\OMNIX\logs\
 '@ | Set-Content -Path $readmeFirst -Encoding UTF8
 
 $payloadFiles = @(Get-ChildItem -LiteralPath $payload -File | Sort-Object Name)
-Write-Host "Staged $($copiedSources.Count) source runtime files; payload contains $($payloadFiles.Count) files."
+Write-Host "Staged $($copiedSources.Count) validated runtime files; payload contains $($payloadFiles.Count) files."
 foreach ($file in $payloadFiles) {
     Write-Host ("  {0,-55} {1,12} bytes" -f $file.Name, $file.Length)
 }
