@@ -14,6 +14,11 @@ namespace OMNIX.Core.Context
     /// </summary>
     public sealed class PowerPointHostAdapter : IHostAdapter
     {
+        private const int MaxSlideTitleChars = 500;
+        private const int MaxSlideBodyChars = 20000;
+        private const int MaxSpeakerNotesChars = 20000;
+        private const int PreviewChars = 4000;
+
         private readonly Ppt.Application _app;
         private readonly Func<int> _maxChars;
 
@@ -37,24 +42,12 @@ namespace OMNIX.Core.Context
                 ctx.DocumentPath = pres.FullName;
                 ctx.SlideCount = pres.Slides.Count;
 
-                // PowerPoint's normal authoring UI is usually ppViewNormal, not ppViewSlide.
-                // Restricting context discovery to ppViewSlide caused OMNIX to report slide 0/no
-                // title during ordinary editing. Resolve the active slide from View.Slide whenever
-                // the current view exposes one, regardless of whether the host calls that view
-                // Normal, Slide, Notes, etc. Unsupported views simply fall back to slide 0.
-                Ppt.Slide slide = null;
-                var win = _app.ActiveWindow;
-                if (win != null)
-                {
-                    try { slide = win.View.Slide as Ppt.Slide; }
-                    catch { slide = null; }
-                }
-
+                Ppt.Slide slide = ResolveActiveSlide();
                 if (slide != null)
                 {
                     ctx.CurrentSlideIndex = slide.SlideIndex;
                     ctx.SlideTitle = GetSlideTitle(slide);
-                    ctx.NotesPreview = GetNotes(slide);
+                    ctx.NotesPreview = GetNotes(slide, Math.Min(1000, Math.Max(1, _maxChars())));
                     ctx.SelectionAddress = "Slide " + slide.SlideIndex;
                 }
                 else
@@ -74,15 +67,22 @@ namespace OMNIX.Core.Context
             try
             {
                 var pres = _app.ActivePresentation;
-                var win = _app.ActiveWindow;
-                Ppt.Slide slide = (Ppt.Slide)win.View.Slide;
+                if (pres == null) return "(no presentation open)";
+                Ppt.Slide slide = ResolveActiveSlide();
+                if (slide == null) return "(no active slide)";
+
+                int cap = Math.Max(1, _maxChars());
                 var sb = new StringBuilder();
                 sb.AppendLine("Slide " + slide.SlideIndex + " of " + pres.Slides.Count);
                 sb.AppendLine("Title: " + GetSlideTitle(slide));
                 sb.AppendLine("Shapes text:");
-                AppendShapesText(slide, sb);
-                sb.AppendLine("Speaker notes: " + GetNotes(slide));
-                return TextUtil.Truncate(sb.ToString(), _maxChars());
+                AppendShapesText(slide, sb, Math.Max(1, cap - sb.Length - 256));
+                if (sb.Length < cap)
+                {
+                    int remaining = Math.Max(1, cap - sb.Length - 32);
+                    sb.AppendLine("Speaker notes: " + GetNotes(slide, remaining));
+                }
+                return TextUtil.Truncate(sb.ToString(), cap);
             }
             catch (Exception ex)
             {
@@ -97,17 +97,20 @@ namespace OMNIX.Core.Context
             {
                 var pres = _app.ActivePresentation;
                 if (pres == null) return "(no presentation open)";
+
+                int cap = Math.Max(1, Math.Min(maxChars, _maxChars()));
                 var sb = new StringBuilder();
                 sb.AppendLine("Presentation: " + pres.Name + " (" + pres.Slides.Count + " slides)");
-                for (int i = 1; i <= pres.Slides.Count && sb.Length < maxChars; i++)
+                for (int i = 1; i <= pres.Slides.Count && sb.Length < cap; i++)
                 {
                     var slide = pres.Slides[i];
                     sb.AppendLine();
                     sb.AppendLine("--- Slide " + i + " ---");
                     sb.AppendLine("Title: " + GetSlideTitle(slide));
-                    AppendShapesText(slide, sb);
+                    int remaining = Math.Max(1, cap - sb.Length);
+                    AppendShapesText(slide, sb, remaining);
                 }
-                return TextUtil.Truncate(sb.ToString(), Math.Min(maxChars, _maxChars()));
+                return TextUtil.Truncate(sb.ToString(), cap);
             }
             catch (Exception ex)
             {
@@ -124,13 +127,13 @@ namespace OMNIX.Core.Context
             {
                 var pres = _app.ActivePresentation;
                 if (pres == null) return null;
-                Ppt.Slide slide = slideIndexOneBased >= 1 ? pres.Slides[slideIndexOneBased] : null;
-                if (slide == null)
-                {
-                    var win = _app.ActiveWindow;
-                    slide = win != null ? (Ppt.Slide)win.View.Slide : null;
-                }
+
+                Ppt.Slide slide = null;
+                if (slideIndexOneBased >= 1 && slideIndexOneBased <= pres.Slides.Count)
+                    slide = pres.Slides[slideIndexOneBased];
+                if (slide == null) slide = ResolveActiveSlide();
                 if (slide == null) return null;
+
                 return TempImageCapture.FromExporter(path => slide.Export(path, "PNG", 1280, 720));
             }
             catch (Exception ex)
@@ -151,27 +154,41 @@ namespace OMNIX.Core.Context
             switch (toolName)
             {
                 case ToolNames.InsertSlide:
+                {
+                    string title = RequireBounded(args.Get("title", "") ?? "", MaxSlideTitleChars, "slide title", toolName);
+                    string body = RequireBounded(args.Get("body", "") ?? "", MaxSlideBodyChars, "slide body", toolName);
+                    int requested = ParseInt(args.Get("index", "0"), 0);
+                    int resolved = NormalizeInsertIndex(requested);
                     return new WritePreview
                     {
                         ToolName = toolName,
                         Title = "PowerPoint — insert slide",
                         Before = "Presentation currently has " + ActiveSlideCount() + " slides.",
-                        After = "A new slide will be added at position " + args.Get("index", "") +
-                                " with title: " + args.Get("title", "(empty)") +
-                                (string.IsNullOrEmpty(args.Get("body", "")) ? "" : " and body text."),
+                        After = "A new slide will be added at position " + resolved +
+                                " with title: " + TextUtil.Truncate(string.IsNullOrEmpty(title) ? "(empty)" : title, 500) +
+                                (string.IsNullOrEmpty(body) ? "" : Environment.NewLine +
+                                 "Body characters: " + body.Length + Environment.NewLine + TextUtil.Truncate(body, PreviewChars)),
                         ArgumentsJson = argumentsJson
                     };
+                }
                 case ToolNames.AddSpeakerNotes:
+                {
                     int idx = ParseInt(args.Get("slide", "0"), 0);
+                    Ppt.Slide slide = GetSlide(idx);
+                    if (slide == null)
+                        throw new OmnixException(ErrorCode.CORE_ERROR, "Cannot resolve target slide.", toolName, "Open or select the target slide.");
+                    string notes = RequireBounded(args.Get("notes", "") ?? "", MaxSpeakerNotesChars, "speaker notes", toolName);
+                    string before = GetNotes(slide, PreviewChars);
                     return new WritePreview
                     {
                         ToolName = toolName,
                         Title = "PowerPoint — add speaker notes",
-                        Before = "Current notes of slide " + (idx > 0 ? idx.ToString() : "(current)") + ": " +
-                                 GetNotes(GetSlide(idx)),
-                        After = "New notes: " + TextUtil.Truncate(args.Get("notes", ""), 500),
+                        Before = "Current notes of slide " + slide.SlideIndex + ": " + TextUtil.Truncate(before, PreviewChars),
+                        After = "New notes characters: " + notes.Length + Environment.NewLine + TextUtil.Truncate(notes, PreviewChars) +
+                                (notes.Length > PreviewChars ? Environment.NewLine + "…[notes preview truncated]" : ""),
                         ArgumentsJson = argumentsJson
                     };
+                }
                 default:
                     throw new OmnixException(ErrorCode.CORE_ERROR,
                         "Tool '" + toolName + "' is not supported by PowerPoint.",
@@ -184,19 +201,19 @@ namespace OMNIX.Core.Context
             var args = ToolArguments.Parse(argumentsJson);
             var pres = _app.ActivePresentation;
             if (pres == null)
-                throw new OmnixException(ErrorCode.CORE_ERROR, "No presentation open.", toolName, "");
+                throw new OmnixException(ErrorCode.CORE_ERROR, "No presentation open.", toolName, "Open a presentation.");
+
+            try { _app.StartNewUndoEntry(); } catch { }
 
             switch (toolName)
             {
                 case ToolNames.InsertSlide:
                 {
-                    int count = pres.Slides.Count;
-                    int index = ParseInt(args.Get("index", (count + 1).ToString()), count + 1);
-                    if (index < 1) index = 1;
-                    if (index > count + 1) index = count + 1;
+                    string title = RequireBounded(args.Get("title", "") ?? "", MaxSlideTitleChars, "slide title", toolName);
+                    string body = RequireBounded(args.Get("body", "") ?? "", MaxSlideBodyChars, "slide body", toolName);
+                    int requested = ParseInt(args.Get("index", "0"), 0);
+                    int index = NormalizeInsertIndex(requested);
                     var slide = pres.Slides.Add(index, Ppt.PpSlideLayout.ppLayoutText);
-                    string title = args.Get("title", "");
-                    string body = args.Get("body", "");
                     if (!string.IsNullOrEmpty(title) && slide.Shapes.Placeholders.Count >= 1)
                         slide.Shapes.Placeholders[1].TextFrame.TextRange.Text = title;
                     if (!string.IsNullOrEmpty(body) && slide.Shapes.Placeholders.Count >= 2)
@@ -208,8 +225,14 @@ namespace OMNIX.Core.Context
                     int idx = ParseInt(args.Get("slide", "0"), 0);
                     Ppt.Slide slide = GetSlide(idx);
                     if (slide == null)
-                        throw new OmnixException(ErrorCode.CORE_ERROR, "Cannot resolve target slide.", toolName, "");
-                    slide.NotesPage.Shapes.Placeholders[2].TextFrame.TextRange.Text = args.Get("notes", "");
+                        throw new OmnixException(ErrorCode.CORE_ERROR, "Cannot resolve target slide.", toolName, "Open or select the target slide.");
+                    string notes = RequireBounded(args.Get("notes", "") ?? "", MaxSpeakerNotesChars, "speaker notes", toolName);
+                    var noteShape = GetNotesBodyShape(slide);
+                    if (noteShape == null || noteShape.TextFrame == null)
+                        throw new OmnixException(ErrorCode.CORE_ERROR,
+                            "Speaker-notes placeholder is unavailable on this slide.", toolName,
+                            "Use a presentation/slide layout with a standard notes body placeholder.");
+                    noteShape.TextFrame.TextRange.Text = notes;
                     break;
                 }
                 default:
@@ -218,15 +241,29 @@ namespace OMNIX.Core.Context
             Logging.Logger.Install("PowerPoint write tool applied: " + toolName);
         }
 
-        // ------------------------------------------------------------------ helpers
+        private Ppt.Slide ResolveActiveSlide()
+        {
+            var win = _app.ActiveWindow;
+            if (win == null) return null;
+            try { return win.View.Slide as Ppt.Slide; }
+            catch { return null; }
+        }
 
         private Ppt.Slide GetSlide(int indexOneBased)
         {
             var pres = _app.ActivePresentation;
             if (pres == null) return null;
             if (indexOneBased >= 1 && indexOneBased <= pres.Slides.Count) return pres.Slides[indexOneBased];
-            var win = _app.ActiveWindow;
-            return win != null ? (Ppt.Slide)win.View.Slide : null;
+            return ResolveActiveSlide();
+        }
+
+        private int NormalizeInsertIndex(int requested)
+        {
+            int count = ActiveSlideCount();
+            if (requested <= 0) return count + 1;
+            if (requested < 1) return 1;
+            if (requested > count + 1) return count + 1;
+            return requested;
         }
 
         private int ActiveSlideCount()
@@ -241,37 +278,102 @@ namespace OMNIX.Core.Context
             return int.TryParse(s, out v) ? v : fallback;
         }
 
+        private static string RequireBounded(string value, int limit, string label, string toolName)
+        {
+            value = value ?? "";
+            if (value.Length > limit)
+                throw new OmnixException(ErrorCode.CORE_ERROR,
+                    "PowerPoint " + label + " is too large for one AI-approved mutation.",
+                    toolName + " " + label + " chars=" + value.Length + "; limit=" + limit + ".",
+                    "Split the change into smaller explicit steps.");
+            return value;
+        }
+
         private static string GetSlideTitle(Ppt.Slide slide)
         {
             try
             {
-                if (slide.Shapes.Title != null)
-                    return slide.Shapes.Title.TextFrame.TextRange.Text;
+                if (slide != null && slide.Shapes.Title != null)
+                {
+                    var range = slide.Shapes.Title.TextFrame.TextRange;
+                    int length = 0;
+                    try { length = range.Length; } catch { }
+                    if (length > 0)
+                        return TextUtil.Truncate(range.Characters(1, Math.Min(length, MaxSlideTitleChars)).Text, MaxSlideTitleChars);
+                    return TextUtil.Truncate(range.Text, MaxSlideTitleChars);
+                }
             }
             catch { }
             return "(no title)";
         }
 
-        private static string GetNotes(Ppt.Slide slide)
+        private static Ppt.Shape GetNotesBodyShape(Ppt.Slide slide)
+        {
+            if (slide == null) return null;
+            try
+            {
+                var placeholders = slide.NotesPage.Shapes.Placeholders;
+                for (int i = 1; i <= placeholders.Count; i++)
+                {
+                    var shape = placeholders[i];
+                    try
+                    {
+                        if (shape.PlaceholderFormat.Type == Ppt.PpPlaceholderType.ppPlaceholderBody)
+                            return shape;
+                    }
+                    catch { }
+                }
+                if (placeholders.Count >= 2) return placeholders[2];
+            }
+            catch { }
+            return null;
+        }
+
+        private static string GetNotes(Ppt.Slide slide, int maxChars)
         {
             try
             {
-                return slide.NotesPage.Shapes.Placeholders[2].TextFrame.TextRange.Text ?? "";
+                var shape = GetNotesBodyShape(slide);
+                if (shape == null || shape.TextFrame == null) return "";
+                var range = shape.TextFrame.TextRange;
+                int cap = Math.Max(1, maxChars);
+                int length = 0;
+                try { length = range.Length; } catch { }
+                if (length > 0)
+                    return range.Characters(1, Math.Min(length, cap)).Text ?? "";
+                return TextUtil.Truncate(range.Text ?? "", cap);
             }
             catch { return ""; }
         }
 
-        private static void AppendShapesText(Ppt.Slide slide, StringBuilder sb)
+        private static void AppendShapesText(Ppt.Slide slide, StringBuilder sb, int maxChars)
         {
+            if (slide == null || sb == null || maxChars <= 0) return;
+            int startLength = sb.Length;
             foreach (Ppt.Shape shape in slide.Shapes)
             {
+                if (sb.Length - startLength >= maxChars) break;
                 try
                 {
-                    if (shape.HasTextFrame == Office.MsoTriState.msoTrue && shape.TextFrame.HasText == Office.MsoTriState.msoTrue)
-                        sb.AppendLine("• [" + shape.Name + "] " + shape.TextFrame.TextRange.Text);
+                    if (shape.HasTextFrame != Office.MsoTriState.msoTrue ||
+                        shape.TextFrame.HasText != Office.MsoTriState.msoTrue)
+                        continue;
+
+                    int remaining = Math.Max(1, maxChars - (sb.Length - startLength));
+                    var range = shape.TextFrame.TextRange;
+                    int length = 0;
+                    try { length = range.Length; } catch { }
+                    string text;
+                    if (length > 0)
+                        text = range.Characters(1, Math.Min(length, remaining)).Text ?? "";
+                    else
+                        text = TextUtil.Truncate(range.Text ?? "", remaining);
+                    sb.AppendLine("• [" + shape.Name + "] " + text);
                 }
                 catch { }
             }
+            if (sb.Length - startLength > maxChars)
+                sb.Length = startLength + maxChars;
         }
     }
 }
