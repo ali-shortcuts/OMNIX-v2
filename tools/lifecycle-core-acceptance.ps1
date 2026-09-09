@@ -5,6 +5,8 @@
 # recovery subtrees OMNIX promises never to erase/manipulate: DisabledItems, CrashingAddinList and
 # DoNotDisableAddinList. Other Office Resiliency bookkeeping may legitimately change when Office is
 # launched during post-install verification and must not create a false release failure.
+# It also proves the transparent current-user OMNIX maintenance task survives same-build repair and
+# is completely removed by uninstall.
 
 [CmdletBinding()]
 param(
@@ -24,6 +26,7 @@ $stateDir = Split-Path -Parent $StatePath
 if ($stateDir) { New-Item -ItemType Directory -Force -Path $stateDir | Out-Null }
 $outDir = Split-Path -Parent $OutputPath
 if ($outDir) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
+$MaintenanceTaskName = 'OMNIX Office Registration Maintenance'
 
 function Assert-OfficeClosed {
     $running=@()
@@ -124,6 +127,39 @@ function Registration-Errors($rows){
     }
     return $errors
 }
+
+function Maintenance-Task-Snapshot {
+    try {
+        Import-Module ScheduledTasks -ErrorAction Stop
+        $task=Get-ScheduledTask -TaskName $MaintenanceTaskName -ErrorAction SilentlyContinue
+        if($null -eq $task){return [ordered]@{Present=$false;Limited=$false;CurrentUser=$false;LogonTrigger=$false;ActionBoundToInstalledScanner=$false}}
+        $currentUser=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $actionText=(@($task.Actions|ForEach-Object{([string]$_.Execute)+' '+([string]$_.Arguments)}) -join ' ')
+        return [ordered]@{
+            Present=$true
+            Limited=([string]$task.Principal.RunLevel -ne 'Highest')
+            CurrentUser=[string]::Equals([string]$task.Principal.UserId,$currentUser,[StringComparison]::OrdinalIgnoreCase)
+            LogonTrigger=(@($task.Triggers|Where-Object{$_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger'}).Count -gt 0)
+            ActionBoundToInstalledScanner=(($actionText -match [Regex]::Escape('office-registration-maintenance.ps1')) -and ($actionText -match [Regex]::Escape($InstallDir)))
+        }
+    }catch{
+        return [ordered]@{Present=$false;Limited=$false;CurrentUser=$false;LogonTrigger=$false;ActionBoundToInstalledScanner=$false}
+    }
+}
+function Maintenance-Task-Errors($snapshot,[bool]$ShouldExist){
+    $errors=New-Object System.Collections.Generic.List[string]
+    if($ShouldExist){
+        if(-not[bool]$snapshot.Present){$errors.Add('OMNIX Office registration maintenance task is missing.');return $errors}
+        if(-not[bool]$snapshot.Limited){$errors.Add('OMNIX maintenance task is not limited privilege.')}
+        if(-not[bool]$snapshot.CurrentUser){$errors.Add('OMNIX maintenance task is not scoped to the current user.')}
+        if(-not[bool]$snapshot.LogonTrigger){$errors.Add('OMNIX maintenance task has no user-logon trigger.')}
+        if(-not[bool]$snapshot.ActionBoundToInstalledScanner){$errors.Add('OMNIX maintenance task action is not bound to the installed scanner.')}
+    }elseif([bool]$snapshot.Present){
+        $errors.Add('OMNIX Office registration maintenance task remains after uninstall.')
+    }
+    return $errors
+}
+
 function Dev-Thumb {
     $p=Join-Path $InstallDir 'dev-cert-thumbprint.txt'
     if(-not(Test-Path -LiteralPath $p -PathType Leaf)){return $null}
@@ -141,6 +177,7 @@ function Snapshot {
         SettingsExists=[bool](Test-Path -LiteralPath $SettingsPath -PathType Leaf)
         SettingsSha256=(File-Hash $SettingsPath)
         Registrations=@(Registrations)
+        MaintenanceTask=(Maintenance-Task-Snapshot)
         SharedRecoveryState=@(Recovery-Snapshot)
         DevelopmentCertThumbprint=$thumb
         DevelopmentCertTrustedPublisherPresent=[bool](Cert-Present 'TrustedPublisher' $thumb)
@@ -161,17 +198,18 @@ if($Phase -eq 'Baseline'){
     if(-not $snap.CoreExists){$errors.Add('OMNIX.Core.dll is not installed.')}
     if(-not $snap.SettingsExists){$errors.Add('settings.dat does not exist; save OMNIX settings before baseline.')}
     foreach($e in @(Registration-Errors $snap.Registrations)){$errors.Add([string]$e)}
+    foreach($e in @(Maintenance-Task-Errors $snap.MaintenanceTask $true)){$errors.Add([string]$e)}
     $pass=($errors.Count -eq 0)
-    $state=[ordered]@{TestId='LIFECYCLE-REAL-002';EvidenceSchema=2;InstallerFileName=$installer.Name;InstallerSha256=$installerHash;BaselinePass=$pass;Baseline=$snap;Repair=$null;Uninstall=$null}
+    $state=[ordered]@{TestId='LIFECYCLE-REAL-002';EvidenceSchema=3;InstallerFileName=$installer.Name;InstallerSha256=$installerHash;BaselinePass=$pass;Baseline=$snap;Repair=$null;Uninstall=$null}
     $state|ConvertTo-Json -Depth 11|Set-Content -LiteralPath $StatePath -Encoding UTF8
-    $report=[ordered]@{TestId='LIFECYCLE-REAL-002';EvidenceSchema=2;Phase='Baseline';InstallerSha256=$installerHash;FailureCount=$errors.Count;Failures=@($errors);BaselinePass=$pass;RepairPass=$false;UninstallPass=$false;OverallPass=$false;NextAction='Run this exact authorized installer normally, then run -Phase AfterRepair.'}
+    $report=[ordered]@{TestId='LIFECYCLE-REAL-002';EvidenceSchema=3;Phase='Baseline';InstallerSha256=$installerHash;FailureCount=$errors.Count;Failures=@($errors);BaselinePass=$pass;MaintenanceTaskHealthy=[bool]($snap.MaintenanceTask.Present -and $snap.MaintenanceTask.Limited -and $snap.MaintenanceTask.CurrentUser -and $snap.MaintenanceTask.LogonTrigger -and $snap.MaintenanceTask.ActionBoundToInstalledScanner);RepairPass=$false;UninstallPass=$false;OverallPass=$false;NextAction='Run this exact authorized installer normally, then run -Phase AfterRepair.'}
     $report|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $OutputPath -Encoding UTF8;$report|ConvertTo-Json -Depth 8
     if(-not $pass){exit 1};exit 0
 }
 
 if(-not(Test-Path -LiteralPath $StatePath -PathType Leaf)){throw 'Lifecycle baseline state not found. Run Baseline first.'}
 $state=Get-Content -LiteralPath $StatePath -Raw|ConvertFrom-Json
-if($state.TestId -ne 'LIFECYCLE-REAL-002' -or -not[bool]$state.BaselinePass){throw 'Lifecycle baseline is invalid or did not pass.'}
+if($state.TestId -ne 'LIFECYCLE-REAL-002' -or [int]$state.EvidenceSchema -lt 3 -or -not[bool]$state.BaselinePass){throw 'Lifecycle baseline is invalid, too old, or did not pass.'}
 $baseline=$state.Baseline
 $current=Snapshot
 $errors=New-Object System.Collections.Generic.List[string]
@@ -182,15 +220,17 @@ if($Phase -eq 'AfterRepair'){
     if(-not$current.SettingsExists -or [string]$current.SettingsSha256 -ne [string]$baseline.SettingsSha256){$errors.Add('settings.dat was not preserved exactly across repair.')}
     foreach($e in @(Compare-Recovery $baseline.SharedRecoveryState $current.SharedRecoveryState)){$errors.Add([string]$e)}
     foreach($e in @(Registration-Errors $current.Registrations)){$errors.Add([string]$e)}
+    foreach($e in @(Maintenance-Task-Errors $current.MaintenanceTask $true)){$errors.Add([string]$e)}
     $baselineThumb=[string]$baseline.DevelopmentCertThumbprint
     if(-not[string]::IsNullOrWhiteSpace($baselineThumb)){
         if([string]$current.DevelopmentCertThumbprint -ne $baselineThumb){$errors.Add('Development certificate thumbprint changed during same-build repair.')}
         if(-not(Cert-Present 'TrustedPublisher' $baselineThumb) -or -not(Cert-Present 'Root' $baselineThumb)){$errors.Add('Expected development trust certificate is not present after repair.')}
     }
+    $taskHealthy=(@(Maintenance-Task-Errors $current.MaintenanceTask $true).Count -eq 0)
     $pass=($errors.Count -eq 0)
-    $state.Repair=[ordered]@{Pass=$pass;SettingsPreserved=($current.SettingsSha256 -eq $baseline.SettingsSha256);CorePreserved=($current.CoreSha256 -eq $baseline.CoreSha256);SharedRecoveryStatePreserved=(@(Compare-Recovery $baseline.SharedRecoveryState $current.SharedRecoveryState).Count -eq 0);RegistrationHealthy=(@(Registration-Errors $current.Registrations).Count -eq 0)}
+    $state.Repair=[ordered]@{Pass=$pass;SettingsPreserved=($current.SettingsSha256 -eq $baseline.SettingsSha256);CorePreserved=($current.CoreSha256 -eq $baseline.CoreSha256);SharedRecoveryStatePreserved=(@(Compare-Recovery $baseline.SharedRecoveryState $current.SharedRecoveryState).Count -eq 0);RegistrationHealthy=(@(Registration-Errors $current.Registrations).Count -eq 0);MaintenanceTaskHealthy=$taskHealthy}
     $state|ConvertTo-Json -Depth 11|Set-Content -LiteralPath $StatePath -Encoding UTF8
-    $report=[ordered]@{TestId='LIFECYCLE-REAL-002';EvidenceSchema=2;Phase='AfterRepair';InstallerSha256=[string]$state.InstallerSha256;FailureCount=$errors.Count;Failures=@($errors);BaselinePass=$true;RepairPass=$pass;UninstallPass=$false;OverallPass=$false;NextAction='Uninstall OMNIX normally and choose NO when asked to delete settings/history, then run -Phase AfterUninstall.'}
+    $report=[ordered]@{TestId='LIFECYCLE-REAL-002';EvidenceSchema=3;Phase='AfterRepair';InstallerSha256=[string]$state.InstallerSha256;FailureCount=$errors.Count;Failures=@($errors);BaselinePass=$true;RepairPass=$pass;MaintenanceTaskHealthyAfterRepair=$taskHealthy;UninstallPass=$false;OverallPass=$false;NextAction='Uninstall OMNIX normally and choose NO when asked to delete settings/history, then run -Phase AfterUninstall.'}
     $report|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $OutputPath -Encoding UTF8;$report|ConvertTo-Json -Depth 8
     if(-not$pass){exit 1};exit 0
 }
@@ -199,6 +239,7 @@ if($null -eq $state.Repair -or -not[bool]$state.Repair.Pass){$errors.Add('Passin
 if($current.InstallDirExists -or $current.CoreExists){$errors.Add('OMNIX application payload remains after uninstall.')}
 if(-not$current.SettingsExists -or [string]$current.SettingsSha256 -ne [string]$baseline.SettingsSha256){$errors.Add('settings.dat was not preserved after user chose to keep data.')}
 if(@($current.Registrations).Count -ne 0){$errors.Add('OMNIX Office registration remains after uninstall.')}
+foreach($e in @(Maintenance-Task-Errors $current.MaintenanceTask $false)){$errors.Add([string]$e)}
 foreach($e in @(Compare-Recovery $baseline.SharedRecoveryState $current.SharedRecoveryState)){$errors.Add([string]$e)}
 $thumb=[string]$baseline.DevelopmentCertThumbprint
 $certRemoved=$true
@@ -206,17 +247,18 @@ if(-not[string]::IsNullOrWhiteSpace($thumb)){
     if(Cert-Present 'TrustedPublisher' $thumb){$errors.Add('OMNIX development certificate remains in TrustedPublisher.');$certRemoved=$false}
     if(Cert-Present 'Root' $thumb){$errors.Add('OMNIX development certificate remains in Root.');$certRemoved=$false}
 }
+$taskRemoved=(-not[bool]$current.MaintenanceTask.Present)
 $pass=($errors.Count -eq 0)
-$state.Uninstall=[ordered]@{Pass=$pass;SettingsPreserved=($current.SettingsExists -and $current.SettingsSha256 -eq $baseline.SettingsSha256);RegistrationRemoved=(@($current.Registrations).Count -eq 0);PayloadRemoved=(-not$current.InstallDirExists -and -not$current.CoreExists);SharedRecoveryStatePreserved=(@(Compare-Recovery $baseline.SharedRecoveryState $current.SharedRecoveryState).Count -eq 0);DevelopmentCertificateRemoved=$certRemoved}
+$state.Uninstall=[ordered]@{Pass=$pass;SettingsPreserved=($current.SettingsExists -and $current.SettingsSha256 -eq $baseline.SettingsSha256);RegistrationRemoved=(@($current.Registrations).Count -eq 0);MaintenanceTaskRemoved=$taskRemoved;PayloadRemoved=(-not$current.InstallDirExists -and -not$current.CoreExists);SharedRecoveryStatePreserved=(@(Compare-Recovery $baseline.SharedRecoveryState $current.SharedRecoveryState).Count -eq 0);DevelopmentCertificateRemoved=$certRemoved}
 $state|ConvertTo-Json -Depth 11|Set-Content -LiteralPath $StatePath -Encoding UTF8
 $report=[ordered]@{
-    TestId='LIFECYCLE-REAL-002';EvidenceSchema=2;Phase='AfterUninstall';TimestampUtc=(Get-Date).ToUniversalTime().ToString('o');InstallerSha256=[string]$state.InstallerSha256
+    TestId='LIFECYCLE-REAL-002';EvidenceSchema=3;Phase='AfterUninstall';TimestampUtc=(Get-Date).ToUniversalTime().ToString('o');InstallerSha256=[string]$state.InstallerSha256
     FailureCount=$errors.Count;Failures=@($errors);BaselinePass=[bool]$state.BaselinePass;RepairPass=[bool]$state.Repair.Pass
-    SettingsPreservedAcrossRepair=[bool]$state.Repair.SettingsPreserved;CorePreservedAcrossRepair=[bool]$state.Repair.CorePreserved;SharedOfficeRecoveryStatePreservedAcrossRepair=[bool]$state.Repair.SharedRecoveryStatePreserved;RegistrationHealthyAfterRepair=[bool]$state.Repair.RegistrationHealthy
-    UninstallPass=$pass;SettingsPreservedAcrossUninstall=[bool]$state.Uninstall.SettingsPreserved;OmnixRegistrationRemoved=[bool]$state.Uninstall.RegistrationRemoved;AppPayloadRemoved=[bool]$state.Uninstall.PayloadRemoved;SharedOfficeRecoveryStatePreservedAcrossUninstall=[bool]$state.Uninstall.SharedRecoveryStatePreserved;DevelopmentCertificateRemoved=[bool]$state.Uninstall.DevelopmentCertificateRemoved
+    SettingsPreservedAcrossRepair=[bool]$state.Repair.SettingsPreserved;CorePreservedAcrossRepair=[bool]$state.Repair.CorePreserved;SharedOfficeRecoveryStatePreservedAcrossRepair=[bool]$state.Repair.SharedRecoveryStatePreserved;RegistrationHealthyAfterRepair=[bool]$state.Repair.RegistrationHealthy;MaintenanceTaskHealthyAfterRepair=[bool]$state.Repair.MaintenanceTaskHealthy
+    UninstallPass=$pass;SettingsPreservedAcrossUninstall=[bool]$state.Uninstall.SettingsPreserved;OmnixRegistrationRemoved=[bool]$state.Uninstall.RegistrationRemoved;MaintenanceTaskRemoved=[bool]$state.Uninstall.MaintenanceTaskRemoved;AppPayloadRemoved=[bool]$state.Uninstall.PayloadRemoved;SharedOfficeRecoveryStatePreservedAcrossUninstall=[bool]$state.Uninstall.SharedRecoveryStatePreserved;DevelopmentCertificateRemoved=[bool]$state.Uninstall.DevelopmentCertificateRemoved
     OverallPass=[bool]([bool]$state.BaselinePass -and [bool]$state.Repair.Pass -and $pass)
     Privacy='Hash-only evidence. No settings/API-key contents or raw Office recovery values are copied to the report.'
-    Safety='Read-only registry/certificate snapshots. User performs supported installer/uninstaller actions explicitly.'
+    Safety='Read-only registry/certificate/task snapshots. User performs supported installer/uninstaller actions explicitly.'
 }
 $report|ConvertTo-Json -Depth 9|Set-Content -LiteralPath $OutputPath -Encoding UTF8;$report|ConvertTo-Json -Depth 9
 if(-not$report.OverallPass){exit 1};exit 0
