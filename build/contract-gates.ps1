@@ -155,6 +155,24 @@ Require-Contains 'build/build-with-fallbacks.ps1' '-AppManifest' 'Deployment man
 Require-Contains 'build/build-with-fallbacks.ps1' '-CertHash' 'Signing must use the actual certificate/private key in the Windows certificate store.'
 Require-NotContains 'build/build-with-fallbacks.ps1' 'still installable via vstolocal' 'Do not describe unsigned manifests as a valid release fallback.'
 
+# 10. Packaging/CI evidence must prove a non-hollow installer from the exact branch head.
+Require-PowerShellParses 'build/package.ps1'
+Require-Contains 'build/package.ps1' 'HOLLOW_INSTALLER_GUARD' 'Packaging must fail closed if required Office binaries are absent.'
+Require-Contains 'build/package.ps1' 'OMNIX.Excel.vsto' 'Excel deployment manifest must be mandatory in the payload.'
+Require-Contains 'build/package.ps1' 'OMNIX.Word.vsto' 'Word deployment manifest must be mandatory in the payload.'
+Require-Contains 'build/package.ps1' 'OMNIX.PowerPoint.vsto' 'PowerPoint deployment manifest must be mandatory in the payload.'
+Require-Contains 'build/package.ps1' 'OMNIX.Core.dll' 'Shared OMNIX core must be mandatory in the payload.'
+Require-Contains 'build/package.ps1' 'payload-inventory.json' 'Packaging must emit machine-readable payload evidence.'
+Require-Contains 'build/package.ps1' 'OMNIX PAYLOAD GATE: PASS' 'Packaging needs an explicit complete-payload success marker.'
+Require-Contains '.github/workflows/build.yml' 'Checkout exact source commit' 'Build CI must test the actual PR branch head, not only a synthetic merge commit.'
+Require-Contains '.github/workflows/build.yml' 'github.event.pull_request.head.sha' 'PR builds must explicitly resolve the branch-head SHA.'
+Require-Contains '.github/workflows/build.yml' 'git rev-parse HEAD' 'Artifact evidence must record the actual checked-out source commit.'
+Require-Contains '.github/workflows/build.yml' 'Verify staged payload before installer compilation' 'CI must independently verify the complete payload before Inno Setup.'
+Require-Contains '.github/workflows/build.yml' 'inno-compile.log' 'CI must retain compile evidence that Office host DLLs were embedded.'
+Require-Contains '.github/workflows/build.yml' 'RequiredOfficePayloadPresent' 'Development artifact metadata must state whether required Office payload was proven.'
+Require-Contains '.github/workflows/contract.yml' 'Checkout exact source commit' 'Architecture CI must test the exact branch head.'
+Require-Contains '.github/workflows/contract.yml' 'github.event.pull_request.head.sha' 'Architecture CI must explicitly resolve the PR branch-head SHA.'
+
 if ($failures.Count -gt 0) {
     Write-Host 'OMNIX CONTRACT GATE: FAIL' -ForegroundColor Red
     foreach ($failure in $failures) { Write-Host " - $failure" -ForegroundColor Red }
