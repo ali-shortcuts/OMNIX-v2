@@ -129,6 +129,7 @@ function Release-ComObjectSafe($obj) {
 function Test-HostRound($host, [int]$round) {
     $app = $null
     $matched = $null
+    $comAddins = $null
     $started = Get-Date
     $result = [ordered]@{
         Host = $host.Name
@@ -137,6 +138,7 @@ function Test-HostRound($host, [int]$round) {
         Started = $false
         Version = $null
         Registry = $null
+        ComAddinCount = 0
         AddinFound = $false
         AddinProgId = $null
         AddinDescription = $null
@@ -160,20 +162,31 @@ function Test-HostRound($host, [int]$round) {
         try { $result.Version = [string]$app.Version } catch { $result.Version = 'unknown' }
         $result.Registry = Get-OmnixRegistryState $host.RegistryHost $result.Version
 
-        foreach ($addin in @($app.COMAddIns)) {
+        # COMAddIns is a 1-based COM collection. Enumerate it explicitly by Item(index): relying on
+        # PowerShell's foreach adapter for __ComObject collections can yield the collection object
+        # itself instead of its children on some Office/PowerShell combinations, causing a false
+        # "OMNIX not found" result even when the add-in is present.
+        $comAddins = $app.COMAddIns
+        try { $result.ComAddinCount = [int]$comAddins.Count } catch { $result.ComAddinCount = 0 }
+        for ($i = 1; $i -le $result.ComAddinCount; $i++) {
+            $item = $null
             try {
-                $desc = [string]$addin.Description
-                $prog = [string]$addin.ProgId
+                $item = $comAddins.Item($i)
+                $desc = [string]$item.Description
+                $prog = [string]$item.ProgId
                 if ($desc -like '*OMNIX*' -or $prog -like '*OMNIX*') {
-                    $matched = $addin
+                    $matched = $item
+                    $item = $null
                     $result.AddinFound = $true
                     $result.AddinProgId = $prog
                     $result.AddinDescription = $desc
-                    $result.InitialConnect = [bool]$addin.Connect
+                    $result.InitialConnect = [bool]$matched.Connect
                     $result.AutomaticLoadPass = $result.InitialConnect
                     break
                 }
-            } catch { }
+            }
+            catch { }
+            finally { Release-ComObjectSafe $item }
         }
 
         # Diagnostic only. Never use the forced state for Pass.
@@ -222,6 +235,7 @@ function Test-HostRound($host, [int]$round) {
             try { $app.Quit() } catch { }
         }
         Release-ComObjectSafe $matched
+        Release-ComObjectSafe $comAddins
         Release-ComObjectSafe $app
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
