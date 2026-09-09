@@ -120,9 +120,9 @@ function Wait-ProcessExit([string]$processName, [int]$timeoutMs = 5000) {
     return (-not (Get-Process -Name $processName -ErrorAction SilentlyContinue))
 }
 
-function Base-Result([string]$host) {
+function Base-Result([string]$officeHostName) {
     return [ordered]@{
-        Host = $host
+        Host = $officeHostName
         Installed = $true
         Started = $false
         Version = $null
