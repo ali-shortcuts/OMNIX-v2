@@ -105,8 +105,6 @@ namespace OMNIX.Core.Context
                     var used = ws.UsedRange;
                     sb.AppendLine();
                     sb.AppendLine("--- Sheet '" + ws.Name + "' used range: " + used.Address[false, false] + " ---");
-                    // BuildValuesTable resizes before Value2 is requested, so a corrupted/oversized
-                    // UsedRange cannot force a full-sheet COM array allocation.
                     sb.Append(BuildValuesTable(used, 200));
                     if (sb.Length >= Math.Min(maxChars, _maxChars())) break;
                 }
@@ -154,13 +152,11 @@ namespace OMNIX.Core.Context
 
         public byte[] CaptureSlideAsImage(int slideIndexOneBased)
         {
-            return null; // Excel has no slides
+            return null;
         }
 
         public byte[] CaptureCurrentViewAsImage()
         {
-            // Prefer the active chart. For a huge range selection, capture the visible window range
-            // instead of asking Excel/clipboard to render an entire column/sheet into one bitmap.
             try
             {
                 var chartImg = CaptureChartAsImage(null);
@@ -185,7 +181,6 @@ namespace OMNIX.Core.Context
                 }
                 catch { }
 
-                // Keep the final clipboard image bounded even on extreme zoom / unusually large windows.
                 int totalRows, totalCols, shownRows, shownCols, areaCount;
                 captureRange = CreateBoundedReadRange(
                     captureRange, CaptureCellCap, 80,
@@ -233,8 +228,6 @@ namespace OMNIX.Core.Context
         {
             ExcelWrite.ApplyWrite(this, toolName, argumentsJson);
         }
-
-        // ------------------------------------------------------------------ helpers
 
         internal Excel.Application App { get { return _app; } }
         internal int MaxCells { get { return _maxCells(); } }
@@ -343,11 +336,6 @@ namespace OMNIX.Core.Context
             return sb.ToString();
         }
 
-        /// <summary>
-        /// Returns a rectangular first-area range whose cell count is within cellCap. Crucially,
-        /// callers must use the returned range for Value2/Formula access rather than reading the
-        /// original range and trimming the resulting COM array afterward.
-        /// </summary>
         private static Excel.Range CreateBoundedReadRange(
             Excel.Range range,
             int cellCap,
@@ -425,42 +413,47 @@ namespace OMNIX.Core.Context
         }
     }
 
-    /// <summary>Excel write-tool plumbing (write_to_cell / insert_formula / highlight_range).</summary>
+    /// <summary>
+    /// Excel write-tool plumbing. Every mutation is bounded before the preview is shown and is
+    /// validated again immediately before ApplyWrite, so a model cannot turn a single-cell request
+    /// into a whole-sheet mutation by changing arguments between stages.
+    /// </summary>
     internal static class ExcelWrite
     {
+        private const int ExcelCellTextLimit = 32767;
+        private const int ExcelFormulaLengthLimit = 8192;
+        private const int MaxHighlightCells = 10000;
+        private const int MaxAddressChars = 128;
+
         public static WritePreview Prepare(ExcelHostAdapter adapter, string toolName, string argumentsJson)
         {
             var args = ToolArguments.Parse(argumentsJson);
-            string address = args.Get("address", args.Get("range", ""));
-            if (string.IsNullOrEmpty(address))
-                throw new OmnixException(ErrorCode.CORE_ERROR, "Missing target address.",
-                    toolName + " requires 'address'.", "Provide an A1-style address like A1 or A1:C5.");
+            string address = NormalizeAddress(args.Get("address", args.Get("range", "")));
+            var ws = RequireWorksheet(adapter, toolName);
+            Excel.Range target = ResolveAndValidateTarget(adapter, ws, toolName, address, args);
 
-            var app = adapter.App;
-            var ws = app.ActiveSheet as Excel.Worksheet;
-            if (ws == null)
-                throw new OmnixException(ErrorCode.CORE_ERROR, "No worksheet is active.", toolName, "Open a worksheet.");
-
-            Excel.Range target = ws.Range[address];
-            string before = "";
+            string before;
             if (toolName == ToolNames.HighlightRange)
             {
-                int old = Convert.ToInt32(target.Interior.ColorIndex);
-                before = "Current Interior.ColorIndex: " + old;
+                string old;
+                try { old = Convert.ToString(target.Interior.ColorIndex); }
+                catch { old = "(mixed/unknown)"; }
+                before = "Target " + target.Address[false, false] + " current Interior.ColorIndex: " + old;
             }
             else
             {
                 object current = toolName == ToolNames.InsertFormula ? target.Formula : target.Value2;
-                before = target.Address[false, false] + " currently = " + (current == null ? "(empty)" : Convert.ToString(current));
+                before = target.Address[false, false] + " currently = " +
+                         (current == null ? "(empty)" : TextUtil.Truncate(Convert.ToString(current), 1000));
             }
 
             string after;
             if (toolName == ToolNames.WriteToCell)
-                after = target.Address[false, false] + " will contain: " + args.Get("value", "");
+                after = target.Address[false, false] + " will contain: " + TextUtil.Truncate(args.Get("value", ""), 2000);
             else if (toolName == ToolNames.InsertFormula)
-                after = target.Address[false, false] + " formula will be: " + args.Get("formula", args.Get("value", ""));
+                after = target.Address[false, false] + " formula will be: " + TextUtil.Truncate(args.Get("formula", args.Get("value", "")), 2000);
             else
-                after = target.Address[false, false] + " will be highlighted yellow.";
+                after = target.Address[false, false] + " (" + GetCellCount(target) + " cells) will be highlighted yellow.";
 
             return new WritePreview
             {
@@ -475,11 +468,9 @@ namespace OMNIX.Core.Context
         public static void ApplyWrite(ExcelHostAdapter adapter, string toolName, string argumentsJson)
         {
             var args = ToolArguments.Parse(argumentsJson);
-            string address = args.Get("address", args.Get("range", ""));
-            var ws = adapter.App.ActiveSheet as Excel.Worksheet;
-            if (ws == null)
-                throw new OmnixException(ErrorCode.CORE_ERROR, "No worksheet is active.", toolName, "Open a worksheet.");
-            Excel.Range target = ws.Range[address];
+            string address = NormalizeAddress(args.Get("address", args.Get("range", "")));
+            var ws = RequireWorksheet(adapter, toolName);
+            Excel.Range target = ResolveAndValidateTarget(adapter, ws, toolName, address, args);
 
             switch (toolName)
             {
@@ -490,13 +481,108 @@ namespace OMNIX.Core.Context
                     target.Formula = args.Get("formula", args.Get("value", ""));
                     break;
                 case ToolNames.HighlightRange:
-                    // BGR int for Office: yellow (255,235,59) -> 0x3BEBFF
                     target.Interior.Color = 0x3BEBFF;
                     break;
                 default:
                     throw new OmnixException(ErrorCode.CORE_ERROR, "Unknown Excel write tool: " + toolName, "", "");
             }
-            Logging.Logger.Install("Excel write tool applied: " + toolName + " -> " + address);
+            Logging.Logger.Install("Excel write tool applied: " + toolName + " -> " + target.Address[false, false]);
+        }
+
+        private static Excel.Worksheet RequireWorksheet(ExcelHostAdapter adapter, string toolName)
+        {
+            var ws = adapter.App.ActiveSheet as Excel.Worksheet;
+            if (ws == null)
+                throw new OmnixException(ErrorCode.CORE_ERROR, "No worksheet is active.", toolName, "Open a worksheet.");
+            return ws;
+        }
+
+        private static string NormalizeAddress(string address)
+        {
+            address = (address ?? "").Trim();
+            if (address.Length == 0)
+                throw new OmnixException(ErrorCode.CORE_ERROR, "Missing target address.",
+                    "Excel write requires 'address'.", "Provide an A1-style address like A1 or A1:C5.");
+            if (address.Length > MaxAddressChars)
+                throw new OmnixException(ErrorCode.CORE_ERROR, "Target address is too long.",
+                    "Excel write address exceeded " + MaxAddressChars + " characters.", "Use a bounded A1-style range on the active sheet.");
+            return address;
+        }
+
+        private static Excel.Range ResolveAndValidateTarget(
+            ExcelHostAdapter adapter,
+            Excel.Worksheet ws,
+            string toolName,
+            string address,
+            ToolArguments args)
+        {
+            Excel.Range target;
+            try { target = ws.Range[address]; }
+            catch (Exception ex)
+            {
+                throw new OmnixException(ErrorCode.CORE_ERROR, "Invalid Excel target address.",
+                    toolName + " address='" + address + "'. " + ex.Message,
+                    "Use an A1-style address on the active worksheet.");
+            }
+
+            if (target == null)
+                throw new OmnixException(ErrorCode.CORE_ERROR, "Excel target could not be resolved.", toolName, "Use a valid A1-style address.");
+
+            int areaCount = 1;
+            try { areaCount = target.Areas.Count; } catch { }
+            if (areaCount != 1)
+                throw new OmnixException(ErrorCode.CORE_ERROR, "Multi-area Excel writes are not allowed.",
+                    toolName + " resolved to " + areaCount + " areas.", "Use one contiguous range.");
+
+            long cells = GetCellCount(target);
+            if (toolName == ToolNames.WriteToCell || toolName == ToolNames.InsertFormula)
+            {
+                if (cells != 1)
+                    throw new OmnixException(ErrorCode.CORE_ERROR,
+                        "This write tool requires exactly one target cell.",
+                        toolName + " resolved to " + cells + " cells.",
+                        "Use write_to_cell/insert_formula for one cell at a time, or ask for a smaller explicit change.");
+            }
+            else if (toolName == ToolNames.HighlightRange)
+            {
+                int configuredCap = Math.Max(1, adapter.MaxCells);
+                long cap = Math.Min(MaxHighlightCells, configuredCap);
+                if (cells > cap)
+                    throw new OmnixException(ErrorCode.CORE_ERROR,
+                        "Highlight range is too large for one AI-approved mutation.",
+                        "Requested " + cells + " cells; limit=" + cap + ".",
+                        "Use a smaller contiguous range and approve it separately.");
+            }
+
+            if (toolName == ToolNames.WriteToCell)
+            {
+                string value = args.Get("value", "") ?? "";
+                if (value.Length > ExcelCellTextLimit)
+                    throw new OmnixException(ErrorCode.CORE_ERROR,
+                        "Cell value is too large for Excel.",
+                        "write_to_cell length=" + value.Length + "; Excel limit=" + ExcelCellTextLimit + ".",
+                        "Shorten the value or split it across cells deliberately.");
+            }
+            else if (toolName == ToolNames.InsertFormula)
+            {
+                string formula = args.Get("formula", args.Get("value", "")) ?? "";
+                if (string.IsNullOrWhiteSpace(formula) || !formula.TrimStart().StartsWith("=", StringComparison.Ordinal))
+                    throw new OmnixException(ErrorCode.CORE_ERROR,
+                        "Formula must begin with '='.", toolName, "Provide a valid Excel formula such as =SUM(A1:A10).");
+                if (formula.Length > ExcelFormulaLengthLimit)
+                    throw new OmnixException(ErrorCode.CORE_ERROR,
+                        "Formula is too long for a bounded AI write.",
+                        "insert_formula length=" + formula.Length + "; limit=" + ExcelFormulaLengthLimit + ".",
+                        "Simplify the formula or break the task into smaller explicit steps.");
+            }
+
+            return target;
+        }
+
+        private static long GetCellCount(Excel.Range target)
+        {
+            try { return Convert.ToInt64(target.Cells.CountLarge); }
+            catch { return Convert.ToInt64(target.Cells.Count); }
         }
     }
 }
