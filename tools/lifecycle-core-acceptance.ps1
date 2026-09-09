@@ -70,11 +70,11 @@ function Registry-Fingerprint([string]$path){
 function Recovery-Snapshot {
     $rows=@()
     foreach($version in @('16.0','15.0')){
-        foreach($host in @('Excel','Word','PowerPoint')){
+        foreach($officeHostName in @('Excel','Word','PowerPoint')){
             foreach($subtree in @('DisabledItems','CrashingAddinList','DoNotDisableAddinList')){
-                $path="HKCU:\Software\Microsoft\Office\$version\$host\Resiliency\$subtree"
+                $path="HKCU:\Software\Microsoft\Office\$version\$officeHostName\Resiliency\$subtree"
                 $fp=Registry-Fingerprint $path
-                $rows += [ordered]@{Version=$version;Host=$host;Subtree=$subtree;Exists=[bool]$fp.Exists;Sha256=$fp.Sha256;EntryCount=[int]$fp.EntryCount}
+                $rows += [ordered]@{Version=$version;Host=$officeHostName;Subtree=$subtree;Exists=[bool]$fp.Exists;Sha256=$fp.Sha256;EntryCount=[int]$fp.EntryCount}
             }
         }
     }
@@ -103,12 +103,12 @@ function Resolve-Manifest([string]$value){
 function Registrations {
     $rows=@()
     foreach($version in @('16.0','15.0')){
-        foreach($host in @('Excel','Word','PowerPoint')){
-            $path="HKCU:\Software\Microsoft\Office\$version\$host\Addins\OMNIX"
+        foreach($officeHostName in @('Excel','Word','PowerPoint')){
+            $path="HKCU:\Software\Microsoft\Office\$version\$officeHostName\Addins\OMNIX"
             if(Test-Path $path){
                 $p=Get-ItemProperty -Path $path
                 $m=Resolve-Manifest ([string]$p.Manifest)
-                $rows += [ordered]@{Version=$version;Host=$host;Exists=$true;LoadBehavior=[int]$p.LoadBehavior;ManifestExists=[bool]($m -and (Test-Path -LiteralPath $m -PathType Leaf));FriendlyName=[string]$p.FriendlyName}
+                $rows += [ordered]@{Version=$version;Host=$officeHostName;Exists=$true;LoadBehavior=[int]$p.LoadBehavior;ManifestExists=[bool]($m -and (Test-Path -LiteralPath $m -PathType Leaf));FriendlyName=[string]$p.FriendlyName}
             }
         }
     }
@@ -116,13 +116,13 @@ function Registrations {
 }
 function Registration-Errors($rows){
     $errors=New-Object System.Collections.Generic.List[string]
-    foreach($host in @('Excel','Word','PowerPoint')){
-        $r=@($rows|Where-Object{$_.Host -eq $host -and $_.Exists})
-        if($r.Count -lt 1){$errors.Add("OMNIX registration missing for $host.");continue}
+    foreach($officeHostName in @('Excel','Word','PowerPoint')){
+        $r=@($rows|Where-Object{$_.Host -eq $officeHostName -and $_.Exists})
+        if($r.Count -lt 1){$errors.Add("OMNIX registration missing for $officeHostName.");continue}
         foreach($x in $r){
-            if([int]$x.LoadBehavior -ne 3){$errors.Add("$host/$($x.Version) LoadBehavior is not 3.")}
-            if(-not[bool]$x.ManifestExists){$errors.Add("$host/$($x.Version) manifest target is missing.")}
-            if([string]$x.FriendlyName -ne 'OMNIX'){$errors.Add("$host/$($x.Version) FriendlyName is unexpected.")}
+            if([int]$x.LoadBehavior -ne 3){$errors.Add("$officeHostName/$($x.Version) LoadBehavior is not 3.")}
+            if(-not[bool]$x.ManifestExists){$errors.Add("$officeHostName/$($x.Version) manifest target is missing.")}
+            if([string]$x.FriendlyName -ne 'OMNIX'){$errors.Add("$officeHostName/$($x.Version) FriendlyName is unexpected.")}
         }
     }
     return $errors
