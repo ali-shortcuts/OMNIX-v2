@@ -4,9 +4,9 @@
 # Ollama or LM Studio already running with at least one real local model loaded/available.
 #
 # The script NEVER disables network adapters, firewall rules, VPNs, proxies, or security settings.
-# It only observes whether public HTTPS probes fail, then performs a real localhost model-list +
-# chat round-trip. PASS requires no public HTTPS probe to succeed and at least one local runtime
-# to complete a real chat request.
+# It only observes whether public HTTPS probes receive any HTTP response, then performs a real
+# localhost model-list + chat round-trip. PASS requires no public HTTPS response and at least one
+# local runtime to complete a real chat request.
 
 [CmdletBinding()]
 param(
@@ -78,7 +78,8 @@ function Test-PublicInternetDisconnected {
         $r = Invoke-JsonHttp -Method 'GET' -Url $url -Body $null -Timeout 5
         $results += [pscustomobject]@{
             Endpoint = ([Uri]$url).Host
-            Reachable = [bool]$r.Success
+            # Any HTTP status proves that the public endpoint was reached, even 4xx/5xx.
+            Reachable = [bool]($r.Status -gt 0)
             Status = [int]$r.Status
             TransportError = $r.TransportError
         }
@@ -156,7 +157,7 @@ $localPass = @($localResults | Where-Object { $_.Pass })
 
 $failures = New-Object System.Collections.Generic.List[string]
 if ($internetReachable) {
-    $failures.Add('At least one public HTTPS endpoint was reachable. Disconnect Internet before running the offline acceptance gate.')
+    $failures.Add('At least one public HTTPS endpoint returned an HTTP response. Disconnect Internet before running the offline acceptance gate.')
 }
 if ($localPass.Count -lt 1) {
     $failures.Add('Neither Ollama nor LM Studio completed a real local-model chat round-trip.')
