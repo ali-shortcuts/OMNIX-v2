@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -15,16 +16,23 @@ namespace OMNIX.Core.AiGateway.Http
     /// <summary>
     /// Shared OpenAI-compatible chat-completions client (stream: true, SSE).
     /// Used by Groq, OpenRouter, LM Studio and Custom providers so behavior is identical
-    /// across them (spec Layer 6: same normalized input/output for every adapter).
+    /// across them. Response/model bodies are bounded before full materialization so a malformed
+    /// endpoint cannot consume unbounded memory inside Excel/Word/PowerPoint.
     /// </summary>
     public sealed class OpenAiCompatibleClient
     {
+        private const int MaxAssistantChars = 2 * 1024 * 1024;
+        private const int MaxJsonBodyBytes = 8 * 1024 * 1024;
+        private const int MaxImageBytes = 20 * 1024 * 1024;
+        private const int MaxModelCount = 5000;
+
         private readonly string _baseUrl;
         private readonly string _providerDisplayName;
         private readonly Dictionary<string, string> _extraHeaders;
 
         public OpenAiCompatibleClient(string baseUrl, string providerDisplayName, Dictionary<string, string> extraHeaders = null)
         {
+            if (string.IsNullOrWhiteSpace(baseUrl)) throw new ArgumentException("baseUrl is required", "baseUrl");
             _baseUrl = baseUrl.TrimEnd('/');
             _providerDisplayName = providerDisplayName;
             _extraHeaders = extraHeaders;
@@ -40,8 +48,10 @@ namespace OMNIX.Core.AiGateway.Http
                 var content = new JArray();
                 if (!string.IsNullOrEmpty(turn.Text))
                     content.Add(new JObject { { "type", "text" }, { "text", turn.Text } });
-                foreach (var img in turn.Images)
+                foreach (var img in turn.Images.Where(i => i != null && i.PngBytes != null && i.PngBytes.Length > 0))
                 {
+                    if (img.PngBytes.Length > MaxImageBytes)
+                        throw OmnixException.Model("Image attachment exceeds the 20 MB OMNIX safety limit.");
                     string b64 = Convert.ToBase64String(img.PngBytes);
                     content.Add(new JObject
                     {
@@ -114,46 +124,52 @@ namespace OMNIX.Core.AiGateway.Http
                         foreach (var kv in _extraHeaders)
                             req.Headers.TryAddWithoutValidation(kv.Key, kv.Value);
 
-                    req.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
-                    var response = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-
-                    if (!response.IsSuccessStatusCode)
+                    req.Content = new StringContent(jsonBody ?? "{}", Encoding.UTF8, "application/json");
+                    using (var response = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
                     {
-                        string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
-                        throw HttpStatusMapper.Map((int)response.StatusCode, err, _providerDisplayName);
-                    }
-
-                    var sb = new StringBuilder();
-                    string model = _configuredModel;
-
-                    if (onDelta == null)
-                    {
-                        string full = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                        var root = JObject.Parse(full);
-                        model = (string)root.SelectToken("model") ?? model;
-                        sb.Append((string)root.SelectToken("choices[0].message.content") ?? "");
-                    }
-                    else
-                    {
-                        using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                        if (!response.IsSuccessStatusCode)
                         {
-                            foreach (string data in SseLineReader.ReadDataLines(stream, ct))
+                            string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
+                            throw HttpStatusMapper.Map((int)response.StatusCode, err, _providerDisplayName);
+                        }
+
+                        var sb = new StringBuilder();
+                        string model = _configuredModel;
+
+                        if (onDelta == null)
+                        {
+                            string full = await ReadBodyBoundedAsync(response.Content, MaxJsonBodyBytes, ct).ConfigureAwait(false);
+                            var root = JObject.Parse(full);
+                            model = (string)root.SelectToken("model") ?? model;
+                            string text = (string)root.SelectToken("choices[0].message.content") ?? "";
+                            if (text.Length > MaxAssistantChars)
+                                throw OmnixException.Provider(_providerDisplayName + " returned an over-sized assistant response.");
+                            sb.Append(text);
+                        }
+                        else
+                        {
+                            using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
                             {
-                                if (data == "[DONE]") break;
-                                JObject chunk;
-                                try { chunk = JObject.Parse(data); }
-                                catch { continue; }
-                                model = (string)chunk.SelectToken("model") ?? model;
-                                string delta = (string)chunk.SelectToken("choices[0].delta.content");
-                                if (!string.IsNullOrEmpty(delta))
+                                foreach (string data in SseLineReader.ReadDataLines(stream, ct))
                                 {
-                                    sb.Append(delta);
-                                    onDelta(delta);
+                                    if (data == "[DONE]") break;
+                                    JObject chunk;
+                                    try { chunk = JObject.Parse(data); }
+                                    catch { continue; }
+                                    model = (string)chunk.SelectToken("model") ?? model;
+                                    string delta = (string)chunk.SelectToken("choices[0].delta.content");
+                                    if (!string.IsNullOrEmpty(delta))
+                                    {
+                                        if (sb.Length + delta.Length > MaxAssistantChars)
+                                            throw OmnixException.Provider(_providerDisplayName + " streamed an over-sized assistant response.");
+                                        sb.Append(delta);
+                                        onDelta(delta);
+                                    }
                                 }
                             }
                         }
+                        return new ChatResponse { Text = sb.ToString(), Model = model };
                     }
-                    return new ChatResponse { Text = sb.ToString(), Model = model };
                 }
             }
             catch (OperationCanceledException)
@@ -187,23 +203,62 @@ namespace OMNIX.Core.AiGateway.Http
                         foreach (var kv in _extraHeaders)
                             req.Headers.TryAddWithoutValidation(kv.Key, kv.Value);
 
-                    var response = await client.SendAsync(req, ct).ConfigureAwait(false);
-                    if (!response.IsSuccessStatusCode)
+                    using (var response = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
                     {
-                        string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
-                        throw HttpStatusMapper.Map((int)response.StatusCode, err, _providerDisplayName);
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
+                            throw HttpStatusMapper.Map((int)response.StatusCode, err, _providerDisplayName);
+                        }
+                        string json = await ReadBodyBoundedAsync(response.Content, MaxJsonBodyBytes, ct).ConfigureAwait(false);
+                        var root = JObject.Parse(json);
+                        var list = new List<string>();
+                        foreach (var m in root["data"] ?? new JArray())
+                        {
+                            if (list.Count >= MaxModelCount) break;
+                            string id = (string)m["id"];
+                            if (!string.IsNullOrWhiteSpace(id)) list.Add(id);
+                        }
+                        return list;
                     }
-                    string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                    var root = JObject.Parse(json);
-                    var list = new List<string>();
-                    foreach (var m in root["data"] ?? new JArray())
-                        list.Add((string)m["id"]);
-                    return list;
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (HttpRequestException ex)
             {
                 throw OmnixException.Network(_providerDisplayName + " models: " + ex.Message);
+            }
+            catch (OmnixException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw OmnixException.Provider(_providerDisplayName + " model discovery failure: " + ex.Message);
+            }
+        }
+
+        private static async Task<string> ReadBodyBoundedAsync(HttpContent content, int maxBytes, CancellationToken ct)
+        {
+            if (content == null) return string.Empty;
+            using (var stream = await content.ReadAsStreamAsync().ConfigureAwait(false))
+            using (var ms = new MemoryStream())
+            {
+                var buffer = new byte[8192];
+                while (true)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    int remaining = maxBytes + 1 - (int)ms.Length;
+                    if (remaining <= 0) throw new InvalidDataException("HTTP response body exceeded OMNIX safety limit.");
+                    int read = await stream.ReadAsync(buffer, 0, Math.Min(buffer.Length, remaining), ct).ConfigureAwait(false);
+                    if (read <= 0) break;
+                    ms.Write(buffer, 0, read);
+                    if (ms.Length > maxBytes) throw new InvalidDataException("HTTP response body exceeded OMNIX safety limit.");
+                }
+                return Encoding.UTF8.GetString(ms.ToArray());
             }
         }
     }
