@@ -31,9 +31,7 @@ function Assert-OfficeClosed {
 function Get-Sha256Hex([byte[]]$bytes) {
     if ($null -eq $bytes) { $bytes = New-Object byte[] 0 }
     $sha = [Security.Cryptography.SHA256]::Create()
-    try {
-        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()
-    }
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant() }
     finally { $sha.Dispose() }
 }
 
@@ -45,17 +43,17 @@ function Convert-ValueBytes($value) {
 }
 
 function Get-KeyDigest([Microsoft.Win32.RegistryKey]$key, [string]$relative = '') {
-    $lines = New-Object System.Collections.Generic.List[string]
-    if ($null -eq $key) { return @() }
+    $lines = @()
+    if ($null -eq $key) { return $lines }
 
     foreach ($name in @($key.GetValueNames() | Sort-Object)) {
         try {
             $kind = [string]$key.GetValueKind($name)
             $bytes = Convert-ValueBytes ($key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames))
             $sha = Get-Sha256Hex $bytes
-            [void]$lines.Add("$relative|$name|$kind|$sha")
+            $lines += "$relative|$name|$kind|$sha"
         } catch {
-            [void]$lines.Add("$relative|$name|UNREADABLE")
+            $lines += "$relative|$name|UNREADABLE"
         }
     }
 
@@ -64,16 +62,16 @@ function Get-KeyDigest([Microsoft.Win32.RegistryKey]$key, [string]$relative = ''
         try {
             $child = $key.OpenSubKey($sub, $false)
             $childRel = if ([string]::IsNullOrEmpty($relative)) { $sub } else { "$relative\$sub" }
-            foreach ($line in Get-KeyDigest $child $childRel) { [void]$lines.Add($line) }
+            foreach ($line in Get-KeyDigest $child $childRel) { $lines += $line }
         } finally {
             if ($null -ne $child) { $child.Dispose() }
         }
     }
-    return @($lines)
+    return $lines
 }
 
 function Get-ResiliencyFingerprint {
-    $all = New-Object System.Collections.Generic.List[string]
+    $all = @()
     $hkcu = [Microsoft.Win32.Registry]::CurrentUser
     foreach ($version in @('16.0','15.0')) {
         foreach ($host in @('Excel','Word','PowerPoint')) {
@@ -82,9 +80,9 @@ function Get-ResiliencyFingerprint {
             try {
                 $key = $hkcu.OpenSubKey($sub, $false)
                 if ($null -eq $key) {
-                    [void]$all.Add("$version/$host|ABSENT")
+                    $all += "$version/$host|ABSENT"
                 } else {
-                    foreach ($line in Get-KeyDigest $key '') { [void]$all.Add("$version/$host|$line") }
+                    foreach ($line in Get-KeyDigest $key '') { $all += "$version/$host|$line" }
                 }
             } finally {
                 if ($null -ne $key) { $key.Dispose() }
@@ -93,10 +91,7 @@ function Get-ResiliencyFingerprint {
     }
     $text = ($all | Sort-Object) -join "`n"
     $bytes = [Text.Encoding]::UTF8.GetBytes($text)
-    return [pscustomobject]@{
-        EntryCount = $all.Count
-        Sha256 = Get-Sha256Hex $bytes
-    }
+    return [pscustomobject]@{ EntryCount=$all.Count; Sha256=(Get-Sha256Hex $bytes) }
 }
 
 function Get-RegistrationRow([string]$version,[string]$host) {
@@ -110,19 +105,16 @@ function Get-RegistrationRow([string]$version,[string]$host) {
     $uri = New-Object System.Uri -ArgumentList $manifestFile
     $expected = ($uri.AbsoluteUri + '|vstolocal')
     return [pscustomobject]@{
-        Version=$version
-        Host=$host
-        Exists=$true
-        LoadBehavior=$p.LoadBehavior
+        Version=$version; Host=$host; Exists=$true; LoadBehavior=$p.LoadBehavior
         ManifestOk=[string]::Equals($manifest,$expected,[StringComparison]::OrdinalIgnoreCase)
         Pass=($p.LoadBehavior -eq 3 -and [string]::Equals($manifest,$expected,[StringComparison]::OrdinalIgnoreCase))
     }
 }
 
-$failures = New-Object System.Collections.Generic.List[string]
+$failures = @()
 $result = [ordered]@{
     TestId = 'OFFICE-MAINTENANCE-REAL-001'
-    EvidenceSchema = 1
+    EvidenceSchema = 2
     TimestampUtc = [DateTime]::UtcNow.ToString('o')
     RequiredHostCount = $RequiredHostCount
     MaintenanceTaskPresent = $false
@@ -131,6 +123,7 @@ $result = [ordered]@{
     MaintenanceTaskLogonTrigger = $false
     MaintenanceTaskActionBoundToInstalledScanner = $false
     MaintenanceRunPass = $false
+    InstalledRegistrationCount = 0
     InstalledHostCount = 0
     RegisteredHostCount = 0
     AllInstalledRegistrationsPass = $false
@@ -157,7 +150,7 @@ try {
     $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     $result.MaintenanceTaskPresent = ($null -ne $task)
     if (-not $result.MaintenanceTaskPresent) {
-        $failures.Add('Transparent per-user OMNIX Office maintenance task is missing.')
+        $failures += 'Transparent per-user OMNIX Office maintenance task is missing.'
     } else {
         $result.MaintenanceTaskLimited = ([string]$task.Principal.RunLevel -ne 'Highest')
         $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -166,10 +159,10 @@ try {
         $actionText = (@($task.Actions | ForEach-Object { ([string]$_.Execute) + ' ' + ([string]$_.Arguments) }) -join ' ')
         $result.MaintenanceTaskActionBoundToInstalledScanner = ($actionText -match [Regex]::Escape('office-registration-maintenance.ps1')) -and ($actionText -match [Regex]::Escape($InstallDir))
 
-        if (-not $result.MaintenanceTaskLimited) { $failures.Add('Maintenance task is configured for elevated/highest execution.') }
-        if (-not $result.MaintenanceTaskCurrentUser) { $failures.Add('Maintenance task is not scoped to the current installing user.') }
-        if (-not $result.MaintenanceTaskLogonTrigger) { $failures.Add('Maintenance task has no current-user logon trigger.') }
-        if (-not $result.MaintenanceTaskActionBoundToInstalledScanner) { $failures.Add('Maintenance task action is not bound to the installed OMNIX scanner.') }
+        if (-not $result.MaintenanceTaskLimited) { $failures += 'Maintenance task is configured for elevated/highest execution.' }
+        if (-not $result.MaintenanceTaskCurrentUser) { $failures += 'Maintenance task is not scoped to the current installing user.' }
+        if (-not $result.MaintenanceTaskLogonTrigger) { $failures += 'Maintenance task has no current-user logon trigger.' }
+        if (-not $result.MaintenanceTaskActionBoundToInstalledScanner) { $failures += 'Maintenance task action is not bound to the installed OMNIX scanner.' }
     }
 
     if (Test-Path -LiteralPath $maintenanceReport) { Remove-Item -LiteralPath $maintenanceReport -Force }
@@ -178,21 +171,22 @@ try {
         '-InstallDir',$InstallDir,'-OutputPath',$maintenanceReport,'-Quiet') -Wait -PassThru -WindowStyle Hidden
     if (-not (Test-Path -LiteralPath $maintenanceReport -PathType Leaf)) { throw "Maintenance scanner produced no report (exit=$($proc.ExitCode))." }
     $maintenance = Get-Content -LiteralPath $maintenanceReport -Raw | ConvertFrom-Json
-    $result.MaintenanceRunPass = ($proc.ExitCode -eq 0 -and $maintenance.TestId -eq 'OFFICE-REGISTRATION-MAINTENANCE-001' -and [bool]$maintenance.OverallPass)
-    $result.InstalledHostCount = [int]$maintenance.InstalledHostCount
-    if (-not $result.MaintenanceRunPass) { $failures.Add('Installed Office registration maintenance scanner failed.') }
-    if ($result.InstalledHostCount -lt $RequiredHostCount) { $failures.Add("Only $($result.InstalledHostCount) supported Office host registrations were detected; required=$RequiredHostCount.") }
+    $result.MaintenanceRunPass = ($proc.ExitCode -eq 0 -and $maintenance.TestId -eq 'OFFICE-REGISTRATION-MAINTENANCE-001' -and [int]$maintenance.EvidenceSchema -ge 2 -and [bool]$maintenance.OverallPass)
+    $result.InstalledRegistrationCount = [int]$maintenance.InstalledHostCount
+    $result.InstalledHostCount = [int]$maintenance.UniqueInstalledHostCount
+    if (-not $result.MaintenanceRunPass) { $failures += 'Installed Office registration maintenance scanner failed.' }
+    if ($result.InstalledHostCount -lt $RequiredHostCount) { $failures += "Only $($result.InstalledHostCount) unique supported Office hosts were detected; required=$RequiredHostCount." }
 
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = @()
     foreach ($mrow in @($maintenance.Results)) {
         if (-not [bool]$mrow.Installed) { continue }
-        $row = Get-RegistrationRow ([string]$mrow.Version) ([string]$mrow.Host)
-        [void]$rows.Add($row)
+        $rows += (Get-RegistrationRow ([string]$mrow.Version) ([string]$mrow.Host))
     }
-    $result.RegistrationResults = @($rows)
-    $result.RegisteredHostCount = @($rows | Where-Object { $_.Pass }).Count
-    $result.AllInstalledRegistrationsPass = ($rows.Count -ge $RequiredHostCount -and @($rows | Where-Object { -not $_.Pass }).Count -eq 0)
-    if (-not $result.AllInstalledRegistrationsPass) { $failures.Add('One or more installed Office hosts do not have correct OMNIX per-user VSTO registration after maintenance.') }
+    $result.RegistrationResults = $rows
+    $passingHosts = @($rows | Where-Object { $_.Pass } | Select-Object -ExpandProperty Host -Unique)
+    $result.RegisteredHostCount = $passingHosts.Count
+    $result.AllInstalledRegistrationsPass = ($result.RegisteredHostCount -ge $RequiredHostCount -and @($rows | Where-Object { -not $_.Pass }).Count -eq 0)
+    if (-not $result.AllInstalledRegistrationsPass) { $failures += 'One or more installed Office hosts do not have correct OMNIX per-user VSTO registration after maintenance.' }
 
     Assert-OfficeClosed
     $result.OfficeProcessesRemainedClosed = $true
@@ -200,14 +194,12 @@ try {
     $after = Get-ResiliencyFingerprint
     $result.AfterResiliencySha256 = $after.Sha256
     $result.SharedOfficeResiliencyPreserved = ($before.Sha256 -eq $after.Sha256 -and $before.EntryCount -eq $after.EntryCount)
-    if (-not $result.SharedOfficeResiliencyPreserved) { $failures.Add('Shared Office Resiliency state changed during maintenance acceptance.') }
+    if (-not $result.SharedOfficeResiliencyPreserved) { $failures += 'Shared Office Resiliency state changed during maintenance acceptance.' }
 }
-catch {
-    $failures.Add($_.Exception.Message)
-}
+catch { $failures += $_.Exception.Message }
 
 $result.FailureCount = $failures.Count
-$result.Failures = @($failures)
+$result.Failures = $failures
 $result.OverallPass = ($failures.Count -eq 0)
 
 $dir = Split-Path -Parent $OutputPath
