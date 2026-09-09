@@ -100,8 +100,9 @@ else{
  if(-not[bool]$office.AiRoundTrip.AllProcessesExitedPass){Fail $failures 'Office AI E2E left an orphan Office process.'}
 }
 
+# Exact-build repair/uninstall lifecycle, including the transparent maintenance task.
 if($lifecycle.TestId -ne 'LIFECYCLE-REAL-002'){Fail $failures 'Lifecycle v2 evidence is required.'}
-if([int]$lifecycle.EvidenceSchema -lt 2){Fail $failures 'Lifecycle evidence schema is too old.'}
+if([int]$lifecycle.EvidenceSchema -lt 3){Fail $failures 'Lifecycle evidence schema is too old; maintenance-task lifecycle evidence is mandatory.'}
 if([string]$lifecycle.Phase -ne 'AfterUninstall'){Fail $failures 'Lifecycle must finish at AfterUninstall.'}
 if([string]$lifecycle.InstallerSha256 -ne $hash){Fail $failures 'Lifecycle repair was not bound to the final installer hash.'}
 if(-not[bool]$lifecycle.OverallPass){Fail $failures 'Lifecycle v2 failed.'}
@@ -111,9 +112,11 @@ if(-not[bool]$lifecycle.SettingsPreservedAcrossRepair){Fail $failures 'Settings 
 if(-not[bool]$lifecycle.CorePreservedAcrossRepair){Fail $failures 'Installed Core hash changed during same-build repair.'}
 if(-not[bool]$lifecycle.SharedOfficeRecoveryStatePreservedAcrossRepair){Fail $failures 'Shared Office DisabledItems/CrashingAddinList/DoNotDisableAddinList changed during repair.'}
 if(-not[bool]$lifecycle.RegistrationHealthyAfterRepair){Fail $failures 'OMNIX registration was unhealthy after repair.'}
+if(-not[bool]$lifecycle.MaintenanceTaskHealthyAfterRepair){Fail $failures 'OMNIX maintenance task was unhealthy after repair.'}
 if(-not[bool]$lifecycle.UninstallPass){Fail $failures 'Uninstall lifecycle failed.'}
 if(-not[bool]$lifecycle.SettingsPreservedAcrossUninstall){Fail $failures 'User settings were not preserved when requested.'}
 if(-not[bool]$lifecycle.OmnixRegistrationRemoved){Fail $failures 'OMNIX registration remains after uninstall.'}
+if(-not[bool]$lifecycle.MaintenanceTaskRemoved){Fail $failures 'OMNIX maintenance task remains after uninstall.'}
 if(-not[bool]$lifecycle.AppPayloadRemoved){Fail $failures 'OMNIX application payload remains after uninstall.'}
 if(-not[bool]$lifecycle.SharedOfficeRecoveryStatePreservedAcrossUninstall){Fail $failures 'Shared Office recovery state changed during uninstall.'}
 if(-not[bool]$lifecycle.DevelopmentCertificateRemoved){Fail $failures 'Exact OMNIX development trust material remains after uninstall.'}
@@ -153,9 +156,21 @@ $out=[ordered]@{
   AiRoundTripPass=[bool]$office.AiRoundTrip.OverallPass
   AllThreeOfficeMarkerRoundTrips=[bool]$office.AiRoundTrip.AllMarkerRoundTripsPass
  }
- Lifecycle=[ordered]@{Pass=[bool]$lifecycle.OverallPass;InstallerHashBound=([string]$lifecycle.InstallerSha256 -eq $hash);RepairPass=[bool]$lifecycle.RepairPass;SettingsPreserved=[bool]($lifecycle.SettingsPreservedAcrossRepair -and $lifecycle.SettingsPreservedAcrossUninstall);CorePreserved=[bool]$lifecycle.CorePreservedAcrossRepair;SharedOfficeRecoveryStatePreserved=[bool]($lifecycle.SharedOfficeRecoveryStatePreservedAcrossRepair -and $lifecycle.SharedOfficeRecoveryStatePreservedAcrossUninstall);RegistrationRemoved=[bool]$lifecycle.OmnixRegistrationRemoved;PayloadRemoved=[bool]$lifecycle.AppPayloadRemoved;DevelopmentCertificateRemoved=[bool]$lifecycle.DevelopmentCertificateRemoved}
+ Lifecycle=[ordered]@{
+  Pass=[bool]$lifecycle.OverallPass
+  InstallerHashBound=([string]$lifecycle.InstallerSha256 -eq $hash)
+  RepairPass=[bool]$lifecycle.RepairPass
+  SettingsPreserved=[bool]($lifecycle.SettingsPreservedAcrossRepair -and $lifecycle.SettingsPreservedAcrossUninstall)
+  CorePreserved=[bool]$lifecycle.CorePreservedAcrossRepair
+  MaintenanceTaskHealthyAfterRepair=[bool]$lifecycle.MaintenanceTaskHealthyAfterRepair
+  MaintenanceTaskRemoved=[bool]$lifecycle.MaintenanceTaskRemoved
+  SharedOfficeRecoveryStatePreserved=[bool]($lifecycle.SharedOfficeRecoveryStatePreservedAcrossRepair -and $lifecycle.SharedOfficeRecoveryStatePreservedAcrossUninstall)
+  RegistrationRemoved=[bool]$lifecycle.OmnixRegistrationRemoved
+  PayloadRemoved=[bool]$lifecycle.AppPayloadRemoved
+  DevelopmentCertificateRemoved=[bool]$lifecycle.DevelopmentCertificateRemoved
+ }
  ConsumerSecurity=[ordered]@{Pass=[bool]$security.OverallPass;DefenderRealTimeProtectionEnabled=[bool]$security.Defender.RealTimeProtectionEnabled;DefenderDetectionCount=[int]$security.Defender.InstallerDetectionCount;SmartScreenDisposition=[string]$security.SmartScreen.Disposition;SmartScreenPass=[bool]$security.SmartScreen.Pass}
- Requirements=[ordered]@{ExactInstallerHashBinding=$true;ExcelWordPowerPoint=$true;AutomaticSupportedOfficeHostDiscoveryAndRegistration=$true;LimitedCurrentUserMaintenanceTask=$true;OfficeResiliencyPreservedDuringMaintenance=$true;RealOfficeAutomaticLoadAndUi=$true;BoundedApprovedOfficeWrites=$true;RealOfficeContextToAiToRenderedUi=$true;RealWindowsRestartPersistence=$true;OfflineLocalAi=$true;LiveProviderMatrixAndStreaming=$true;GatewayPrivacyBeforeSend=$true;ExactBuildRepairAndUninstallLifecycle=$true;SharedOfficeRecoveryStatePreservation=$true;ConsumerDefenderAndSmartScreen=$true;TrustedTimestampedProductionAuthenticode=$true}
+ Requirements=[ordered]@{ExactInstallerHashBinding=$true;ExcelWordPowerPoint=$true;AutomaticSupportedOfficeHostDiscoveryAndRegistration=$true;LimitedCurrentUserMaintenanceTask=$true;OfficeResiliencyPreservedDuringMaintenance=$true;MaintenanceTaskPreservedAcrossRepairAndRemovedOnUninstall=$true;RealOfficeAutomaticLoadAndUi=$true;BoundedApprovedOfficeWrites=$true;RealOfficeContextToAiToRenderedUi=$true;RealWindowsRestartPersistence=$true;OfflineLocalAi=$true;LiveProviderMatrixAndStreaming=$true;GatewayPrivacyBeforeSend=$true;ExactBuildRepairAndUninstallLifecycle=$true;SharedOfficeRecoveryStatePreservation=$true;ConsumerDefenderAndSmartScreen=$true;TrustedTimestampedProductionAuthenticode=$true}
  FailureCount=$failures.Count;Failures=@($failures);OverallPass=($failures.Count -eq 0)
  Privacy='Sanitized aggregate only; no API keys, prompts, response bodies, machine names, settings contents or Office document contents.'
 }
