@@ -50,6 +50,7 @@ Need $maint "New-ItemProperty -LiteralPath `$path -Name 'Manifest'" 'registratio
 Need $maint 'OMNIX.Core.dll is missing' 'maintenance must fail closed if the installed OMNIX payload is incomplete.'
 Need $maint 'AuditOnly' 'a read-only diagnostic mode must remain available.'
 Need $maint 'never changes Trust Center' 'maintenance safety boundary must stay explicit.'
+Need $maint 'New-Object System.Uri -ArgumentList $path' 'manifest URI construction must remain Windows PowerShell 5.1 compatible.'
 
 # No Office security/recovery manipulation or arbitrary persistence.
 ForbidRegex $maint '(?i)New-ItemProperty[^\r\n]*(DisabledItems|CrashingAddinList|DoNotDisableAddinList)' 'maintenance may not modify shared Office recovery state.'
@@ -64,7 +65,7 @@ Need $task '-RunLevel Limited' 'maintenance must never request highest/elevated 
 Need $task '-LogonType Interactive' 'task must remain scoped to the installing interactive user.'
 Need $task 'Unregister-ScheduledTask' 'uninstall must be able to remove the maintenance task.'
 ForbidRegex $task '(?i)-RunLevel\s+Highest' 'maintenance may not elevate.'
-ForbidRegex $task '(?i)NT AUTHORITY\\SYSTEM|\bSYSTEM\b' 'maintenance may not run as SYSTEM.'
+ForbidRegex $task '(?i)(-UserId\s+["'']?(NT AUTHORITY\\SYSTEM|SYSTEM)["'']?|New-ScheduledTaskPrincipal[^\r\n]*SYSTEM)' 'maintenance may not configure the scheduled task to run as SYSTEM.'
 ForbidRegex $task '(?i)Register-ScheduledTask[^\r\n]*-Password' 'maintenance must not store a user password.'
 
 # Installer/package integration must be explicit and uninstall-clean.
@@ -76,6 +77,12 @@ Need $installer 'RemoveMaintenanceTask' 'uninstall/reinstall must clean the OMNI
 Need $installer 'Rescan Office Integration' 'user needs a visible manual repair path if policy blocks the task.'
 Need $installer 'LIMITED current-user logon task' 'installer must disclose the background behavior before installation.'
 Need $installer 'Office Resiliency state preserved unchanged' 'automatic integration may not bypass Office recovery/security state.'
+
+# Real acceptance stays compatible with Windows PowerShell 5.1 / .NET Framework.
+$real = 'tools/office-maintenance-real-acceptance.ps1'
+Parse-Ps $real
+Need $real 'Get-Sha256Hex' 'real acceptance needs framework-compatible hashing.'
+ForbidRegex $real '\[Convert\]::ToHexString|SHA256\]::HashData' '.NET Core-only hashing APIs must not enter Windows PowerShell 5.1 acceptance.'
 
 if ($failures.Count -gt 0) {
     Write-Host 'OMNIX OFFICE-MAINTENANCE CONTRACT: FAIL' -ForegroundColor Red
