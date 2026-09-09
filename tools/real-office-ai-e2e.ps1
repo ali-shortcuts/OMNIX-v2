@@ -48,8 +48,8 @@ function Release-ComObjectSafe($obj) {
 
 function Assert-NoOfficeProcesses {
     $running = @()
-    foreach ($host in $hosts) {
-        if (Get-Process -Name $host.Process -ErrorAction SilentlyContinue) { $running += $host.Name }
+    foreach ($officeHost in $hosts) {
+        if (Get-Process -Name $officeHost.Process -ErrorAction SilentlyContinue) { $running += $officeHost.Name }
     }
     if ($running.Count -gt 0) {
         throw "Close Excel, Word and PowerPoint before running OFFICE-AI-E2E-REAL-001. Running: $($running -join ', ')"
@@ -111,7 +111,7 @@ function Close-TemporaryOfficeContent($doc, [string]$hostName) {
     try {
         switch ($hostName) {
             'Excel'      { $doc.Close($false) }
-            'Word'       { $doc.Close(0) } # wdDoNotSaveChanges
+            'Word'       { $doc.Close(0) }
             'PowerPoint' { $doc.Close() }
         }
     } catch { }
@@ -269,13 +269,13 @@ function Prompt-ForHost([string]$hostName) {
     return 'Return only the exact current Office selection text.'
 }
 
-function Test-HostAiE2E($host) {
+function Test-HostAiE2E($officeHost) {
     $app = $null
     $doc = $null
     $started = Get-Date
-    $marker = New-RandomMarker $host.Name
+    $marker = New-RandomMarker $officeHost.Name
     $result = [ordered]@{
-        Host = $host.Name
+        Host = $officeHost.Name
         Installed = $true
         Started = $false
         Version = $null
@@ -302,17 +302,17 @@ function Test-HostAiE2E($host) {
     }
 
     try {
-        $app = New-Object -ComObject $host.ProgId
+        $app = New-Object -ComObject $officeHost.ProgId
         $result.Started = $true
         try { $app.Visible = $true } catch { }
         try { $app.DisplayAlerts = $false } catch { }
         try { $result.Version = [string]$app.Version } catch { $result.Version = 'unknown' }
 
-        $doc = Add-TemporaryOfficeContent $app $host.Name $marker
+        $doc = Add-TemporaryOfficeContent $app $officeHost.Name $marker
         $result.TemporaryDocumentCreated = ($null -ne $doc)
         Start-Sleep -Milliseconds $StartupDelayMs
 
-        $hwnd = Get-OfficeWindowHandle $app $host.Name
+        $hwnd = Get-OfficeWindowHandle $app $officeHost.Name
         if ($hwnd -eq [IntPtr]::Zero) { throw 'Could not obtain the active Office window handle.' }
         $result.WindowHandleFound = $true
 
@@ -344,7 +344,7 @@ function Test-HostAiE2E($host) {
             Start-Sleep -Milliseconds 250
         }
 
-        $prompt = Prompt-ForHost $host.Name
+        $prompt = Prompt-ForHost $officeHost.Name
         $result.InputSet = Set-UiValue $input $prompt
         if (-not $result.InputSet) { throw 'Could not set OMNIX chat input through UI Automation ValuePattern.' }
 
@@ -371,7 +371,6 @@ function Test-HostAiE2E($host) {
             throw $statusText
         }
 
-        # Remove test conversation from OMNIX history after successful proof.
         $clear = Find-UiElementByAutomationId $root 'OMNIX.ClearButton'
         if ($null -ne $clear) { [void](Activate-UiElement $clear) }
 
@@ -399,14 +398,14 @@ function Test-HostAiE2E($host) {
         $result.Error = "$($_.Exception.GetType().FullName): $($_.Exception.Message)"
     }
     finally {
-        Close-TemporaryOfficeContent $doc $host.Name
+        Close-TemporaryOfficeContent $doc $officeHost.Name
         if ($null -ne $app) { try { $app.Quit() } catch { } }
         Release-ComObjectSafe $doc
         Release-ComObjectSafe $app
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
         Start-Sleep -Milliseconds 800
-        $result.ProcessExitedCleanly = ($null -eq (Get-Process -Name $host.Process -ErrorAction SilentlyContinue))
+        $result.ProcessExitedCleanly = ($null -eq (Get-Process -Name $officeHost.Process -ErrorAction SilentlyContinue))
         if (-not $result.ProcessExitedCleanly) { $result.Pass = $false }
         $result.DurationMs = [int]((Get-Date) - $started).TotalMilliseconds
     }
@@ -417,8 +416,8 @@ function Test-HostAiE2E($host) {
 Assert-NoOfficeProcesses
 
 $results = New-Object System.Collections.Generic.List[object]
-foreach ($host in $hosts) {
-    $results.Add((Test-HostAiE2E $host))
+foreach ($officeHost in $hosts) {
+    $results.Add((Test-HostAiE2E $officeHost))
     Start-Sleep -Milliseconds 1000
 }
 
