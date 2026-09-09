@@ -37,10 +37,21 @@ namespace OMNIX.Core.Context
                 ctx.DocumentPath = pres.FullName;
                 ctx.SlideCount = pres.Slides.Count;
 
+                // PowerPoint's normal authoring UI is usually ppViewNormal, not ppViewSlide.
+                // Restricting context discovery to ppViewSlide caused OMNIX to report slide 0/no
+                // title during ordinary editing. Resolve the active slide from View.Slide whenever
+                // the current view exposes one, regardless of whether the host calls that view
+                // Normal, Slide, Notes, etc. Unsupported views simply fall back to slide 0.
+                Ppt.Slide slide = null;
                 var win = _app.ActiveWindow;
-                if (win != null && win.ViewType == Ppt.PpViewType.ppViewSlide)
+                if (win != null)
                 {
-                    Ppt.Slide slide = (Ppt.Slide)win.View.Slide;
+                    try { slide = win.View.Slide as Ppt.Slide; }
+                    catch { slide = null; }
+                }
+
+                if (slide != null)
+                {
                     ctx.CurrentSlideIndex = slide.SlideIndex;
                     ctx.SlideTitle = GetSlideTitle(slide);
                     ctx.NotesPreview = GetNotes(slide);
