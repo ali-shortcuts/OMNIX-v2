@@ -13,11 +13,15 @@ namespace OMNIX.Core.AiGateway.Adapters
 {
     /// <summary>
     /// OpenRouter adapter. Live model metadata is used to prioritize openrouter/free and models
-    /// whose current pricing is zero / whose id ends in :free. This ordering is informational;
-    /// OpenRouter availability, provider privacy policies and quotas can change at runtime.
+    /// whose current pricing is zero / whose id ends in :free. Availability, provider privacy
+    /// policies and quotas can change at runtime. Live catalog bodies/counts are bounded before
+    /// materialization so discovery cannot grow an Office process without limit.
     /// </summary>
     public sealed class OpenRouterAdapter : IProviderAdapter
     {
+        private const int MaxCatalogBytes = 8 * 1024 * 1024;
+        private const int MaxModels = 5000;
+
         private readonly OpenAiCompatibleClient _client;
         private readonly HttpClient _probeClient;
         private ProviderCredentials _creds;
@@ -59,10 +63,10 @@ namespace OMNIX.Core.AiGateway.Adapters
 
         public async Task<ChatResponse> SendAsync(ChatRequest request, Action<string> onDelta, CancellationToken ct)
         {
-            if (request.HasImages && !SupportsVisionNow())
-                throw Errors.OmnixException.Model(
+            if (request != null && request.HasImages && !SupportsVisionNow())
+                throw OmnixException.Model(
                     "OpenRouter model '" + Model + "' is not known to accept images (Vision). " +
-                    "Use 'Load models' and pick one with image input, choose openrouter/free, or send text only.");
+                    "Use Load models and pick one with image input, choose openrouter/free, or send text only.");
             return await _client.SendAsync(request, ApiKey, Model, onDelta, ct).ConfigureAwait(false);
         }
 
@@ -75,59 +79,65 @@ namespace OMNIX.Core.AiGateway.Adapters
                     if (!string.IsNullOrEmpty(ApiKey))
                         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ApiKey);
 
-                    var response = await _probeClient.SendAsync(req, ct).ConfigureAwait(false);
-                    if (!response.IsSuccessStatusCode)
+                    using (var response = await _probeClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
                     {
-                        string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
-                        throw HttpStatusMapper.Map((int)response.StatusCode, err, "OpenRouter");
-                    }
-
-                    string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                    var root = JObject.Parse(json);
-                    var all = new List<string>();
-                    var free = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    var vision = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                    foreach (var m in root["data"] ?? new JArray())
-                    {
-                        string id = (string)m["id"];
-                        if (string.IsNullOrEmpty(id)) continue;
-                        all.Add(id);
-
-                        if (IsFreeModel(m, id)) free.Add(id);
-
-                        try
+                        if (!response.IsSuccessStatusCode)
                         {
-                            var modalities = m.SelectToken("architecture.input_modalities") as JArray;
-                            if (modalities != null && modalities.Any(t => string.Equals((string)t, "image", StringComparison.OrdinalIgnoreCase)))
-                                vision.Add(id);
+                            string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
+                            throw HttpStatusMapper.Map((int)response.StatusCode, err, "OpenRouter");
                         }
-                        catch { }
+
+                        string json = await SseLineReader.ReadBodyBoundedAsync(response.Content, MaxCatalogBytes, ct).ConfigureAwait(false);
+                        var root = JObject.Parse(json);
+                        var all = new List<string>();
+                        var free = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        var vision = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                        foreach (var m in root["data"] ?? new JArray())
+                        {
+                            if (all.Count >= MaxModels) break;
+                            string id = (string)m["id"];
+                            if (string.IsNullOrEmpty(id)) continue;
+                            all.Add(id);
+
+                            if (IsFreeModel(m, id)) free.Add(id);
+
+                            try
+                            {
+                                var modalities = m.SelectToken("architecture.input_modalities") as JArray;
+                                if (modalities != null && modalities.Any(t => string.Equals((string)t, "image", StringComparison.OrdinalIgnoreCase)))
+                                    vision.Add(id);
+                            }
+                            catch { }
+                        }
+
+                        // Official free-router alias may not always be emitted by /models; keep it as
+                        // an explicit top-level choice. Capability selection can still fail at runtime
+                        // if OpenRouter's current privacy/capacity policy has no eligible endpoint.
+                        if (!all.Any(x => string.Equals(x, "openrouter/free", StringComparison.OrdinalIgnoreCase)))
+                            all.Add("openrouter/free");
+                        free.Add("openrouter/free");
+                        vision.Add("openrouter/free");
+
+                        _freeModels = free;
+                        _visionModels = vision;
+
+                        return all
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .OrderByDescending(x => string.Equals(x, "openrouter/free", StringComparison.OrdinalIgnoreCase))
+                            .ThenByDescending(x => free.Contains(x))
+                            .ThenBy(x => x, StringComparer.OrdinalIgnoreCase)
+                            .ToList();
                     }
-
-                    // Official free-router alias may not always be emitted by /models; keep it as
-                    // an explicit top-level choice because OpenRouter documents it as the simplest
-                    // no-cost route and it can route by required capabilities such as images.
-                    if (!all.Any(x => string.Equals(x, "openrouter/free", StringComparison.OrdinalIgnoreCase)))
-                        all.Add("openrouter/free");
-                    free.Add("openrouter/free");
-                    vision.Add("openrouter/free");
-
-                    _freeModels = free;
-                    _visionModels = vision;
-
-                    return all
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .OrderByDescending(x => string.Equals(x, "openrouter/free", StringComparison.OrdinalIgnoreCase))
-                        .ThenByDescending(x => free.Contains(x))
-                        .ThenBy(x => x, StringComparer.OrdinalIgnoreCase)
-                        .ToList();
                 }
             }
+            catch (OperationCanceledException) { throw; }
             catch (HttpRequestException ex)
             {
                 throw OmnixException.Network("OpenRouter models: " + ex.Message);
             }
+            catch (OmnixException) { throw; }
+            catch (Exception ex) { throw OmnixException.Provider("OpenRouter model discovery failure: " + ex.Message); }
         }
 
         private static bool IsFreeModel(JToken model, string id)
