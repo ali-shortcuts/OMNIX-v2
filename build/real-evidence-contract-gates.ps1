@@ -66,7 +66,18 @@ Require-Contains 'tools/reboot-persistence-acceptance.ps1' 'PostRestartPersisten
 Require-NotContains 'tools/reboot-persistence-acceptance.ps1' 'Restart-Computer' 'Acceptance tooling must never restart the user machine automatically.'
 Require-NotContains 'tools/reboot-persistence-acceptance.ps1' 'shutdown.exe' 'Acceptance tooling must never invoke a shutdown/restart command.'
 
-# Final readiness must consume strict persistence, UI, restart and provider evidence.
+# Local AI offline evidence must observe no public Internet and a real local model round-trip.
+Require-PowerShellParses 'tools/local-offline-acceptance.ps1'
+Require-Contains 'tools/local-offline-acceptance.ps1' 'LOCAL-AI-OFFLINE-REAL-001' 'Release needs dedicated offline local-AI evidence.'
+Require-Contains 'tools/local-offline-acceptance.ps1' 'InternetDisconnectedObserved' 'Offline proof must record that public HTTPS was not reachable.'
+Require-Contains 'tools/local-offline-acceptance.ps1' 'AtLeastOneLocalRuntimePass' 'Offline proof must require a real Ollama or LM Studio round-trip.'
+Require-Contains 'tools/local-offline-acceptance.ps1' 'http://localhost:11434/api/chat' 'Ollama must be exercised locally.'
+Require-Contains 'tools/local-offline-acceptance.ps1' 'http://localhost:1234/v1/chat/completions' 'LM Studio must be exercised locally.'
+Require-NotContains 'tools/local-offline-acceptance.ps1' 'Disable-NetAdapter' 'Acceptance tooling must not disable user networking.'
+Require-NotContains 'tools/local-offline-acceptance.ps1' 'New-NetFirewallRule' 'Acceptance tooling must not alter firewall policy.'
+Require-NotContains 'tools/local-offline-acceptance.ps1' 'Set-NetFirewallProfile' 'Acceptance tooling must not alter firewall policy.'
+
+# Final readiness must consume strict persistence, UI, restart, offline-local and provider evidence.
 Require-PowerShellParses 'tools/release-readiness.ps1'
 Require-Contains 'tools/release-readiness.ps1' 'OfficeRestartReport' 'Final readiness must consume Windows restart evidence.'
 Require-Contains 'tools/release-readiness.ps1' 'Test-OfficeRestart' 'Final readiness must validate restart evidence fail-closed.'
