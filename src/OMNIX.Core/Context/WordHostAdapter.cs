@@ -9,7 +9,7 @@ namespace OMNIX.Core.Context
 {
     /// <summary>
     /// Word adapter (spec Section 3, Layer 3): Document, Selection, Paragraphs, Headings, Tables,
-    /// Track Changes/Comments. Write tool: rewrite_selected_text with native UndoRecord.
+    /// Track Changes/Comments. Write tool: rewrite_selected_text with a native Word UndoRecord.
     ///
     /// Performance invariant: large Word ranges are shortened through Range.Duplicate/End BEFORE
     /// the Text property is requested. Truncating a giant string after doc.Content.Text has already
@@ -17,6 +17,10 @@ namespace OMNIX.Core.Context
     /// </summary>
     public sealed class WordHostAdapter : IHostAdapter
     {
+        private const int MaxRewriteSelectionChars = 50000;
+        private const int MaxRewriteReplacementChars = 50000;
+        private const int PreviewChars = 4000;
+
         private readonly Word.Application _app;
         private readonly Func<int> _maxChars;
 
@@ -89,8 +93,6 @@ namespace OMNIX.Core.Context
                 if (doc.TrackRevisions) sb.AppendLine("[Track Changes is ON]");
                 sb.AppendLine();
 
-                // Reserve a little budget for the header/truncation marker and bound the COM range
-                // before reading .Text.
                 int textBudget = Math.Max(1, cap - Math.Min(512, sb.Length + 128));
                 var content = doc.Content;
                 int originalLength = Math.Max(0, content.End - content.Start);
@@ -151,16 +153,20 @@ namespace OMNIX.Core.Context
                     "WordHostAdapter.PrepareWrite", "Use rewrite_selected_text.");
 
             var args = ToolArguments.Parse(argumentsJson);
-            var sel = _app.Selection;
-            string before = sel != null && sel.Range != null ? ReadRangeTextBounded(sel.Range, 4000) : "";
-            string after = args.Get("text", args.Get("value", ""));
+            var sel = RequireBoundedRewriteSelection(toolName);
+            string after = RequireBoundedReplacement(args, toolName);
+            int selectedChars = Math.Max(0, sel.End - sel.Start);
+            string before = ReadRangeTextBounded(sel.Range, PreviewChars);
 
             return new WritePreview
             {
                 ToolName = toolName,
                 Title = "Word — rewrite selected text",
-                Before = TextUtil.Truncate(before, 4000),
-                After = TextUtil.Truncate(after, 4000),
+                Before = "Selected characters: " + selectedChars + Environment.NewLine +
+                         TextUtil.Truncate(before, PreviewChars) +
+                         (selectedChars > PreviewChars ? Environment.NewLine + "…[preview truncated; mutation remains bounded to the selected range]" : ""),
+                After = "Replacement characters: " + after.Length + Environment.NewLine + TextUtil.Truncate(after, PreviewChars) +
+                        (after.Length > PreviewChars ? Environment.NewLine + "…[replacement preview truncated]" : ""),
                 ArgumentsJson = argumentsJson
             };
         }
@@ -171,10 +177,8 @@ namespace OMNIX.Core.Context
                 throw new OmnixException(ErrorCode.CORE_ERROR, "Unknown Word write tool: " + toolName, "", "");
 
             var args = ToolArguments.Parse(argumentsJson);
-            string newText = args.Get("text", args.Get("value", ""));
-            var sel = _app.Selection;
-            if (sel == null)
-                throw new OmnixException(ErrorCode.CORE_ERROR, "No active selection in Word.", toolName, "");
+            string newText = RequireBoundedReplacement(args, toolName);
+            var sel = RequireBoundedRewriteSelection(toolName);
 
             Word.UndoRecord undo = null;
             try
@@ -190,7 +194,38 @@ namespace OMNIX.Core.Context
                     try { undo.EndCustomRecord(); } catch { }
                 }
             }
-            Logging.Logger.Install("Word write tool applied: rewrite_selected_text (" + newText.Length + " chars)");
+            Logging.Logger.Install("Word write tool applied: rewrite_selected_text (replacement chars=" + newText.Length + ")");
+        }
+
+        private Word.Selection RequireBoundedRewriteSelection(string toolName)
+        {
+            var sel = _app.Selection;
+            if (sel == null || sel.Range == null)
+                throw new OmnixException(ErrorCode.CORE_ERROR, "No active selection in Word.", toolName, "Select the text to rewrite first.");
+
+            int length = Math.Max(0, sel.End - sel.Start);
+            if (length <= 0)
+                throw new OmnixException(ErrorCode.CORE_ERROR,
+                    "rewrite_selected_text requires a non-empty selection.",
+                    "The current Word selection is only a caret position.",
+                    "Select the exact text that OMNIX should rewrite, then try again.");
+            if (length > MaxRewriteSelectionChars)
+                throw new OmnixException(ErrorCode.CORE_ERROR,
+                    "The selected Word range is too large for one AI-approved rewrite.",
+                    "Selected characters=" + length + "; limit=" + MaxRewriteSelectionChars + ".",
+                    "Select a smaller section and approve it separately.");
+            return sel;
+        }
+
+        private static string RequireBoundedReplacement(ToolArguments args, string toolName)
+        {
+            string text = args.Get("text", args.Get("value", "")) ?? "";
+            if (text.Length > MaxRewriteReplacementChars)
+                throw new OmnixException(ErrorCode.CORE_ERROR,
+                    "Replacement text is too large for one AI-approved rewrite.",
+                    "Replacement characters=" + text.Length + "; limit=" + MaxRewriteReplacementChars + ".",
+                    "Split the rewrite into smaller explicit changes.");
+            return text;
         }
 
         private static string ReadRangeTextBounded(Word.Range range, int maxChars)
