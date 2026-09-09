@@ -13,25 +13,32 @@
 #              application manifest and UPDATE+sign the .vsto deployment
 #              manifest with Mage.exe using the certificate thumbprint.
 #
-# Microsoft documents that the application manifest must be signed first, then
-# the deployment manifest must be updated with -AppManifest and re-signed.
+# Critical packaging boundary:
+# Once a strategy succeeds, the complete validated Release output of every
+# Office host is copied immediately into build/compiled-payload/<host>. The
+# packaging step consumes this immutable handoff rather than trusting that a
+# later workflow step will still see transient VSTO output folders identically.
 # ============================================================================
 
-$ErrorActionPreference = "Continue"
+$ErrorActionPreference = 'Continue'
+Set-StrictMode -Version Latest
+
 $Solution = $env:SOLUTION
 $Config   = $env:CONFIGURATION
 $Thumb    = $args[0]
-$TimestampUri = "http://timestamp.digicert.com"
+$TimestampUri = 'http://timestamp.digicert.com'
+$root = Split-Path -Parent $PSScriptRoot
+$handoffRoot = Join-Path $PSScriptRoot 'compiled-payload'
 
 $hostProjects = @(
-    @{ Name = "OMNIX.Excel";      Dll = "src\OMNIX.Excel\bin\$Config\OMNIX.Excel.dll" },
-    @{ Name = "OMNIX.Word";       Dll = "src\OMNIX.Word\bin\$Config\OMNIX.Word.dll" },
-    @{ Name = "OMNIX.PowerPoint"; Dll = "src\OMNIX.PowerPoint\bin\$Config\OMNIX.PowerPoint.dll" }
+    @{ Name = 'OMNIX.Excel';      Dll = "src\OMNIX.Excel\bin\$Config\OMNIX.Excel.dll" },
+    @{ Name = 'OMNIX.Word';       Dll = "src\OMNIX.Word\bin\$Config\OMNIX.Word.dll" },
+    @{ Name = 'OMNIX.PowerPoint'; Dll = "src\OMNIX.PowerPoint\bin\$Config\OMNIX.PowerPoint.dll" }
 )
 
 function Test-AllArtifactsExist {
     foreach ($p in $hostProjects) {
-        if (-not (Test-Path $p.Dll) -or (Get-Item $p.Dll).Length -eq 0) {
+        if (-not (Test-Path -LiteralPath $p.Dll -PathType Leaf) -or (Get-Item -LiteralPath $p.Dll).Length -eq 0) {
             Write-Host "Missing or empty artifact: $($p.Dll)"
             return $false
         }
@@ -42,17 +49,84 @@ function Test-AllArtifactsExist {
 function Test-AllVstoManifestsExist {
     foreach ($p in $hostProjects) {
         $appManifest = "$($p.Dll).manifest"
-        $deployManifest = [System.IO.Path]::ChangeExtension($p.Dll, ".vsto")
-        if (-not (Test-Path $appManifest)) {
+        $deployManifest = [System.IO.Path]::ChangeExtension($p.Dll, '.vsto')
+        if (-not (Test-Path -LiteralPath $appManifest -PathType Leaf)) {
             Write-Host "Missing application manifest: $appManifest"
             return $false
         }
-        if (-not (Test-Path $deployManifest)) {
+        if (-not (Test-Path -LiteralPath $deployManifest -PathType Leaf)) {
             Write-Host "Missing deployment manifest: $deployManifest"
+            return $false
+        }
+        if ((Get-Item -LiteralPath $appManifest).Length -le 0 -or
+            (Get-Item -LiteralPath $deployManifest).Length -le 0) {
+            Write-Host "Empty VSTO manifest detected for $($p.Name)."
             return $false
         }
     }
     return $true
+}
+
+function Show-ValidatedArtifacts {
+    Write-Host '--- Validated VSTO build outputs ---'
+    foreach ($p in $hostProjects) {
+        foreach ($path in @(
+            $p.Dll,
+            "$($p.Dll).manifest",
+            [System.IO.Path]::ChangeExtension($p.Dll, '.vsto')
+        )) {
+            $item = Get-Item -LiteralPath $path -ErrorAction Stop
+            Write-Host ("  {0} | {1} bytes | {2}" -f $p.Name, $item.Length, $item.FullName)
+        }
+    }
+}
+
+function Stage-ValidatedArtifacts {
+    if (-not (Test-AllArtifactsExist) -or -not (Test-AllVstoManifestsExist)) {
+        throw 'Cannot create compiled-payload handoff: the validated VSTO artifact set is incomplete.'
+    }
+
+    if (Test-Path -LiteralPath $handoffRoot) {
+        Remove-Item -LiteralPath $handoffRoot -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $handoffRoot | Out-Null
+
+    $allowedExtensions = @('.dll', '.vsto', '.manifest', '.config')
+    foreach ($p in $hostProjects) {
+        $sourceDir = Split-Path -Parent $p.Dll
+        $destDir = Join-Path $handoffRoot $p.Name
+        New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+
+        $files = @(Get-ChildItem -LiteralPath $sourceDir -File -ErrorAction Stop | Where-Object {
+            $allowedExtensions -contains $_.Extension
+        })
+        if ($files.Count -eq 0) {
+            throw "No runtime files found while staging validated output for $($p.Name)."
+        }
+        foreach ($file in $files) {
+            Copy-Item -LiteralPath $file.FullName -Destination $destDir -Force
+        }
+
+        foreach ($requiredName in @(
+            "$($p.Name).dll",
+            "$($p.Name).dll.manifest",
+            "$($p.Name).vsto"
+        )) {
+            $requiredPath = Join-Path $destDir $requiredName
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                throw "COMPILED_HANDOFF_GUARD: $requiredName was not copied for $($p.Name)."
+            }
+        }
+
+        Write-Host "Compiled handoff for $($p.Name): $($files.Count) files -> $destDir"
+    }
+
+    $coreMatches = @(Get-ChildItem -LiteralPath $handoffRoot -Recurse -File -Filter 'OMNIX.Core.dll' -ErrorAction Stop)
+    if ($coreMatches.Count -lt 1) {
+        throw 'COMPILED_HANDOFF_GUARD: OMNIX.Core.dll is absent from the validated build handoff.'
+    }
+
+    Write-Host 'OMNIX COMPILED HANDOFF: PASS'
 }
 
 function Invoke-Strategy1-DirectMsbuild {
@@ -77,16 +151,14 @@ function Invoke-Strategy1-DirectMsbuild {
 function Invoke-Strategy2-Devenv {
     Write-Host "`n=== STRATEGY 2: devenv.com /Build ==="
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-    if (-not (Test-Path $vswhere)) { Write-Host "vswhere not found, skipping strategy 2"; return $false }
+    if (-not (Test-Path $vswhere)) { Write-Host 'vswhere not found, skipping strategy 2'; return $false }
     $vsPath = & $vswhere -latest -property installationPath
-    $devenv = Join-Path $vsPath "Common7\IDE\devenv.com"
+    $devenv = Join-Path $vsPath 'Common7\IDE\devenv.com'
     if (-not (Test-Path $devenv)) { Write-Host "devenv.com not found at $devenv, skipping strategy 2"; return $false }
 
-    # The projects already contain their manifest-signing settings; the certificate thumbprint is
-    # also supplied to the environment so the same build identity is used as strategy 1.
     $env:ManifestCertificateThumbprint = $Thumb
-    & $devenv $Solution /Build "$Config|Any CPU" /Out "build_output_s2.txt"
-    Get-Content "build_output_s2.txt" -ErrorAction SilentlyContinue | Write-Host
+    & $devenv $Solution /Build "$Config|Any CPU" /Out 'build_output_s2.txt'
+    Get-Content 'build_output_s2.txt' -ErrorAction SilentlyContinue | Write-Host
     return ((Test-AllArtifactsExist) -and (Test-AllVstoManifestsExist))
 }
 
@@ -105,28 +177,28 @@ function Invoke-Strategy3-TwoPhaseSigning {
         /p:SignManifests=false `
         /p:BuildInParallel=false `
         /bl:build/logs/build-s3-compile.binlog `
-        /maxcpucount:1 2>&1 | Tee-Object -FilePath "build_output_s3_compile.txt"
+        /maxcpucount:1 2>&1 | Tee-Object -FilePath 'build_output_s3_compile.txt'
 
     if ($LASTEXITCODE -ne 0 -or -not (Test-AllArtifactsExist) -or -not (Test-AllVstoManifestsExist)) {
-        Write-Host "Strategy 3 compile phase did not produce the complete VSTO artifact set."
+        Write-Host 'Strategy 3 compile phase did not produce the complete VSTO artifact set.'
         return $false
     }
 
     if ([string]::IsNullOrWhiteSpace($Thumb)) {
-        Write-Host "Strategy 3 cannot sign: certificate thumbprint is empty."
+        Write-Host 'Strategy 3 cannot sign: certificate thumbprint is empty.'
         return $false
     }
 
     $mage = Find-Mage
     if (-not $mage) {
-        Write-Host "mage.exe not found. Refusing to treat unsigned VSTO manifests as success."
+        Write-Host 'mage.exe not found. Refusing to treat unsigned VSTO manifests as success.'
         return $false
     }
 
     Write-Host "Mage: $($mage.FullName)"
     foreach ($p in $hostProjects) {
         $appManifest = "$($p.Dll).manifest"
-        $deployManifest = [System.IO.Path]::ChangeExtension($p.Dll, ".vsto")
+        $deployManifest = [System.IO.Path]::ChangeExtension($p.Dll, '.vsto')
 
         Write-Host "Signing application manifest: $appManifest"
         & $mage.FullName -Sign $appManifest -CertHash $Thumb -TimestampUri $TimestampUri 2>&1 | Tee-Object -FilePath "build_output_s3_sign_$($p.Name)_app.txt"
@@ -135,8 +207,6 @@ function Invoke-Strategy3-TwoPhaseSigning {
             return $false
         }
 
-        # Re-signing the application manifest changes its hash. Update the deployment manifest with
-        # the freshly signed application manifest and sign the deployment manifest in one operation.
         Write-Host "Updating/signing deployment manifest: $deployManifest"
         & $mage.FullName -Update $deployManifest -AppManifest $appManifest -CertHash $Thumb -TimestampUri $TimestampUri 2>&1 | Tee-Object -FilePath "build_output_s3_sign_$($p.Name)_deploy.txt"
         if ($LASTEXITCODE -ne 0) {
@@ -152,11 +222,18 @@ $ok = Invoke-Strategy1-DirectMsbuild
 if (-not $ok) { $ok = Invoke-Strategy2-Devenv }
 if (-not $ok) { $ok = Invoke-Strategy3-TwoPhaseSigning }
 
-if ($ok) {
-    Write-Host "`n=== BUILD SUCCEEDED (see above for which strategy worked) ==="
-    Remove-Item build_output_s*.txt -ErrorAction SilentlyContinue
-    exit 0
-} else {
+if (-not $ok) {
     Write-Host "`n=== ALL THREE BUILD STRATEGIES FAILED ==="
+    exit 1
+}
+
+try {
+    Write-Host "`n=== BUILD SUCCEEDED — validating and snapshotting outputs ==="
+    Show-ValidatedArtifacts
+    Stage-ValidatedArtifacts
+    exit 0
+}
+catch {
+    Write-Host "BUILD HANDOFF FAILED: $($_.Exception.Message)"
     exit 1
 }
