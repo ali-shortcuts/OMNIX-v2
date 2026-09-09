@@ -28,22 +28,6 @@ function Open-Hklm([Microsoft.Win32.RegistryView]$View) {
     return [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $View)
 }
 
-function Test-HklmKey([string]$SubKey) {
-    foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64,[Microsoft.Win32.RegistryView]::Registry32)) {
-        $base = $null; $key = $null
-        try {
-            $base = Open-Hklm $view
-            $key = $base.OpenSubKey($SubKey, $false)
-            if ($null -ne $key) { return $true }
-        } catch { }
-        finally {
-            if ($null -ne $key) { $key.Dispose() }
-            if ($null -ne $base) { $base.Dispose() }
-        }
-    }
-    return $false
-}
-
 function Get-HklmString([string]$SubKey, [string]$ValueName) {
     foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64,[Microsoft.Win32.RegistryView]::Registry32)) {
         $base = $null; $key = $null
@@ -63,26 +47,46 @@ function Get-HklmString([string]$SubKey, [string]$ValueName) {
     return $null
 }
 
-function Test-HkcuKey([string]$SubKey) {
-    $path = 'HKCU:\' + $SubKey
-    return [bool](Test-Path -LiteralPath $path -PathType Container)
+function Get-HkcuString([string]$SubKey, [string]$ValueName) {
+    $key = $null
+    try {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKey, $false)
+        if ($null -eq $key) { return $null }
+        $value = [string]$key.GetValue($ValueName, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        if ([string]::IsNullOrWhiteSpace($value)) { return $null }
+        return $value.Trim('"')
+    } catch { return $null }
+    finally { if ($null -ne $key) { $key.Dispose() } }
 }
 
 function Get-KnownOfficeExePaths([string]$Version, [string]$Exe) {
     $folder = if ($Version -eq '16.0') { 'Office16' } else { 'Office15' }
-    $paths = New-Object System.Collections.Generic.List[string]
+    $paths = @()
     foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
         if ([string]::IsNullOrWhiteSpace($root)) { continue }
-        [void]$paths.Add((Join-Path $root ("Microsoft Office\root\$folder\$Exe")))
-        [void]$paths.Add((Join-Path $root ("Microsoft Office\$folder\$Exe")))
+        $paths += (Join-Path $root ("Microsoft Office\root\$folder\$Exe"))
+        $paths += (Join-Path $root ("Microsoft Office\$folder\$Exe"))
     }
-    return @($paths)
+    return $paths
+}
+
+function Get-InstallRootExe([string]$Version, $Host) {
+    $sub = "SOFTWARE\Microsoft\Office\$Version\$($Host.Name)\InstallRoot"
+    $root = Get-HklmString $sub 'Path'
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        $root = Get-HkcuString ("Software\Microsoft\Office\$Version\$($Host.Name)\InstallRoot") 'Path'
+    }
+    if ([string]::IsNullOrWhiteSpace($root)) { return $null }
+    return (Join-Path ([Environment]::ExpandEnvironmentVariables($root)) $Host.Exe)
 }
 
 function Test-OfficeHostInstalled([string]$Version, $Host) {
-    $officeKey = "SOFTWARE\Microsoft\Office\$Version\$($Host.Name)"
-    if (Test-HklmKey $officeKey) { return $true }
-    if (Test-HkcuKey ("Software\Microsoft\Office\$Version\$($Host.Name)")) { return $true }
+    # Prefer executable-backed evidence. Stale Office registry keys are intentionally not enough
+    # to create a new OMNIX Addins key for a host/version that is no longer installed.
+    $installRootExe = Get-InstallRootExe $Version $Host
+    if (-not [string]::IsNullOrWhiteSpace($installRootExe) -and (Test-Path -LiteralPath $installRootExe -PathType Leaf)) {
+        return $true
+    }
 
     foreach ($candidate in Get-KnownOfficeExePaths $Version $Host.Exe) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $true }
@@ -132,22 +136,23 @@ function Ensure-Registration([string]$Version, [string]$HostName, [string]$Manif
 
 $report = [ordered]@{
     TestId = 'OFFICE-REGISTRATION-MAINTENANCE-001'
-    EvidenceSchema = 1
+    EvidenceSchema = 2
     TimestampUtc = [DateTime]::UtcNow.ToString('o')
     AuditOnly = [bool]$AuditOnly
     SupportedVersions = $SupportedVersions
     InstalledHostCount = 0
+    UniqueInstalledHostCount = 0
     CorrectBeforeCount = 0
     RepairedCount = 0
     CorrectAfterCount = 0
     Failures = @()
     Results = @()
-    Safety = 'Per-user OMNIX-owned HKCU Addins keys only; no Office Resiliency/Trust Center/document/network/provider-secret changes.'
+    Safety = 'Executable-backed detection; per-user OMNIX-owned HKCU Addins keys only; no Office Resiliency/Trust Center/document/network/provider-secret changes.'
     OverallPass = $false
 }
 
-$failures = New-Object System.Collections.Generic.List[string]
-$rows = New-Object System.Collections.Generic.List[object]
+$failures = @()
+$rows = @()
 
 try {
     if (-not (Test-Path -LiteralPath (Join-Path $InstallDir 'OMNIX.Core.dll') -PathType Leaf)) {
@@ -175,9 +180,9 @@ try {
                 $after = Get-RegistrationState $version $host.Name $manifest
                 $pass = if ($AuditOnly) { $true } else { [bool]$after.Correct }
                 if ($after.Correct) { $report.CorrectAfterCount++ }
-                if (-not $pass) { $failures.Add("$version/$($host.Name) OMNIX registration is not correct after maintenance.") }
+                if (-not $pass) { $failures += "$version/$($host.Name) OMNIX registration is not correct after maintenance." }
 
-                [void]$rows.Add([pscustomobject]@{
+                $rows += [pscustomobject]@{
                     Version=$version
                     Host=$host.Name
                     Installed=$true
@@ -185,24 +190,25 @@ try {
                     Changed=[bool]$changed
                     CorrectAfter=[bool]$after.Correct
                     Pass=[bool]$pass
-                })
+                }
             }
             catch {
-                $failures.Add("$version/$($host.Name): $($_.Exception.Message)")
-                [void]$rows.Add([pscustomobject]@{
+                $failures += "$version/$($host.Name): $($_.Exception.Message)"
+                $rows += [pscustomobject]@{
                     Version=$version; Host=$host.Name; Installed=$true; CorrectBefore=$false;
                     Changed=$false; CorrectAfter=$false; Pass=$false
-                })
+                }
             }
         }
     }
 }
 catch {
-    $failures.Add($_.Exception.Message)
+    $failures += $_.Exception.Message
 }
 
-$report.Results = @($rows)
-$report.Failures = @($failures)
+$report.UniqueInstalledHostCount = @($rows | Select-Object -ExpandProperty Host -Unique).Count
+$report.Results = $rows
+$report.Failures = $failures
 $report.OverallPass = ($failures.Count -eq 0)
 
 try {
