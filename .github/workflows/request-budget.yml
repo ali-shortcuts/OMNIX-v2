@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   request-budget:
-    name: Provider request + diagnostic privacy runtime acceptance
+    name: Provider request + diagnostic + image runtime acceptance
     runs-on: windows-2022
     steps:
       - name: Checkout exact source commit
@@ -25,7 +25,7 @@ jobs:
         run: |
           $source = (git rev-parse HEAD).Trim()
           if ($source -notmatch '^[0-9a-fA-F]{40}$') { throw "Could not resolve exact tested source commit." }
-          Write-Host "OMNIX request/diagnostic runtime source commit: $source"
+          Write-Host "OMNIX runtime-hardening source commit: $source"
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -64,6 +64,13 @@ jobs:
             -CorePath .\src\OMNIX.Core\bin\Release\OMNIX.Core.dll `
             -OutputPath .\build\artifact\provider-error-redaction-acceptance.json
 
+      - name: Execute image normalization acceptance
+        shell: powershell
+        run: |
+          .\tools\image-normalization-acceptance.ps1 `
+            -CorePath .\src\OMNIX.Core\bin\Release\OMNIX.Core.dll `
+            -OutputPath .\build\artifact\image-normalization-acceptance.json
+
       - name: Validate sanitized acceptance reports
         shell: pwsh
         run: |
@@ -82,13 +89,22 @@ jobs:
           if (-not [bool]$redaction.OverallPass -or [int]$redaction.FailureCount -ne 0) {
             throw "Provider-error redaction runtime acceptance failed."
           }
-          Write-Host "OMNIX request budget + provider diagnostic redaction runtime acceptance: PASS"
+
+          $imagePath = '.\build\artifact\image-normalization-acceptance.json'
+          if (-not (Test-Path $imagePath)) { throw "Image-normalization report is missing." }
+          $image = Get-Content $imagePath -Raw | ConvertFrom-Json
+          if ($image.TestId -ne 'IMAGE-NORMALIZATION-RUNTIME-001') { throw "Unexpected image-normalization TestId." }
+          if (-not [bool]$image.OverallPass -or [int]$image.FailureCount -ne 0) {
+            throw "Image-normalization runtime acceptance failed."
+          }
+          Write-Host "OMNIX request budget + diagnostic redaction + image normalization runtime acceptance: PASS"
 
       - name: Upload sanitized runtime evidence
         uses: actions/upload-artifact@v4
         with:
-          name: omnix-request-diagnostic-evidence
+          name: omnix-runtime-hardening-evidence
           path: |
             build/artifact/request-budget-acceptance.json
             build/artifact/provider-error-redaction-acceptance.json
+            build/artifact/image-normalization-acceptance.json
           if-no-files-found: error
