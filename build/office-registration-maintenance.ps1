@@ -70,31 +70,31 @@ function Get-KnownOfficeExePaths([string]$Version, [string]$Exe) {
     return $paths
 }
 
-function Get-InstallRootExe([string]$Version, $Host) {
-    $sub = "SOFTWARE\Microsoft\Office\$Version\$($Host.Name)\InstallRoot"
+function Get-InstallRootExe([string]$Version, $OfficeHost) {
+    $sub = "SOFTWARE\Microsoft\Office\$Version\$($OfficeHost.Name)\InstallRoot"
     $root = Get-HklmString $sub 'Path'
     if ([string]::IsNullOrWhiteSpace($root)) {
-        $root = Get-HkcuString ("Software\Microsoft\Office\$Version\$($Host.Name)\InstallRoot") 'Path'
+        $root = Get-HkcuString ("Software\Microsoft\Office\$Version\$($OfficeHost.Name)\InstallRoot") 'Path'
     }
     if ([string]::IsNullOrWhiteSpace($root)) { return $null }
-    return (Join-Path ([Environment]::ExpandEnvironmentVariables($root)) $Host.Exe)
+    return (Join-Path ([Environment]::ExpandEnvironmentVariables($root)) $OfficeHost.Exe)
 }
 
-function Test-OfficeHostInstalled([string]$Version, $Host) {
+function Test-OfficeHostInstalled([string]$Version, $OfficeHost) {
     # Prefer executable-backed evidence. Stale Office registry keys are intentionally not enough
     # to create a new OMNIX Addins key for a host/version that is no longer installed.
-    $installRootExe = Get-InstallRootExe $Version $Host
+    $installRootExe = Get-InstallRootExe $Version $OfficeHost
     if (-not [string]::IsNullOrWhiteSpace($installRootExe) -and (Test-Path -LiteralPath $installRootExe -PathType Leaf)) {
         return $true
     }
 
-    foreach ($candidate in Get-KnownOfficeExePaths $Version $Host.Exe) {
+    foreach ($candidate in Get-KnownOfficeExePaths $Version $OfficeHost.Exe) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $true }
     }
 
     # App Paths is useful for Click-to-Run. Bind it to the detected major generation so an Office16
     # App Path cannot accidentally make us register a phantom Office15 host.
-    $appPath = Get-HklmString ("SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\$($Host.Exe)") ''
+    $appPath = Get-HklmString ("SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\$($OfficeHost.Exe)") ''
     if (-not [string]::IsNullOrWhiteSpace($appPath) -and (Test-Path -LiteralPath $appPath -PathType Leaf)) {
         $client = Get-HklmString 'SOFTWARE\Microsoft\Office\ClickToRun\Configuration' 'ClientVersionToReport'
         if ($Version -eq '16.0' -and $client -match '^16\.') { return $true }
@@ -160,31 +160,31 @@ try {
     }
 
     foreach ($version in $SupportedVersions) {
-        foreach ($host in $Hosts) {
-            $installed = Test-OfficeHostInstalled $version $host
+        foreach ($officeHost in $Hosts) {
+            $installed = Test-OfficeHostInstalled $version $officeHost
             if (-not $installed) { continue }
 
             $report.InstalledHostCount++
             try {
-                $manifest = Get-ManifestUri $host.Name
-                $before = Get-RegistrationState $version $host.Name $manifest
+                $manifest = Get-ManifestUri $officeHost.Name
+                $before = Get-RegistrationState $version $officeHost.Name $manifest
                 if ($before.Correct) { $report.CorrectBeforeCount++ }
                 $changed = $false
 
                 if (-not $before.Correct -and -not $AuditOnly) {
-                    Ensure-Registration $version $host.Name $manifest
+                    Ensure-Registration $version $officeHost.Name $manifest
                     $changed = $true
                     $report.RepairedCount++
                 }
 
-                $after = Get-RegistrationState $version $host.Name $manifest
+                $after = Get-RegistrationState $version $officeHost.Name $manifest
                 $pass = if ($AuditOnly) { $true } else { [bool]$after.Correct }
                 if ($after.Correct) { $report.CorrectAfterCount++ }
-                if (-not $pass) { $failures += "$version/$($host.Name) OMNIX registration is not correct after maintenance." }
+                if (-not $pass) { $failures += "$version/$($officeHost.Name) OMNIX registration is not correct after maintenance." }
 
                 $rows += [pscustomobject]@{
                     Version=$version
-                    Host=$host.Name
+                    Host=$officeHost.Name
                     Installed=$true
                     CorrectBefore=[bool]$before.Correct
                     Changed=[bool]$changed
@@ -193,9 +193,9 @@ try {
                 }
             }
             catch {
-                $failures += "$version/$($host.Name): $($_.Exception.Message)"
+                $failures += "$version/$($officeHost.Name): $($_.Exception.Message)"
                 $rows += [pscustomobject]@{
-                    Version=$version; Host=$host.Name; Installed=$true; CorrectBefore=$false;
+                    Version=$version; Host=$officeHost.Name; Installed=$true; CorrectBefore=$false;
                     Changed=$false; CorrectAfter=$false; Pass=$false
                 }
             }
