@@ -88,9 +88,9 @@ function New-ApprovedExecutor {
 function Invoke-Tool($executor, $call, $adapter) {
     return $executor.ExecuteAsync($call, $adapter).GetAwaiter().GetResult()
 }
-function Base-Result([string]$host) {
+function Base-Result([string]$officeHostName) {
     return [ordered]@{
-        Host = $host
+        Host = $officeHostName
         Installed = $true
         Started = $false
         Version = $null
