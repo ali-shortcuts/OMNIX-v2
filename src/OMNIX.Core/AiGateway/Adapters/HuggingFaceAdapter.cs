@@ -16,13 +16,14 @@ namespace OMNIX.Core.AiGateway.Adapters
     ///
     /// Hugging Face exposes an OpenAI-compatible router at router.huggingface.co/v1 and a live
     /// /models catalog containing architecture/provider metadata. When the catalog marks a live
-    /// provider route is_free=true, OMNIX exposes the exact model:provider route first rather than
-    /// merely sorting the base model (which could otherwise route to a paid fastest provider).
-    /// Account-level monthly free credits remain separate and are never described as unlimited.
+    /// provider route is_free=true, OMNIX exposes the exact model:provider route first. Catalog
+    /// bodies/counts are hard-bounded before materialization inside the Office host.
     /// </summary>
     public sealed class HuggingFaceAdapter : IProviderAdapter
     {
         private const string BaseUrl = "https://router.huggingface.co/v1";
+        private const int MaxCatalogBytes = 8 * 1024 * 1024;
+        private const int MaxModels = 5000;
 
         private readonly OpenAiCompatibleClient _client;
         private readonly HttpClient _catalogClient;
@@ -70,7 +71,7 @@ namespace OMNIX.Core.AiGateway.Adapters
 
         public async Task<ChatResponse> SendAsync(ChatRequest request, Action<string> onDelta, CancellationToken ct)
         {
-            if (request.HasImages && !SupportsVisionNow())
+            if (request != null && request.HasImages && !SupportsVisionNow())
             {
                 throw OmnixException.Model(
                     "Hugging Face model '" + Model + "' is not known to accept images. Use Load models and choose a Vision-capable model, or send text-only context.");
@@ -88,74 +89,78 @@ namespace OMNIX.Core.AiGateway.Adapters
                     if (!string.IsNullOrWhiteSpace(ApiKey))
                         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ApiKey);
 
-                    var response = await _catalogClient.SendAsync(req, ct).ConfigureAwait(false);
-                    if (!response.IsSuccessStatusCode)
+                    using (var response = await _catalogClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
                     {
-                        string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
-                        throw HttpStatusMapper.Map((int)response.StatusCode, err, "Hugging Face");
-                    }
-
-                    string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                    var root = JObject.Parse(json);
-                    var baseModels = new List<string>();
-                    var freeRoutes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    var vision = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                    foreach (var m in root["data"] ?? new JArray())
-                    {
-                        string id = (string)m["id"];
-                        if (string.IsNullOrWhiteSpace(id)) continue;
-                        baseModels.Add(id);
-
-                        bool visionCapable = false;
-                        try
+                        if (!response.IsSuccessStatusCode)
                         {
-                            var modalities = m.SelectToken("architecture.input_modalities") as JArray;
-                            visionCapable = modalities != null && modalities.Any(x =>
-                                string.Equals((string)x, "image", StringComparison.OrdinalIgnoreCase));
-                            if (visionCapable) vision.Add(id);
+                            string err = await SseLineReader.ReadErrorBodyAsync(response, ct).ConfigureAwait(false);
+                            throw HttpStatusMapper.Map((int)response.StatusCode, err, "Hugging Face");
                         }
-                        catch { }
 
-                        try
+                        string json = await SseLineReader.ReadBodyBoundedAsync(response.Content, MaxCatalogBytes, ct).ConfigureAwait(false);
+                        var root = JObject.Parse(json);
+                        var baseModels = new List<string>();
+                        var freeRoutes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        var vision = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                        foreach (var m in root["data"] ?? new JArray())
                         {
-                            var providers = m["providers"] as JArray;
-                            if (providers == null) continue;
-                            foreach (var provider in providers)
+                            if (baseModels.Count >= MaxModels) break;
+                            string id = (string)m["id"];
+                            if (string.IsNullOrWhiteSpace(id)) continue;
+                            baseModels.Add(id);
+
+                            bool visionCapable = false;
+                            try
                             {
-                                if (!string.Equals((string)provider["status"], "live", StringComparison.OrdinalIgnoreCase) ||
-                                    (bool?)provider["is_free"] != true)
-                                    continue;
-
-                                string providerId = (string)provider["provider"];
-                                if (string.IsNullOrWhiteSpace(providerId)) continue;
-                                string route = id + ":" + providerId;
-                                freeRoutes.Add(route);
-                                if (visionCapable) vision.Add(route);
+                                var modalities = m.SelectToken("architecture.input_modalities") as JArray;
+                                visionCapable = modalities != null && modalities.Any(x =>
+                                    string.Equals((string)x, "image", StringComparison.OrdinalIgnoreCase));
+                                if (visionCapable) vision.Add(id);
                             }
+                            catch { }
+
+                            try
+                            {
+                                var providers = m["providers"] as JArray;
+                                if (providers == null) continue;
+                                foreach (var provider in providers)
+                                {
+                                    if (!string.Equals((string)provider["status"], "live", StringComparison.OrdinalIgnoreCase) ||
+                                        (bool?)provider["is_free"] != true)
+                                        continue;
+
+                                    string providerId = (string)provider["provider"];
+                                    if (string.IsNullOrWhiteSpace(providerId)) continue;
+                                    string route = id + ":" + providerId;
+                                    freeRoutes.Add(route);
+                                    if (visionCapable) vision.Add(route);
+                                }
+                            }
+                            catch { }
                         }
-                        catch { }
+
+                        _visionModels = vision;
+                        _currentlyFreeRoutes = freeRoutes;
+
+                        var ordered = new List<string>();
+                        ordered.AddRange(freeRoutes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+                        ordered.AddRange(baseModels.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+
+                        if (!ordered.Any(x => string.Equals(x, Model, StringComparison.OrdinalIgnoreCase)))
+                            ordered.Add(Model);
+
+                        return ordered.Distinct(StringComparer.OrdinalIgnoreCase).Take(MaxModels + 1).ToList();
                     }
-
-                    _visionModels = vision;
-                    _currentlyFreeRoutes = freeRoutes;
-
-                    var ordered = new List<string>();
-                    ordered.AddRange(freeRoutes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-                    ordered.AddRange(baseModels.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-
-                    // Keep the configured/default route selectable even if the live catalog
-                    // temporarily omits the exact policy suffix (for example :fastest).
-                    if (!ordered.Any(x => string.Equals(x, Model, StringComparison.OrdinalIgnoreCase)))
-                        ordered.Add(Model);
-
-                    return ordered.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 }
             }
+            catch (OperationCanceledException) { throw; }
             catch (HttpRequestException ex)
             {
                 throw OmnixException.Network("Hugging Face models: " + ex.Message);
             }
+            catch (OmnixException) { throw; }
+            catch (Exception ex) { throw OmnixException.Provider("Hugging Face model discovery failure: " + ex.Message); }
         }
 
         public async Task<bool> TestConnectionAsync(CancellationToken ct)
