@@ -205,8 +205,7 @@ jobs:
             --target "$source_sha" \
             --title "OMNIX v3 Development Preview ${{ steps.meta.outputs.short_sha }}" \
             --notes-file release-input/RELEASE-NOTES.md \
-            --prerelease \
-            --verify-tag
+            --prerelease
 
       - name: Report published preview
         shell: bash
