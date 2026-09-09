@@ -34,16 +34,18 @@ function Copy-PayloadFile([string]$sourcePath) {
     [void]$copiedSources.Add($item.FullName)
 }
 
-foreach ($host in $hosts) {
-    $bin = Join-Path $root "src\$host\bin\Release"
+# $Host is a built-in read-only PowerShell automatic variable, and variable names are
+# case-insensitive. Use $hostProject rather than $host so StrictMode works on every runner.
+foreach ($hostProject in $hosts) {
+    $bin = Join-Path $root "src\$hostProject\bin\Release"
     if (-not (Test-Path -LiteralPath $bin -PathType Container)) {
         throw "Build output directory missing: $bin — run the Release build first."
     }
 
     # These three files are the minimum valid VSTO deployment identity for each host.
-    $hostDll = Join-Path $bin "$host.dll"
+    $hostDll = Join-Path $bin "$hostProject.dll"
     $appManifest = "$hostDll.manifest"
-    $deployManifest = Join-Path $bin "$host.vsto"
+    $deployManifest = Join-Path $bin "$hostProject.vsto"
     foreach ($required in @($hostDll, $appManifest, $deployManifest)) {
         Copy-PayloadFile $required
     }
