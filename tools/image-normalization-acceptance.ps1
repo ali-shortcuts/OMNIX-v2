@@ -14,14 +14,16 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # Windows PowerShell does not necessarily preload WPF assemblies in a headless CI session.
-# Load them explicitly before resolving BitmapFrame/Point types used by the compiled harness.
+# Load and explicitly reference the framework assemblies needed by WPF bitmap encoders.
 Add-Type -AssemblyName WindowsBase -ErrorAction Stop
 Add-Type -AssemblyName PresentationCore -ErrorAction Stop
+Add-Type -AssemblyName System.Xaml -ErrorAction Stop
 
 $core = (Resolve-Path -LiteralPath $CorePath -ErrorAction Stop).Path
 [void][Reflection.Assembly]::LoadFrom($core)
 $presentationCore = [System.Windows.Media.Imaging.BitmapFrame].Assembly.Location
 $windowsBase = [System.Windows.Point].Assembly.Location
+$systemXaml = [System.Xaml.XamlReader].Assembly.Location
 
 $source = @'
 using System;
@@ -142,7 +144,7 @@ public static class ImageNormalizationAcceptanceHarness
 }
 '@
 
-Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies @($core,$presentationCore,$windowsBase) -ErrorAction Stop
+Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies @($core,$presentationCore,$windowsBase,$systemXaml) -ErrorAction Stop
 $result = [ImageNormalizationAcceptanceHarness]::Run()
 
 $outDir = Split-Path -Parent $OutputPath
