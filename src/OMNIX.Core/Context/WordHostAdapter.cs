@@ -10,6 +10,10 @@ namespace OMNIX.Core.Context
     /// <summary>
     /// Word adapter (spec Section 3, Layer 3): Document, Selection, Paragraphs, Headings, Tables,
     /// Track Changes/Comments. Write tool: rewrite_selected_text with native UndoRecord.
+    ///
+    /// Performance invariant: large Word ranges are shortened through Range.Duplicate/End BEFORE
+    /// the Text property is requested. Truncating a giant string after doc.Content.Text has already
+    /// been materialized defeats the context limit and can pause Word on very large documents.
     /// </summary>
     public sealed class WordHostAdapter : IHostAdapter
     {
@@ -41,7 +45,7 @@ namespace OMNIX.Core.Context
                 if (sel != null && sel.Range != null)
                 {
                     ctx.SelectionAddress = "chars " + sel.Start + "–" + sel.End;
-                    ctx.SelectionText = TextUtil.Truncate(sel.Text ?? "", 200);
+                    ctx.SelectionText = ReadRangeTextBounded(sel.Range, 200);
                 }
                 ctx.HeadingsPreview = BuildHeadings(doc);
             }
@@ -57,8 +61,12 @@ namespace OMNIX.Core.Context
             try
             {
                 var sel = _app.Selection;
-                if (sel == null) return "(no selection)";
-                return "Selection (" + sel.Start + "–" + sel.End + "):\n" + (sel.Text ?? "(empty)");
+                if (sel == null || sel.Range == null) return "(no selection)";
+                int cap = Math.Max(1, _maxChars());
+                string text = ReadRangeTextBounded(sel.Range, cap);
+                bool truncated = (sel.End - sel.Start) > cap;
+                return "Selection (" + sel.Start + "–" + sel.End + "):\n" + text +
+                       (truncated ? Environment.NewLine + "…[selection truncated before Word text materialization]" : "");
             }
             catch (Exception ex)
             {
@@ -73,13 +81,24 @@ namespace OMNIX.Core.Context
             {
                 var doc = _app.ActiveDocument;
                 if (doc == null) return "(no document open)";
+
+                int cap = Math.Max(1, Math.Min(maxChars, _maxChars()));
                 var sb = new StringBuilder();
                 sb.AppendLine("Document: " + doc.Name + " (" + doc.Paragraphs.Count + " paragraphs, "
                               + doc.Tables.Count + " tables)");
                 if (doc.TrackRevisions) sb.AppendLine("[Track Changes is ON]");
                 sb.AppendLine();
-                sb.Append(doc.Content.Text);
-                return TextUtil.Truncate(sb.ToString(), Math.Min(maxChars, _maxChars()));
+
+                // Reserve a little budget for the header/truncation marker and bound the COM range
+                // before reading .Text.
+                int textBudget = Math.Max(1, cap - Math.Min(512, sb.Length + 128));
+                var content = doc.Content;
+                int originalLength = Math.Max(0, content.End - content.Start);
+                sb.Append(ReadRangeTextBounded(content, textBudget));
+                if (originalLength > textBudget)
+                    sb.AppendLine(Environment.NewLine + "…[document text truncated before Word text materialization]");
+
+                return TextUtil.Truncate(sb.ToString(), cap);
             }
             catch (Exception ex)
             {
@@ -101,9 +120,6 @@ namespace OMNIX.Core.Context
                 return TempImageCapture.FromExporter(path =>
                 {
                     sel.Range.CopyAsPicture();
-                    // The clipboard now holds an enhanced metafile; materialize via System.Windows.Clipboard
-                    // into a PNG-like image is unreliable across hosts — instead export through a temp chart
-                    // is not available in Word, so we fall back to System.Windows imaging below.
                     System.Windows.IDataObject data = System.Windows.Clipboard.GetDataObject();
                     if (data != null && data.GetDataPresent(System.Windows.DataFormats.Bitmap))
                     {
@@ -136,7 +152,7 @@ namespace OMNIX.Core.Context
 
             var args = ToolArguments.Parse(argumentsJson);
             var sel = _app.Selection;
-            string before = sel != null ? (sel.Text ?? "") : "";
+            string before = sel != null && sel.Range != null ? ReadRangeTextBounded(sel.Range, 4000) : "";
             string after = args.Get("text", args.Get("value", ""));
 
             return new WritePreview
@@ -177,6 +193,31 @@ namespace OMNIX.Core.Context
             Logging.Logger.Install("Word write tool applied: rewrite_selected_text (" + newText.Length + " chars)");
         }
 
+        private static string ReadRangeTextBounded(Word.Range range, int maxChars)
+        {
+            if (range == null) return string.Empty;
+            int cap = Math.Max(1, maxChars);
+            Word.Range bounded = null;
+            try
+            {
+                bounded = range.Duplicate;
+                int desiredEnd = bounded.Start + cap;
+                if (bounded.End > desiredEnd) bounded.End = desiredEnd;
+                return bounded.Text ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+            finally
+            {
+                if (bounded != null)
+                {
+                    try { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(bounded); } catch { }
+                }
+            }
+        }
+
         private string BuildHeadings(Word.Document doc)
         {
             var sb = new StringBuilder();
@@ -189,16 +230,17 @@ namespace OMNIX.Core.Context
                     string styleName = null;
                     try { styleName = p.Range.ParagraphStyle != null ? ((Word.Style)p.Range.ParagraphStyle).NameLocal : null; }
                     catch { }
-                    if (!string.IsNullOrEmpty(styleName) && styleName.StartsWith("Heading", StringComparison.OrdinalIgnoreCase) ||
+                    if ((!string.IsNullOrEmpty(styleName) && styleName.StartsWith("Heading", StringComparison.OrdinalIgnoreCase)) ||
                         (styleName != null && styleName.StartsWith("عنوان", StringComparison.Ordinal)))
                     {
-                        string text = (p.Range.Text ?? "").Trim('\r', '\a');
+                        string text = ReadRangeTextBounded(p.Range, 300).Trim('\r', '\a');
                         sb.AppendLine(styleName + ": " + text);
+                        if (sb.Length >= 2000) { sb.AppendLine("…"); break; }
                     }
                 }
             }
             catch { }
-            return sb.Length == 0 ? "(no headings)" : sb.ToString();
+            return sb.Length == 0 ? "(no headings)" : TextUtil.Truncate(sb.ToString(), 2200);
         }
     }
 }
