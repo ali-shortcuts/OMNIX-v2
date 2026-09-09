@@ -75,6 +75,18 @@ Require $models 'Images = null' 'historical image bytes must not be copied into 
 Require 'src/OMNIX.Core/AiGateway/Http/OpenAiCompatibleClient.cs' 'request = ChatRequestBudgeter.Apply(request)' 'all OpenAI-compatible providers must enforce the request budget.'
 Require 'src/OMNIX.Core/AiGateway/Adapters/GeminiAdapter.cs' 'request = ChatRequestBudgeter.Apply(request)' 'Gemini must enforce the same request budget.'
 Require 'src/OMNIX.Core/AiGateway/Adapters/OllamaAdapter.cs' 'request = ChatRequestBudgeter.Apply(request)' 'Ollama must enforce the same request budget.'
+Require 'tools/request-budget-acceptance.ps1' 'REQUEST-BUDGET-RUNTIME-001' 'compiled request budget needs a deterministic runtime acceptance harness.'
+Require 'tools/request-budget-acceptance.ps1' 'HistoricalImagesRemovedPass' 'runtime evidence must prove old image bytes are removed.'
+Require 'tools/request-budget-acceptance.ps1' 'SourceRequestNotMutatedPass' 'budgeting must not mutate the source conversation.'
+
+# Local history persistence is separate from provider replay and must remain bounded as well.
+$historyStore = 'src/OMNIX.Core/Storage/ChatStorage.cs'
+Require $historyStore 'MaxHistoryFileBytes = 8L * 1024L * 1024L' 'history input/output file size needs a hard ceiling.'
+Require $historyStore 'MaxPersistedTextChars = 2 * 1024 * 1024' 'total persisted conversation text needs a hard ceiling.'
+Require $historyStore 'MaxPersistedTurnChars = 128 * 1024' 'one persisted turn cannot dominate the history file.'
+Require $historyStore 'file.Length > MaxHistoryFileBytes' 'oversized history must be rejected before File.ReadAllText.'
+Require $historyStore 'PngBytes = null' 'raw image bytes must never be persisted in chat history.'
+Require $historyStore 'File.Replace(tmp, path, null)' 'existing history should use same-volume atomic replacement.'
 
 # Network transport hardening: normal certificate validation, no legacy TLS, no auth redirect leaks,
 # bounded streaming/body/model discovery and deterministic cancellation.
@@ -121,5 +133,5 @@ if ($failures.Count -gt 0) {
     exit 1
 }
 Write-Host 'OMNIX RUNTIME-HARDENING CONTRACT: PASS'
-Write-Host 'Write bounds, hidden tool protocol, request memory limits, transport safety, privacy ordering and provider-source traceability are structurally intact.'
+Write-Host 'Write bounds, hidden tool protocol, request/storage memory limits, transport safety, privacy ordering and provider-source traceability are structurally intact.'
 exit 0
