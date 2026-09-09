@@ -25,15 +25,28 @@ jobs:
     runs-on: windows-2022
 
     steps:
-      - name: Checkout
+      - name: Checkout exact source commit
         uses: actions/checkout@v4
+        with:
+          # On pull_request, github.sha points at GitHub's synthetic merge commit. Release evidence
+          # must bind to the actual OMNIX branch head, so build that exact head here.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Resolve exact tested source commit
+        id: source
+        shell: pwsh
+        run: |
+          $source = (git rev-parse HEAD).Trim()
+          if ($source -notmatch '^[0-9a-fA-F]{40}$') { throw "Could not resolve exact tested source commit." }
+          "sha=$source" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "OMNIX build source commit: $source"
 
       - name: Temporarily exclude workspace from Defender during VSTO compilation
         shell: pwsh
         run: |
           try {
             Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE" -ErrorAction Stop
-            Write-Host "Temporary build exclusion added. It will be removed before the release-artifact scan."
+            Write-Host "Temporary build exclusion added. It will be removed before the installer scan."
           } catch {
             Write-Host "Could not add temporary Defender exclusion (non-fatal): $_"
           }
@@ -73,9 +86,36 @@ jobs:
         shell: pwsh
         run: ./build/build-with-fallbacks.ps1 ${{ steps.cert.outputs.thumbprint }}
 
-      - name: Stage installer payload and reject private-key leakage
+      - name: Stage installer payload and enforce complete Office payload
         shell: pwsh
         run: ./build/package.ps1
+
+      - name: Verify staged payload before installer compilation
+        shell: pwsh
+        run: |
+          $required = @(
+            'OMNIX.Excel.dll','OMNIX.Excel.dll.manifest','OMNIX.Excel.vsto',
+            'OMNIX.Word.dll','OMNIX.Word.dll.manifest','OMNIX.Word.vsto',
+            'OMNIX.PowerPoint.dll','OMNIX.PowerPoint.dll.manifest','OMNIX.PowerPoint.vsto',
+            'OMNIX.Core.dll'
+          )
+          foreach ($name in $required) {
+            $path = Join-Path 'installer\payload' $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "HOLLOW_INSTALLER_GUARD: $name is missing before Inno Setup compilation."
+            }
+            if ((Get-Item -LiteralPath $path).Length -le 0) {
+              throw "HOLLOW_INSTALLER_GUARD: $name is empty before Inno Setup compilation."
+            }
+          }
+          if (-not (Test-Path build\artifact\payload-inventory.json)) {
+            throw "Payload inventory was not generated."
+          }
+          $inventory = @(Get-Content build\artifact\payload-inventory.json -Raw | ConvertFrom-Json)
+          if ($inventory.Count -lt 10) {
+            throw "Payload inventory is unexpectedly small ($($inventory.Count) entries)."
+          }
+          Write-Host "Complete OMNIX Office payload verified: $($inventory.Count) inventoried files."
 
       - name: Bundle official Microsoft VSTO Runtime redistributable
         shell: pwsh
@@ -100,12 +140,25 @@ jobs:
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "ISCC.exe not found." }
+          New-Item -ItemType Directory -Force build\artifact | Out-Null
           $ver = "0.0.0-dev"
-          & $iscc "/DMyAppVersion=$ver" "installer/installer.iss"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $compilerOutput = & $iscc "/DMyAppVersion=$ver" "installer/installer.iss" 2>&1
+          $compileExit = $LASTEXITCODE
+          $compilerOutput | Tee-Object -FilePath build\artifact\inno-compile.log | Write-Host
+          if ($compileExit -ne 0) { exit $compileExit }
+
           $exe = Get-ChildItem installer\Output\OMNIX-Setup-*.exe | Select-Object -First 1
           if (-not $exe -or $exe.Length -lt 1MB) { throw "Installer output missing or unexpectedly small." }
-          Write-Host "Development installer compiled: $($exe.Name) ($($exe.Length) bytes)"
+
+          # In addition to the pre-compile payload gate, require Inno's compile log to show all three
+          # host DLLs were actually compressed into the setup image.
+          $compileText = Get-Content build\artifact\inno-compile.log -Raw
+          foreach ($hostDll in @('OMNIX.Excel.dll','OMNIX.Word.dll','OMNIX.PowerPoint.dll','OMNIX.Core.dll')) {
+            if ($compileText -notmatch [Regex]::Escape($hostDll)) {
+              throw "HOLLOW_INSTALLER_GUARD: Inno compile log does not contain $hostDll."
+            }
+          }
+          Write-Host "Development installer compiled with all Office host payloads: $($exe.Name) ($($exe.Length) bytes)"
 
       - name: Verify installer handles Office-less CI machine gracefully
         shell: pwsh
@@ -119,11 +172,11 @@ jobs:
             -Wait -PassThru
 
           if ($p.ExitCode -eq 0) {
-            # Some runner images may happen to expose Office-compatible registration. If setup says
-            # success, require that it actually copied the payload.
-            $addinDll = "$env:LOCALAPPDATA\Programs\OMNIX\OMNIX.Excel.dll"
-            if (-not (Test-Path $addinDll)) {
-              throw "Installer returned success but OMNIX payload was not installed."
+            # If a future runner image includes supported Office, successful setup must copy all
+            # three host payloads that are applicable to that machine rather than returning a false 0.
+            $installDir = "$env:LOCALAPPDATA\Programs\OMNIX"
+            if (-not (Test-Path (Join-Path $installDir 'OMNIX.Core.dll'))) {
+              throw "Installer returned success but OMNIX.Core.dll was not installed."
             }
             Write-Host "Installer completed successfully on this runner."
             exit 0
@@ -150,7 +203,7 @@ jobs:
             Write-Host "Could not remove exclusion (it may never have been added): $_"
           }
 
-      - name: Windows Defender scan with real-time protection restored
+      - name: Windows Defender custom scan after exclusion removal
         shell: pwsh
         run: ./build/defender-check.ps1
 
@@ -159,20 +212,41 @@ jobs:
         run: |
           $exe = Get-ChildItem installer\Output\OMNIX-Setup-*.exe | Select-Object -First 1
           if (-not $exe) { throw "Installer missing before artifact manifest generation." }
+
+          $source = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($source -notmatch '^[0-9a-f]{40}$') { throw "Invalid source commit in artifact evidence." }
+          if ($source -ne '${{ steps.source.outputs.sha }}'.ToLowerInvariant()) {
+            throw "Source commit changed during the build."
+          }
+
+          $inventoryPath = 'build\artifact\payload-inventory.json'
+          if (-not (Test-Path $inventoryPath)) { throw "Payload inventory missing from artifact evidence." }
+          $inventoryHash = (Get-FileHash -Algorithm SHA256 $inventoryPath).Hash.ToLowerInvariant()
+
           $hash = (Get-FileHash -Algorithm SHA256 $exe.FullName).Hash.ToLowerInvariant()
           $sig = Get-AuthenticodeSignature $exe.FullName
+
+          $defenderReport = 'build\defender-report.txt'
+          $defenderText = if (Test-Path $defenderReport) { Get-Content $defenderReport -Raw } else { '' }
+          $rtp = $null
+          if ($defenderText -match 'RealTimeProtectionEnabled:\s*True') { $rtp = $true }
+          elseif ($defenderText -match 'RealTimeProtectionEnabled:\s*False') { $rtp = $false }
+
           $manifest = [ordered]@{
             ArtifactType = 'DEVELOPMENT_ONLY'
-            SourceCommit = $env:GITHUB_SHA
+            SourceCommit = $source
             FileName = $exe.Name
             SizeBytes = [int64]$exe.Length
             Sha256 = $hash
+            PayloadInventorySha256 = $inventoryHash
+            RequiredOfficePayloadPresent = $true
             AuthenticodeStatus = [string]$sig.Status
+            DefenderCustomScanCompleted = [bool](Test-Path $defenderReport)
+            DefenderRealTimeProtectionEnabled = $rtp
             RealOfficeRuntimeTested = $false
             ProductionReleaseApproved = $false
-            Note = 'CI build artifact only. Real Office/UI/provider acceptance and trusted production signing are mandatory before release.'
+            Note = 'CI development artifact only. Real Office/UI/provider acceptance, consumer-machine security verification and trusted production signing remain mandatory.'
           }
-          New-Item -ItemType Directory -Force build\artifact | Out-Null
           $manifest | ConvertTo-Json -Depth 6 | Set-Content build\artifact\manifest.json -Encoding UTF8
           $hash | Set-Content build\artifact\installer.sha256 -Encoding ASCII
           $manifest | ConvertTo-Json -Depth 6
@@ -185,6 +259,8 @@ jobs:
             installer/Output/*.exe
             build/artifact/manifest.json
             build/artifact/installer.sha256
+            build/artifact/payload-inventory.json
+            build/artifact/inno-compile.log
             build/defender-report.txt
             build/logs/*.binlog
           if-no-files-found: error
