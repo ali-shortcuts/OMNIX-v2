@@ -231,7 +231,7 @@ namespace OMNIX.Core.Context
 
         public void ApplyWrite(string toolName, string argumentsJson)
         {
-            ExcelWrite.Apply(this, toolName, argumentsJson);
+            ExcelWrite.ApplyWrite(this, toolName, argumentsJson);
         }
 
         // ------------------------------------------------------------------ helpers
