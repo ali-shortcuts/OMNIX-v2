@@ -17,8 +17,8 @@ namespace OMNIX.Core.AiGateway.Adapters
     /// <summary>
     /// Gemini adapter — multimodal Gemini models (image + text).
     /// Endpoint: POST /v1beta/models/{model}:streamGenerateContent?alt=sse.
-    /// API key travels in x-goog-api-key (never a logged query string). Responses/model catalogs
-    /// are bounded before full materialization to protect the Office host process.
+    /// API key travels in x-goog-api-key (never a logged query string). Request history plus
+    /// responses/model catalogs are bounded before full materialization to protect Office hosts.
     /// </summary>
     public sealed class GeminiAdapter : IProviderAdapter
     {
@@ -76,6 +76,8 @@ namespace OMNIX.Core.AiGateway.Adapters
 
         public string BuildPayload(ChatRequest request, bool stream)
         {
+            request = ChatRequestBudgeter.Apply(request);
+
             var contents = new JArray();
             if (request.History != null)
                 foreach (var t in request.History)
@@ -208,8 +210,6 @@ namespace OMNIX.Core.AiGateway.Adapters
                                     if (name.StartsWith("models/", StringComparison.Ordinal)) name = name.Substring(7);
                                     var methods = m["supportedGenerationMethods"] as JArray;
                                     if (methods != null && !methods.Any(t => (string)t == "generateContent")) continue;
-                                    // OMNIX's Gemini adapter promises Gemini multimodal semantics; do not
-                                    // silently expose unrelated embedding/Gemma catalogs here.
                                     if (!name.StartsWith("gemini-", StringComparison.OrdinalIgnoreCase)) continue;
                                     if (!string.IsNullOrWhiteSpace(name) && !list.Contains(name, StringComparer.OrdinalIgnoreCase))
                                         list.Add(name);
