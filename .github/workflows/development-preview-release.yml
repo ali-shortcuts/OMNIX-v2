@@ -167,9 +167,16 @@ jobs:
         shell: bash
         run: |
           cat > release-input/RELEASE-NOTES.md <<'EOF'
-          # OMNIX v3 Development Preview
+          # OMNIX v3 Development Preview — canonical Office registration rebuild
 
-          This is a **development pre-release**, not a production-approved build.
+          This prerelease replaces the obsolete OMNIX preview installers in this repository.
+
+          Important fix in this generation:
+          - Excel, Word and PowerPoint VSTO registration uses the canonical Microsoft Office host path:
+            `HKCU\Software\Microsoft\Office\<Host>\Addins\OMNIX`
+          - obsolete versioned registration created by earlier previews is removed during install/repair
+          - automatic load is configured with `LoadBehavior=3`
+          - installer and maintenance scanner use the same canonical registration model
 
           Proven by CI for this exact source commit:
           - architecture / anti-drift contract PASS
@@ -180,7 +187,7 @@ jobs:
           - automatic Office registration maintenance audit PASS in read-only mode
           - installer compiled and checksum-bound to the attached manifest
 
-          Not yet proven by this CI preview:
+          Not yet proven by GitHub-hosted CI:
           - real interactive Excel + Word + PowerPoint automatic-load / Ribbon / task-pane E2E
           - Windows restart persistence
           - live provider matrix on a consumer machine
@@ -207,6 +214,23 @@ jobs:
             --notes-file release-input/RELEASE-NOTES.md \
             --prerelease
 
+      - name: Retire exact obsolete OMNIX releases after replacement is live
+        shell: bash
+        run: |
+          set -euo pipefail
+          current='${{ steps.meta.outputs.tag }}'
+          for obsolete in v1.0.9 v3.0.0-dev.3; do
+            if [[ "$obsolete" == "$current" ]]; then
+              continue
+            fi
+            if gh release view "$obsolete" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Deleting obsolete OMNIX release/tag: $obsolete"
+              gh release delete "$obsolete" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            else
+              echo "Obsolete release already absent: $obsolete"
+            fi
+          done
+
       - name: Report published preview
         shell: bash
         run: |
@@ -214,3 +238,4 @@ jobs:
           echo "Source: ${{ steps.meta.outputs.source_sha }}"
           echo "Installer SHA256: ${{ steps.artifact.outputs.installer_sha }}"
           echo "Installer size: ${{ steps.artifact.outputs.installer_size }} bytes"
+          echo "Obsolete exact releases v1.0.9 and v3.0.0-dev.3 were retired if present."
