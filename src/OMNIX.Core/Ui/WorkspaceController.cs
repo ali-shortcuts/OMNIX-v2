@@ -312,6 +312,7 @@ namespace OMNIX.Core.Ui
                     View.Chat.SetStatus("No capturable Office view is available.");
                     return;
                 }
+                ImageNormalizer.ValidatePngBytes(png, _adapter.HostDisplayName + " capture");
                 View.Chat.SetPendingImage(new ImageAttachment
                 {
                     PngBytes = png,
@@ -342,20 +343,20 @@ namespace OMNIX.Core.Ui
                 };
                 if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
 
-                var info = new System.IO.FileInfo(dlg.FileName);
-                if (info.Length > 20L * 1024L * 1024L)
-                {
-                    View.Chat.SetStatus("Image is too large (maximum 20 MB).\nChoose a smaller image.");
-                    return;
-                }
-
-                byte[] bytes = System.IO.File.ReadAllBytes(dlg.FileName);
+                // All supported source formats are decoded and re-encoded as a bounded PNG.
+                // Provider adapters can therefore truthfully send image/png instead of labeling
+                // raw JPEG/BMP bytes as PNG. Invalid/oversized images fail before entering chat.
+                byte[] png = ImageNormalizer.LoadFileAsPng(dlg.FileName);
                 View.Chat.SetPendingImage(new ImageAttachment
                 {
-                    PngBytes = bytes,
-                    FileName = System.IO.Path.GetFileName(dlg.FileName),
+                    PngBytes = png,
+                    FileName = System.IO.Path.GetFileNameWithoutExtension(dlg.FileName) + ".png",
                     SourceLabel = "file"
                 });
+            }
+            catch (System.IO.InvalidDataException ex)
+            {
+                View.Chat.SetStatus(ex.Message);
             }
             catch (Exception ex)
             {
