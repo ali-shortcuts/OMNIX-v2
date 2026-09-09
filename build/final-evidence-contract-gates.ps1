@@ -31,13 +31,18 @@ Forbid 'tools/real-office-ai-e2e.ps1' 'Restart-Computer' 'test must never restar
 Forbid 'tools/real-office-ai-e2e.ps1' 'Disable-NetAdapter' 'test must never alter networking.'
 Forbid 'tools/real-office-ai-e2e.ps1' 'New-NetFirewallRule' 'test must never alter firewall policy.'
 
-# Full Office E2E exact-installer binding + AI route.
+# Full Office E2E exact-installer binding + AI route + guarded writes.
 Parse-Ps 'tools/full-office-e2e.ps1'
-Need 'tools/full-office-e2e.ps1' 'EvidenceSchema = 2' 'Office E2E v2 evidence required.'
+Need 'tools/full-office-e2e.ps1' 'EvidenceSchema = 3' 'Office E2E v3 evidence required.'
 Need 'tools/full-office-e2e.ps1' 'ExpectedInstallerSha256' 'intended installer hash must be explicit.'
 Need 'tools/full-office-e2e.ps1' 'HashMatchedExpected' 'hash-match result must be recorded.'
+Need 'tools/full-office-e2e.ps1' 'office-write-boundary-acceptance.ps1' 'full E2E must prove approved-but-invalid writes remain blocked.'
+Need 'tools/full-office-e2e.ps1' 'WriteBoundary' 'write-boundary result must be aggregated.'
 Need 'tools/full-office-e2e.ps1' 'real-office-ai-e2e.ps1' 'full E2E must include real AI route.'
 Need 'tools/full-office-e2e.ps1' 'AiRoundTrip' 'AI round-trip result must be aggregated.'
+Parse-Ps 'tools/office-write-boundary-acceptance.ps1'
+Need 'tools/office-write-boundary-acceptance.ps1' 'OFFICE-WRITE-BOUNDARY-REAL-001' 'stable three-host write-boundary TestId required.'
+Need 'tools/office-write-boundary-acceptance.ps1' 'AllBoundaryChecksPass' 'all invalid-write boundaries must pass.'
 Forbid 'tools/full-office-e2e.ps1' 'Restart-Computer' 'full E2E must never restart Windows.'
 Forbid 'tools/full-office-e2e.ps1' 'Disable-NetAdapter' 'full E2E must never alter networking.'
 
@@ -67,6 +72,7 @@ Parse-Ps 'tools/final-production-core.ps1'
 Need 'tools/final-production-core.ps1' 'OMNIX-FINAL-PRODUCTION-GATE-002' 'canonical final TestId required.'
 Need 'tools/final-production-core.ps1' 'release-readiness.ps1' 'base persistence/UI/reboot/offline/provider/privacy/signature gate must be inherited.'
 Need 'tools/final-production-core.ps1' 'OFFICE-E2E-REAL-001' 'full Office E2E is mandatory.'
+Need 'tools/final-production-core.ps1' 'OFFICE-WRITE-BOUNDARY-REAL-001' 'real three-host write-boundary evidence is mandatory.'
 Need 'tools/final-production-core.ps1' 'OFFICE-AI-E2E-REAL-001' 'real Office context-to-AI rendered UI route is mandatory.'
 Need 'tools/final-production-core.ps1' 'LIFECYCLE-REAL-002' 'precise repair/uninstall lifecycle is mandatory.'
 Need 'tools/final-production-core.ps1' 'CONSUMER-SECURITY-REAL-001' 'consumer protection evidence is mandatory.'
