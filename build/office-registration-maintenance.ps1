@@ -1,16 +1,21 @@
 # OMNIX Office registration maintenance
 #
-# User-authorized, per-user maintenance for supported desktop Office hosts (Office 2013+).
-# It scans only Excel/Word/PowerPoint installation evidence and repairs ONLY OMNIX-owned HKCU
-# VSTO registration when the corresponding host is actually installed. It never clears Office
-# Resiliency/DisabledItems, never changes Trust Center, never launches Office, never elevates,
-# and never touches documents or provider credentials.
+# IMPORTANT: VSTO application-level add-ins are discovered under:
+#   HKCU\Software\Microsoft\Office\<Application>\Addins\<AddinId>
+# They are NOT registered under Office\16.0\... or Office\15.0\...
+# See Microsoft VSTO deployment documentation.
+#
+# This script is user-authorized and per-user. It scans only Excel/Word/PowerPoint
+# installation evidence and repairs ONLY OMNIX-owned HKCU registration. It never
+# clears Office Resiliency/DisabledItems, changes Trust Center, launches Office,
+# elevates, reads documents, or touches provider credentials.
 
 [CmdletBinding()]
 param(
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\OMNIX",
     [string]$OutputPath = "$env:LOCALAPPDATA\OMNIX\logs\office-registration-maintenance.json",
     [switch]$AuditOnly,
+    [switch]$Remove,
     [switch]$Quiet
 )
 
@@ -25,7 +30,7 @@ $Hosts = @(
 )
 
 function Open-Hklm([Microsoft.Win32.RegistryView]$View) {
-    return [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $View)
+    [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $View)
 }
 
 function Get-HklmString([string]$SubKey, [string]$ValueName) {
@@ -44,7 +49,7 @@ function Get-HklmString([string]$SubKey, [string]$ValueName) {
             if ($null -ne $base) { $base.Dispose() }
         }
     }
-    return $null
+    $null
 }
 
 function Get-HkcuString([string]$SubKey, [string]$ValueName) {
@@ -54,8 +59,8 @@ function Get-HkcuString([string]$SubKey, [string]$ValueName) {
         if ($null -eq $key) { return $null }
         $value = [string]$key.GetValue($ValueName, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
         if ([string]::IsNullOrWhiteSpace($value)) { return $null }
-        return $value.Trim('"')
-    } catch { return $null }
+        $value.Trim('"')
+    } catch { $null }
     finally { if ($null -ne $key) { $key.Dispose() } }
 }
 
@@ -67,7 +72,7 @@ function Get-KnownOfficeExePaths([string]$Version, [string]$Exe) {
         $paths += (Join-Path $root ("Microsoft Office\root\$folder\$Exe"))
         $paths += (Join-Path $root ("Microsoft Office\$folder\$Exe"))
     }
-    return $paths
+    $paths
 }
 
 function Get-InstallRootExe([string]$Version, $OfficeHost) {
@@ -77,30 +82,31 @@ function Get-InstallRootExe([string]$Version, $OfficeHost) {
         $root = Get-HkcuString ("Software\Microsoft\Office\$Version\$($OfficeHost.Name)\InstallRoot") 'Path'
     }
     if ([string]::IsNullOrWhiteSpace($root)) { return $null }
-    return (Join-Path ([Environment]::ExpandEnvironmentVariables($root)) $OfficeHost.Exe)
+    Join-Path ([Environment]::ExpandEnvironmentVariables($root)) $OfficeHost.Exe
 }
 
-function Test-OfficeHostInstalled([string]$Version, $OfficeHost) {
-    # Prefer executable-backed evidence. Stale Office registry keys are intentionally not enough
-    # to create a new OMNIX Addins key for a host/version that is no longer installed.
+function Test-OfficeHostInstalledForVersion([string]$Version, $OfficeHost) {
     $installRootExe = Get-InstallRootExe $Version $OfficeHost
-    if (-not [string]::IsNullOrWhiteSpace($installRootExe) -and (Test-Path -LiteralPath $installRootExe -PathType Leaf)) {
-        return $true
-    }
+    if (-not [string]::IsNullOrWhiteSpace($installRootExe) -and (Test-Path -LiteralPath $installRootExe -PathType Leaf)) { return $true }
 
     foreach ($candidate in Get-KnownOfficeExePaths $Version $OfficeHost.Exe) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $true }
     }
 
-    # App Paths is useful for Click-to-Run. Bind it to the detected major generation so an Office16
-    # App Path cannot accidentally make us register a phantom Office15 host.
     $appPath = Get-HklmString ("SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\$($OfficeHost.Exe)") ''
     if (-not [string]::IsNullOrWhiteSpace($appPath) -and (Test-Path -LiteralPath $appPath -PathType Leaf)) {
         $client = Get-HklmString 'SOFTWARE\Microsoft\Office\ClickToRun\Configuration' 'ClientVersionToReport'
         if ($Version -eq '16.0' -and $client -match '^16\.') { return $true }
         if ($Version -eq '15.0' -and $client -match '^15\.') { return $true }
     }
-    return $false
+    $false
+}
+
+function Test-OfficeHostInstalled($OfficeHost) {
+    foreach ($version in $SupportedVersions) {
+        if (Test-OfficeHostInstalledForVersion $version $OfficeHost) { return $true }
+    }
+    $false
 }
 
 function Get-ManifestUri([string]$HostName) {
@@ -108,25 +114,43 @@ function Get-ManifestUri([string]$HostName) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required VSTO deployment manifest is missing: OMNIX.$HostName.vsto"
     }
-    # Keep this compatible with Windows PowerShell 5.1/.NET Framework used on consumer Office PCs.
     $uri = New-Object System.Uri -ArgumentList $path
-    return ($uri.AbsoluteUri + '|vstolocal')
+    ($uri.AbsoluteUri + '|vstolocal')
 }
 
-function Get-RegistrationState([string]$Version, [string]$HostName, [string]$ExpectedManifest) {
-    $path = "HKCU:\Software\Microsoft\Office\$Version\$HostName\Addins\OMNIX"
+function Get-CanonicalRegistrationPath([string]$HostName) {
+    "HKCU:\Software\Microsoft\Office\$HostName\Addins\OMNIX"
+}
+
+function Get-LegacyRegistrationPaths([string]$HostName) {
+    @(
+        "HKCU:\Software\Microsoft\Office\16.0\$HostName\Addins\OMNIX",
+        "HKCU:\Software\Microsoft\Office\15.0\$HostName\Addins\OMNIX"
+    )
+}
+
+function Remove-LegacyRegistration([string]$HostName) {
+    foreach ($legacy in Get-LegacyRegistrationPaths $HostName) {
+        if (Test-Path -LiteralPath $legacy) {
+            Remove-Item -LiteralPath $legacy -Recurse -Force
+        }
+    }
+}
+
+function Get-RegistrationState([string]$HostName, [string]$ExpectedManifest) {
+    $path = Get-CanonicalRegistrationPath $HostName
     if (-not (Test-Path -LiteralPath $path -PathType Container)) {
-        return [pscustomobject]@{ Exists=$false; Correct=$false; LoadBehavior=$null; Manifest=$null }
+        return [pscustomobject]@{ Exists=$false; Correct=$false; LoadBehavior=$null; Manifest=$null; Path=$path }
     }
     $item = Get-ItemProperty -LiteralPath $path -ErrorAction SilentlyContinue
     $load = if ($null -ne $item) { $item.LoadBehavior } else { $null }
     $manifest = if ($null -ne $item) { [string]$item.Manifest } else { $null }
     $correct = ($load -eq 3 -and [string]::Equals($manifest, $ExpectedManifest, [StringComparison]::OrdinalIgnoreCase))
-    return [pscustomobject]@{ Exists=$true; Correct=$correct; LoadBehavior=$load; Manifest=$manifest }
+    [pscustomobject]@{ Exists=$true; Correct=$correct; LoadBehavior=$load; Manifest=$manifest; Path=$path }
 }
 
-function Ensure-Registration([string]$Version, [string]$HostName, [string]$Manifest) {
-    $path = "HKCU:\Software\Microsoft\Office\$Version\$HostName\Addins\OMNIX"
+function Ensure-Registration([string]$HostName, [string]$Manifest) {
+    $path = Get-CanonicalRegistrationPath $HostName
     New-Item -Path $path -Force | Out-Null
     New-ItemProperty -LiteralPath $path -Name 'Description' -Value 'OMNIX AI Office' -PropertyType String -Force | Out-Null
     New-ItemProperty -LiteralPath $path -Name 'FriendlyName' -Value 'OMNIX' -PropertyType String -Force | Out-Null
@@ -134,20 +158,27 @@ function Ensure-Registration([string]$Version, [string]$HostName, [string]$Manif
     New-ItemProperty -LiteralPath $path -Name 'Manifest' -Value $Manifest -PropertyType String -Force | Out-Null
 }
 
+function Remove-OmnixRegistration([string]$HostName) {
+    $canonical = Get-CanonicalRegistrationPath $HostName
+    if (Test-Path -LiteralPath $canonical) { Remove-Item -LiteralPath $canonical -Recurse -Force }
+    Remove-LegacyRegistration $HostName
+}
+
 $report = [ordered]@{
-    TestId = 'OFFICE-REGISTRATION-MAINTENANCE-001'
-    EvidenceSchema = 2
+    TestId = 'OFFICE-REGISTRATION-MAINTENANCE-002'
+    EvidenceSchema = 3
     TimestampUtc = [DateTime]::UtcNow.ToString('o')
     AuditOnly = [bool]$AuditOnly
-    SupportedVersions = $SupportedVersions
+    Remove = [bool]$Remove
+    RegistrationPathModel = 'HKCU\Software\Microsoft\Office\<Host>\Addins\OMNIX'
     InstalledHostCount = 0
-    UniqueInstalledHostCount = 0
     CorrectBeforeCount = 0
     RepairedCount = 0
     CorrectAfterCount = 0
+    RemovedCount = 0
     Failures = @()
     Results = @()
-    Safety = 'Executable-backed detection; per-user OMNIX-owned HKCU Addins keys only; no Office Resiliency/Trust Center/document/network/provider-secret changes.'
+    Safety = 'Executable-backed detection; versionless Microsoft-documented VSTO Addins path; per-user OMNIX-owned keys only; no Office Resiliency/Trust Center/document/network/provider-secret changes.'
     OverallPass = $false
 }
 
@@ -155,50 +186,59 @@ $failures = @()
 $rows = @()
 
 try {
-    if (-not (Test-Path -LiteralPath (Join-Path $InstallDir 'OMNIX.Core.dll') -PathType Leaf)) {
+    if (-not $Remove -and -not (Test-Path -LiteralPath (Join-Path $InstallDir 'OMNIX.Core.dll') -PathType Leaf)) {
         throw 'OMNIX.Core.dll is missing from the configured installation directory.'
     }
 
-    foreach ($version in $SupportedVersions) {
-        foreach ($officeHost in $Hosts) {
-            $installed = Test-OfficeHostInstalled $version $officeHost
-            if (-not $installed) { continue }
-
-            $report.InstalledHostCount++
+    foreach ($officeHost in $Hosts) {
+        if ($Remove) {
             try {
-                $manifest = Get-ManifestUri $officeHost.Name
-                $before = Get-RegistrationState $version $officeHost.Name $manifest
-                if ($before.Correct) { $report.CorrectBeforeCount++ }
-                $changed = $false
+                Remove-OmnixRegistration $officeHost.Name
+                $report.RemovedCount++
+                $rows += [pscustomobject]@{ Host=$officeHost.Name; Installed=$null; CorrectBefore=$null; Changed=$true; CorrectAfter=$null; Pass=$true }
+            } catch {
+                $failures += "$($officeHost.Name): removal failed: $($_.Exception.Message)"
+            }
+            continue
+        }
 
-                if (-not $before.Correct -and -not $AuditOnly) {
-                    Ensure-Registration $version $officeHost.Name $manifest
+        $installed = Test-OfficeHostInstalled $officeHost
+        if (-not $installed) { continue }
+        $report.InstalledHostCount++
+
+        try {
+            $manifest = Get-ManifestUri $officeHost.Name
+            $before = Get-RegistrationState $officeHost.Name $manifest
+            if ($before.Correct) { $report.CorrectBeforeCount++ }
+            $changed = $false
+
+            if (-not $AuditOnly) {
+                Remove-LegacyRegistration $officeHost.Name
+                if (-not $before.Correct) {
+                    Ensure-Registration $officeHost.Name $manifest
                     $changed = $true
                     $report.RepairedCount++
                 }
-
-                $after = Get-RegistrationState $version $officeHost.Name $manifest
-                $pass = if ($AuditOnly) { $true } else { [bool]$after.Correct }
-                if ($after.Correct) { $report.CorrectAfterCount++ }
-                if (-not $pass) { $failures += "$version/$($officeHost.Name) OMNIX registration is not correct after maintenance." }
-
-                $rows += [pscustomobject]@{
-                    Version=$version
-                    Host=$officeHost.Name
-                    Installed=$true
-                    CorrectBefore=[bool]$before.Correct
-                    Changed=[bool]$changed
-                    CorrectAfter=[bool]$after.Correct
-                    Pass=[bool]$pass
-                }
             }
-            catch {
-                $failures += "$version/$($officeHost.Name): $($_.Exception.Message)"
-                $rows += [pscustomobject]@{
-                    Version=$version; Host=$officeHost.Name; Installed=$true; CorrectBefore=$false;
-                    Changed=$false; CorrectAfter=$false; Pass=$false
-                }
+
+            $after = Get-RegistrationState $officeHost.Name $manifest
+            $pass = if ($AuditOnly) { [bool]$before.Correct } else { [bool]$after.Correct }
+            if ($after.Correct) { $report.CorrectAfterCount++ }
+            if (-not $pass) { $failures += "$($officeHost.Name) OMNIX registration is not correct at $($after.Path)." }
+
+            $rows += [pscustomobject]@{
+                Host=$officeHost.Name
+                Installed=$true
+                RegistrationPath=$after.Path
+                CorrectBefore=[bool]$before.Correct
+                Changed=[bool]$changed
+                CorrectAfter=[bool]$after.Correct
+                Pass=[bool]$pass
             }
+        }
+        catch {
+            $failures += "$($officeHost.Name): $($_.Exception.Message)"
+            $rows += [pscustomobject]@{ Host=$officeHost.Name; Installed=$true; CorrectBefore=$false; Changed=$false; CorrectAfter=$false; Pass=$false }
         }
     }
 }
@@ -206,7 +246,6 @@ catch {
     $failures += $_.Exception.Message
 }
 
-$report.UniqueInstalledHostCount = @($rows | Select-Object -ExpandProperty Host -Unique).Count
 $report.Results = $rows
 $report.Failures = $failures
 $report.OverallPass = ($failures.Count -eq 0)
