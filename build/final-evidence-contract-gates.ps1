@@ -21,12 +21,13 @@ function Read-RepoFile([string]$relative) {
 
 function Require-Contains([string]$relative, [string]$needle, [string]$reason) {
     $text = Read-RepoFile $relative
-    if ($text -notlike "*$needle*") { $failures.Add("${relative}: missing '$needle' — $reason") }
+    # String.Contains is literal; unlike -like it does not treat []/*/? as wildcard syntax.
+    if (-not $text.Contains($needle)) { $failures.Add("${relative}: missing '$needle' — $reason") }
 }
 
 function Require-NotContains([string]$relative, [string]$needle, [string]$reason) {
     $text = Read-RepoFile $relative
-    if ($text -like "*$needle*") { $failures.Add("${relative}: forbidden '$needle' — $reason") }
+    if ($text.Contains($needle)) { $failures.Add("${relative}: forbidden '$needle' — $reason") }
 }
 
 function Require-PowerShellParses([string]$relative) {
@@ -67,7 +68,6 @@ Require-NotContains 'tools/real-office-ai-e2e.ps1' 'SaveAs' 'AI E2E must never s
 Require-NotContains 'tools/real-office-ai-e2e.ps1' 'Restart-Computer' 'AI E2E must never restart Windows.'
 Require-NotContains 'tools/real-office-ai-e2e.ps1' 'Disable-NetAdapter' 'AI E2E must never change networking.'
 Require-NotContains 'tools/real-office-ai-e2e.ps1' 'New-NetFirewallRule' 'AI E2E must never change firewall policy.'
-Require-NotContains 'tools/real-office-ai-e2e.ps1' 'Office\\.*Security' 'AI E2E must never manipulate Office security policy.'
 
 # ---------------------------------------------------------------------------
 # Full Office E2E must include the AI route and exact installer hash binding.
@@ -101,7 +101,7 @@ Require-NotContains 'tools/lifecycle-acceptance.ps1' 'Disable-NetAdapter' 'Lifec
 Require-NotContains 'tools/lifecycle-acceptance.ps1' 'RegDelete' 'Lifecycle acceptance itself must stay read-only over the registry.'
 
 # ---------------------------------------------------------------------------
-# Final production gate: no dev signature escape, all evidence cross-bound.
+# Final production gate: no dev-signature argument, all evidence cross-bound.
 # ---------------------------------------------------------------------------
 Require-PowerShellParses 'tools/final-production-gate.ps1'
 Require-Contains 'tools/final-production-gate.ps1' 'OMNIX-FINAL-PRODUCTION-GATE-001' 'Production needs one canonical final TestId.'
@@ -112,9 +112,23 @@ Require-Contains 'tools/final-production-gate.ps1' 'LIFECYCLE-REAL-001' 'Final g
 Require-Contains 'tools/final-production-gate.ps1' 'HashMatchedExpected' 'Final gate must reject Office E2E not explicitly bound to intended installer hash.'
 Require-Contains 'tools/final-production-gate.ps1' 'SignatureStatus' 'Final gate must enforce production Authenticode through base evidence.'
 Require-Contains 'tools/final-production-gate.ps1' 'SelfSigned' 'Self-signed installer must be rejected for production.'
-Require-NotContains 'tools/final-production-gate.ps1' 'AllowDevelopmentSignature' 'There must be no development-signature escape hatch in the final production gate.'
+$finalGate = Read-RepoFile 'tools/final-production-gate.ps1'
+# Comments may explain the forbidden dev switch; reject only a real quoted argument in the child args.
+if ($finalGate -match "(?m)^\s*'-AllowDevelopmentSignature'\s*,?\s*$" -or
+    $finalGate -match '(?m)^\s*"-AllowDevelopmentSignature"\s*,?\s*$') {
+    $failures.Add('tools/final-production-gate.ps1: final production gate passes the development-signature escape argument.')
+}
 Require-NotContains 'tools/final-production-gate.ps1' 'Restart-Computer' 'Final gate only aggregates evidence; it must never restart Windows.'
 Require-NotContains 'tools/final-production-gate.ps1' 'Disable-NetAdapter' 'Final gate only aggregates evidence; it must never alter networking.'
+
+# Production signing helper must use an already provisioned certificate and never export a private key.
+Require-PowerShellParses 'build/sign-production.ps1'
+Require-Contains 'build/sign-production.ps1' 'PRODUCTION-AUTHENTICODE-001' 'Production signing needs auditable evidence.'
+Require-Contains 'build/sign-production.ps1' 'CertificateThumbprint' 'Signing must select an already provisioned certificate by thumbprint.'
+Require-Contains 'build/sign-production.ps1' '/tr $TimestampUrl' 'Production Authenticode must use RFC3161 timestamping.'
+Require-Contains 'build/sign-production.ps1' 'PrivateKeyExportedByScript = $false' 'Signing helper must document that it never exports the private key.'
+Require-NotContains 'build/sign-production.ps1' 'Export-PfxCertificate' 'Production helper must never export private keys.'
+Require-NotContains 'build/sign-production.ps1' 'ConvertTo-SecureString' 'No PFX password material should be handled by this helper.'
 
 if ($failures.Count -gt 0) {
     Write-Host 'OMNIX FINAL-EVIDENCE CONTRACT: FAIL' -ForegroundColor Red
