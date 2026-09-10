@@ -1,0 +1,70 @@
+name: Windows build and runtime checks
+on:
+  push:
+    branches: [main, 'rebuild/**']
+    tags: ['v4.*-preview.*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Build native components, run Windows tests, and package the installer
+        shell: powershell
+        run: ./build/build.ps1
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-evidence-${{ github.sha }}
+          path: artifacts/evidence
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: omnix-installer-${{ github.sha }}
+          path: artifacts/release
+  publish-preview:
+    if: startsWith(github.ref, 'refs/tags/v4.')
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: omnix-installer-${{ github.sha }}
+          path: release
+      - name: Verify source binding and publish a development preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import json, os, hashlib, pathlib
+          folder=pathlib.Path('release')
+          manifest=json.loads((folder/'manifest.json').read_text(encoding='utf-8-sig'))
+          assert manifest['SourceCommit']==os.environ['SOURCE_COMMIT']
+          assert manifest['ProductionReleaseApproved'] is False
+          assert manifest['RealOfficeRuntimeTested'] is False
+          assert manifest['WindowsComponentTests'] is True
+          assert hashlib.sha256((folder/manifest['Installer']).read_bytes()).hexdigest()==manifest['Sha256']
+          PY
+          cat > release-notes.md <<'EOF'
+          Clean native OMNIX rebuild for Windows desktop Excel, Word, and PowerPoint.
+
+          Download the single `OMNIX-Setup-4.0.0-preview.1.exe` installer. SHA-256 and the exact source commit are recorded in `manifest.json`.
+
+          Includes native docked WPF workspace, a per-user named-pipe gateway, encrypted provider settings, manual/discovered model selection, bounded selection context, image input for compatible models, and reviewed text changes with undo.
+
+          This is a development preview. Windows component checks passed. Real Office loading, restart persistence, live provider validation and trusted production signing are not yet certified. Windows build success is not evidence that the add-in works in every Office installation. Do not disable Office security or antivirus to install it.
+          EOF
+          gh release create "$RELEASE_TAG" release/* --target "$SOURCE_COMMIT" --prerelease --title "OMNIX 4 — clean native rebuild preview" --notes-file release-notes.md
