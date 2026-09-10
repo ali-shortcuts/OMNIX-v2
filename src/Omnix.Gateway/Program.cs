@@ -12,7 +12,6 @@ namespace Omnix.Gateway
 {
     internal static class Program
     {
-        private static DateTime activity=DateTime.UtcNow;
         [STAThread]
         private static int Main()
         {
@@ -47,7 +46,14 @@ namespace Omnix.Gateway
                         Request request=null; Reply reply;
                         try {
                             request=await Wire.ReadAsync<Request>(pipe,requestTimeout.Token).ConfigureAwait(false);
-                            reply=await gateway.HandleAsync(request,requestTimeout.Token).ConfigureAwait(false);
+                            var response=gateway.HandleAsync(request,requestTimeout.Token);
+                            var disconnected=pipe.ReadAsync(new byte[1],0,1,requestTimeout.Token);
+                            if(await Task.WhenAny(response,disconnected).ConfigureAwait(false)==disconnected) {
+                                requestTimeout.Cancel();
+                                try { await response.ConfigureAwait(false); } catch(OperationCanceledException) { }
+                                continue;
+                            }
+                            reply=await response.ConfigureAwait(false);
                         } catch(UserError e) { reply=new Reply {Ok=false,Code=e.Code,Text=e.Message}; }
                         catch(OperationCanceledException) { reply=new Reply {Ok=false,Code="TIMEOUT",Text="The provider did not finish in time. Try a shorter request or another model."}; }
                         catch(HttpRequestException e) { LocalData.Log("NETWORK",e); reply=new Reply {Ok=false,Code="NETWORK",Text="The configured provider could not be reached. Check its address and connection."}; }
@@ -56,8 +62,8 @@ namespace Omnix.Gateway
                         try { await Wire.WriteAsync(pipe,reply,requestTimeout.Token).ConfigureAwait(false); }
                         catch(IOException) { /* Caller cancelled or Office closed. */ }
                         catch(OperationCanceledException) { }
+                        finally { requestTimeout.Cancel(); }
                     }
-                    activity=DateTime.UtcNow;
                 }
             }
         }
