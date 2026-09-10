@@ -4,6 +4,12 @@ OMNIX is a Windows Office AI bridge: a native **C# / WPF / VSTO** add-in that co
 
 > **Release status:** active v3 rebuild. The code compiles and the development installer is produced in CI, but this repository does **not** call the current branch production-ready until the real-machine release gates in [issue #53](https://github.com/ali-shortcuts/OMNIX-v2/issues/53) pass. A green hosted CI build is not a substitute for opening real desktop Excel/Word/PowerPoint.
 
+Download the newest **Development Preview** `.exe` from [GitHub Releases](https://github.com/ali-shortcuts/OMNIX-v2/releases). This is the canonical native Office repository. The separate `OMINIX.exe` repository contains an older browser/server prototype; its executable is not this native installer. See the [repository audit and consolidation decision](docs/REPOSITORY-AUDIT-2026-09-10.md).
+
+The installer checks Office, .NET Framework 4.8 and VSTO prerequisites before replacing existing files. Close all Office applications before installing. A prerequisite restart stops the upgrade so the existing installation is preserved. Post-install verification failure returns exit code `10`, including in silent mode.
+
+In Settings, a manually entered model is kept even if a server has no model catalog. **Test Connection** sends a small text request to that selected model, subject to the configured privacy mode; provider usage charges may apply. A successful text test does not claim Vision support.
+
 ## Product contract
 
 ```text
@@ -208,5 +214,7 @@ MIT — see [LICENSE](./LICENSE).
 ## About
 
 **Powered by Mr Ali**
+
+Creator/support: [Telegram @Ali_silent0](https://t.me/Ali_silent0) · [Telegram channel](https://t.me/Ali_shortcuts) · [Email](mailto:Ali.hekmati2026@gmail.com)
 
 OMNIX is developed as an independent Office/AI integration project. Public contact links should be maintained in the product's About view and repository documentation as current, user-approved project metadata.

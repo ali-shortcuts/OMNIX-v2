@@ -9,6 +9,7 @@ using OMNIX.Core.Errors;
 using OMNIX.Core.Logging;
 using OMNIX.Core.Settings;
 using OMNIX.Core.Theming;
+using OMNIX.Core.Ui.Dialogs;
 
 namespace OMNIX.Core.Ui
 {
@@ -21,6 +22,8 @@ namespace OMNIX.Core.Ui
     {
         private WorkspaceController _controller;
         private bool _loading;
+        private string _displayedProviderId;
+        private CancellationTokenSource _providerOperation;
 
         private static readonly string[] AllowedOfficialHosts =
         {
@@ -47,6 +50,7 @@ namespace OMNIX.Core.Ui
         public SettingsView()
         {
             InitializeComponent();
+            Unloaded += (sender, args) => CancelProviderOperation();
         }
 
         public void Initialize(WorkspaceController controller)
@@ -61,6 +65,7 @@ namespace OMNIX.Core.Ui
 
         private void LoadFromSettings()
         {
+            CancelProviderOperation();
             _loading = true;
             try
             {
@@ -69,6 +74,8 @@ namespace OMNIX.Core.Ui
 
                 ProviderCombo.ItemsSource = registry != null ? registry.All.Select(p => p.Info).ToList() : null;
                 var selected = registry != null ? registry.Get(settings.SelectedProviderId) : null;
+                _displayedProviderId = selected != null ? selected.Info.Id : null;
+                ModelCombo.ItemsSource = null;
                 if (selected != null)
                 {
                     ProviderCombo.SelectedItem = selected.Info;
@@ -190,15 +197,55 @@ namespace OMNIX.Core.Ui
             var info = ProviderCombo.SelectedItem as ProviderInfo;
             if (info == null) return;
 
+            CancelProviderOperation();
+            SaveDisplayedProviderFields();
             var settings = SettingsManager.Instance.Settings;
+            _displayedProviderId = info.Id;
             settings.SelectedProviderId = info.Id;
             string model;
+            ModelCombo.ItemsSource = null;
             ModelCombo.Text = settings.Models != null && settings.Models.TryGetValue(info.Id, out model) ? model : info.DefaultModel;
 
             ApiKeyBox.Clear();
             UpdateProviderUi(info);
             TestResultText.SetResourceReference(TextBlock.ForegroundProperty, "B.ForegroundDim");
             TestResultText.Text = BuildProviderSummary(info);
+        }
+
+        private void SetProviderOperationBusy(bool busy)
+        {
+            LoadModelsButton.IsEnabled = !busy;
+            TestButton.IsEnabled = !busy;
+            ModelCombo.IsEnabled = !busy;
+            ApiKeyBox.IsEnabled = !busy;
+            CustomNameBox.IsEnabled = !busy;
+            CustomBaseUrlBox.IsEnabled = !busy;
+        }
+
+        private void CancelProviderOperation()
+        {
+            var operation = _providerOperation;
+            _providerOperation = null;
+            if (operation != null) operation.Cancel();
+            SetProviderOperationBusy(false);
+        }
+
+        private CancellationTokenSource BeginProviderOperation(int timeoutSeconds)
+        {
+            CancelProviderOperation();
+            _providerOperation = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+            SetProviderOperationBusy(true);
+            return _providerOperation;
+        }
+
+        private void EndProviderOperation(CancellationTokenSource operation)
+        {
+            if (ReferenceEquals(_providerOperation, operation))
+            {
+                _providerOperation = null;
+                SetProviderOperationBusy(false);
+            }
+            operation.Dispose();
         }
 
         private void OnGetApiKey(object sender, RoutedEventArgs e)
@@ -254,39 +301,50 @@ namespace OMNIX.Core.Ui
 
             TestResultText.Text = "Loading models…";
             SaveProviderFields();
+            var operation = BeginProviderOperation(25);
             try
             {
-                var adapter = gateway.Registry.Get(info.Id);
+                // Diagnostics must not reconfigure the adapter used by an active Office chat.
+                var adapter = new ProviderRegistry().Get(info.Id);
                 if (adapter == null) return;
-                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25)))
+                adapter.Configure(gateway.Router.BuildCredentials(info.Id));
+                var models = await adapter.ListModelsAsync(operation.Token);
+                if (!ReferenceEquals(_providerOperation, operation)) return;
+                if (models == null || models.Count == 0)
                 {
-                    adapter.Configure(gateway.Router.BuildCredentials(info.Id));
-                    var models = await adapter.ListModelsAsync(cts.Token);
-                    if (models == null || models.Count == 0)
-                    {
-                        TestResultText.Text = "No models returned.";
-                        return;
-                    }
-                    string current = ModelCombo.Text;
-                    ModelCombo.ItemsSource = models.Take(300).ToList();
-                    if (!string.IsNullOrEmpty(current) && models.Contains(current)) ModelCombo.Text = current;
-
-                    TestResultText.Text = models.Count + " models loaded.";
-                    if (info.AccessProfile == ProviderAccessProfile.FreeModelsAvailable)
-                        TestResultText.Text += " Free options are prioritized at the top of the list.";
-                    if (string.Equals(info.Id, "huggingface", StringComparison.OrdinalIgnoreCase))
-                        TestResultText.Text += " Any currently-free provider routes reported by the live Hugging Face catalog are prioritized.";
-                    TestResultText.Text += "\n" + BuildProviderSummary(info);
+                    TestResultText.Text = "The server returned no model catalog. You can enter a model ID and use Test Connection.";
+                    return;
                 }
+                string current = ModelCombo.Text;
+                ModelCombo.ItemsSource = ProviderDiagnostics.ModelOptions(models, current);
+                ModelCombo.Text = current;
+
+                TestResultText.Text = models.Count + " models loaded.";
+                if (info.AccessProfile == ProviderAccessProfile.FreeModelsAvailable)
+                    TestResultText.Text += " Free options are prioritized at the top of the list.";
+                if (string.Equals(info.Id, "huggingface", StringComparison.OrdinalIgnoreCase))
+                    TestResultText.Text += " Any currently-free provider routes reported by the live Hugging Face catalog are prioritized.";
+                TestResultText.Text += "\n" + BuildProviderSummary(info);
             }
             catch (OmnixException ex)
             {
-                TestResultText.Text = Errors.ErrorPresenter.Format(ex);
+                if (ReferenceEquals(_providerOperation, operation))
+                    TestResultText.Text = Errors.ErrorPresenter.Format(ex) + "\nYou can still enter a model ID and test it directly.";
+            }
+            catch (OperationCanceledException)
+            {
+                if (ReferenceEquals(_providerOperation, operation))
+                    TestResultText.Text = "Model discovery timed out. Your model ID was kept.";
             }
             catch (Exception ex)
             {
                 Logger.Error("ui", "LoadModels failed", ex);
-                TestResultText.Text = "Loading models failed: " + ex.Message;
+                if (ReferenceEquals(_providerOperation, operation))
+                    TestResultText.Text = "Loading models failed: " + ex.Message;
+            }
+            finally
+            {
+                EndProviderOperation(operation);
             }
         }
 
@@ -298,55 +356,46 @@ namespace OMNIX.Core.Ui
             if (info == null) return;
 
             SaveProviderFields();
-            TestButton.IsEnabled = false;
+            SaveGeneralFields();
+            SettingsManager.Instance.Save();
+            var operation = BeginProviderOperation(30);
             TestResultText.Text = "Testing…";
             try
             {
-                var adapter = gateway.Registry.Get(info.Id);
+                var adapter = new ProviderRegistry().Get(info.Id);
                 if (adapter == null) return;
-                adapter.Configure(gateway.Router.BuildCredentials(info.Id));
-                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+                var privacy = new PrivacyGate
                 {
-                    var models = await adapter.ListModelsAsync(cts.Token);
-                    bool ok = models != null && models.Count > 0;
-
-                    if (ok && string.Equals(info.Id, "custom", StringComparison.OrdinalIgnoreCase))
-                        ok = await adapter.TestConnectionAsync(cts.Token);
-
-                    TestResultText.Text = ok ? Localization.Strings.T("S.Settings.TestOk")
-                                             : Localization.Strings.T("S.Settings.TestFailed");
-                    TestResultText.SetResourceReference(TextBlock.ForegroundProperty,
-                        ok ? "B.Success" : "B.Danger");
-
-                    if (ok && adapter.SupportsVisionNow())
-                        TestResultText.Text += "\n" + Localization.Strings.T("S.Settings.VisionSupported");
-                    else if (ok && info.Vision == VisionSupport.DependsOnModel)
-                        TestResultText.Text += "\n" + Localization.Strings.T("S.Settings.VisionUnknown");
-                    else if (ok)
-                        TestResultText.Text += "\n" + Localization.Strings.T("S.Settings.VisionNotSupported");
-
-                    if (ok) TestResultText.Text += "\n" + BuildProviderSummary(info);
-                }
+                    CloudConfirmationCallback = providerName => System.Threading.Tasks.Task.FromResult(OmnixDialogs.ConfirmCloudSend(
+                        providerName, "Synthetic connection test only. No Office document content is sent."))
+                };
+                await ProviderDiagnostics.TestModelAsync(adapter, gateway.Router.BuildCredentials(info.Id), privacy, operation.Token);
+                if (!ReferenceEquals(_providerOperation, operation)) return;
+                TestResultText.Text = "The selected model returned a text response.\nVision was not tested.\n" + BuildProviderSummary(adapter.Info);
+                TestResultText.SetResourceReference(TextBlock.ForegroundProperty, "B.Success");
             }
             catch (OmnixException ex)
             {
+                if (!ReferenceEquals(_providerOperation, operation)) return;
                 TestResultText.Text = Errors.ErrorPresenter.Format(ex);
                 TestResultText.SetResourceReference(TextBlock.ForegroundProperty, "B.Danger");
             }
             catch (OperationCanceledException)
             {
+                if (!ReferenceEquals(_providerOperation, operation)) return;
                 TestResultText.Text = Errors.ErrorPresenter.Format(OmnixException.Timeout(info.DisplayName + " connection test timed out."));
                 TestResultText.SetResourceReference(TextBlock.ForegroundProperty, "B.Danger");
             }
             catch (Exception ex)
             {
                 Logger.Error("ui", "TestConnection failed", ex);
+                if (!ReferenceEquals(_providerOperation, operation)) return;
                 TestResultText.Text = Localization.Strings.T("S.Settings.TestFailed") + " — " + ex.Message;
                 TestResultText.SetResourceReference(TextBlock.ForegroundProperty, "B.Danger");
             }
             finally
             {
-                TestButton.IsEnabled = true;
+                EndProviderOperation(operation);
             }
         }
 
@@ -394,23 +443,30 @@ namespace OMNIX.Core.Ui
             var info = ProviderCombo.SelectedItem as ProviderInfo;
             var settings = SettingsManager.Instance.Settings;
 
+            SaveDisplayedProviderFields();
+            if (info != null) settings.SelectedProviderId = info.Id;
+            SettingsManager.Instance.Save();
+        }
+
+        private void SaveDisplayedProviderFields()
+        {
+            if (string.IsNullOrEmpty(_displayedProviderId)) return;
+            var settings = SettingsManager.Instance.Settings;
+
             if (settings.CustomProvider != null)
             {
+                if (!string.Equals(settings.CustomProvider.BaseUrl, CustomBaseUrlBox.Text.Trim(), StringComparison.Ordinal) ||
+                    (_displayedProviderId == "custom" && !string.Equals(settings.CustomProvider.Model, ModelCombo.Text.Trim(), StringComparison.Ordinal)))
+                    settings.CustomProvider.SupportsVision = null;
                 settings.CustomProvider.Name = CustomNameBox.Text.Trim();
                 settings.CustomProvider.BaseUrl = CustomBaseUrlBox.Text.Trim();
+                if (_displayedProviderId == "custom") settings.CustomProvider.Model = ModelCombo.Text.Trim();
             }
 
-            if (info != null)
-            {
-                settings.SelectedProviderId = info.Id;
-                settings.Models[info.Id] = ModelCombo.Text.Trim();
-
-                string key = ApiKeyBox.Password;
-                if (info.RequiresApiKey && !string.IsNullOrWhiteSpace(key))
-                    SettingsManager.Instance.SetApiKey(info.Id, key.Trim());
-            }
-
-            SettingsManager.Instance.Save();
+            settings.Models[_displayedProviderId] = ModelCombo.Text.Trim();
+            string key = ApiKeyBox.Password;
+            if (!string.IsNullOrWhiteSpace(key))
+                SettingsManager.Instance.SetApiKey(_displayedProviderId, key.Trim());
         }
 
         private void SaveGeneralFields()

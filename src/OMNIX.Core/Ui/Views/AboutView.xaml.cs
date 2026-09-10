@@ -32,7 +32,7 @@ namespace OMNIX.Core.Ui
         }
 
         private void Open_Email(object sender, MouseButtonEventArgs e) { Open("mailto:Ali.hekmati2026@gmail.com"); }
-        private void Open_Telegram(object sender, MouseButtonEventArgs e) { Open("https://t.me/Mr_Ali_2025"); }
+        private void Open_Telegram(object sender, MouseButtonEventArgs e) { Open("https://t.me/Ali_silent0"); }
         private void Open_TelegramChannel(object sender, MouseButtonEventArgs e) { Open("https://t.me/Ali_shortcuts"); }
         private void Open_Facebook(object sender, MouseButtonEventArgs e) { Open("https://www.facebook.com/AliShortcuts"); }
         private void Open_TikTok(object sender, MouseButtonEventArgs e) { Open("https://www.tiktok.com/@ali_shortcuts"); }

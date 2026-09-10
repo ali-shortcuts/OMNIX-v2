@@ -48,8 +48,8 @@ namespace OMNIX.Core.AiGateway.Adapters
             var cp = SettingsManager.Instance.Settings.CustomProvider;
             if (string.IsNullOrWhiteSpace(url) && cp != null) url = cp.BaseUrl;
 
-            Uri parsed = ValidateEndpoint(url);
-            _baseUrl = parsed.GetLeftPart(UriPartial.Path).TrimEnd('/');
+            Uri parsed = new Uri(NormalizeBaseUrl(url));
+            _baseUrl = parsed.AbsoluteUri.TrimEnd('/');
             Info.Kind = IsLoopbackEndpoint(parsed) ? ProviderKind.Local : ProviderKind.Cloud;
             Info.AccessNotes = Info.Kind == ProviderKind.Local
                 ? "Loopback custom endpoint: treated as Local AI; request data stays on this PC unless that local server forwards it elsewhere."
@@ -162,7 +162,22 @@ namespace OMNIX.Core.AiGateway.Adapters
             if (!string.IsNullOrEmpty(parsed.Fragment))
                 throw OmnixException.Provider("Custom provider Base URL must not contain a URL fragment (#...).");
 
+            if (!string.IsNullOrEmpty(parsed.Query))
+                throw OmnixException.Provider("Custom provider Base URL must not contain query parameters. Store credentials in the API key field.");
+
             return parsed;
+        }
+
+        public static string NormalizeBaseUrl(string raw)
+        {
+            var parsed = ValidateEndpoint(raw);
+            string value = parsed.GetLeftPart(UriPartial.Path).TrimEnd('/');
+            foreach (string suffix in new[] { "/chat/completions", "/models" })
+            {
+                if (value.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                    return value.Substring(0, value.Length - suffix.Length);
+            }
+            return value;
         }
 
         private OpenAiCompatibleClient ActiveClient()
@@ -172,8 +187,8 @@ namespace OMNIX.Core.AiGateway.Adapters
                 string raw = _creds != null ? _creds.BaseUrl : null;
                 if (string.IsNullOrWhiteSpace(raw) && SettingsManager.Instance.Settings.CustomProvider != null)
                     raw = SettingsManager.Instance.Settings.CustomProvider.BaseUrl;
-                Uri parsed = ValidateEndpoint(raw);
-                _baseUrl = parsed.GetLeftPart(UriPartial.Path).TrimEnd('/');
+                Uri parsed = new Uri(NormalizeBaseUrl(raw));
+                _baseUrl = parsed.AbsoluteUri.TrimEnd('/');
                 Info.Kind = IsLoopbackEndpoint(parsed) ? ProviderKind.Local : ProviderKind.Cloud;
             }
             return new OpenAiCompatibleClient(_baseUrl, "Custom Provider");
