@@ -532,7 +532,7 @@ Follow the channels above for updates, new projects, and useful content."
 
 لینک‌ها (دقیقاً همین‌ها، هرگز کوتاه یا تغییر داده نشوند):
 Email             → mailto:Ali.hekmati2026@gmail.com
-Telegram          → https://t.me/Mr_Ali_2025
+Telegram          → https://t.me/Ali_silent0
 Telegram Channel  → https://t.me/Ali_shortcuts
 Facebook          → https://www.facebook.com/AliShortcuts
 TikTok            → https://www.tiktok.com/@ali_shortcuts

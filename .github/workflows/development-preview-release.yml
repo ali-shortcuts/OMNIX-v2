@@ -167,11 +167,17 @@ jobs:
         shell: bash
         run: |
           cat > release-input/RELEASE-NOTES.md <<'EOF'
-          # OMNIX v3 Development Preview — canonical Office registration rebuild
+          # OMNIX v3 Development Preview — installer and provider reliability
 
           This prerelease replaces the obsolete OMNIX preview installers in this repository.
 
-          Important fix in this generation:
+          Fixes in this generation:
+          - prerequisites complete before an existing installation is changed; failures/restarts stop the upgrade
+          - installation refuses while Office is open and checks .NET Framework 4.8
+          - failed post-install verification returns exit code 10, including in silent mode
+          - manual model IDs are preserved and late provider responses cannot replace another provider's model list
+          - Test Connection checks an actual selected-model text response with the configured privacy policy
+          - custom completion/model URLs are normalized; the creator Telegram link is corrected
           - Excel, Word and PowerPoint VSTO registration uses the canonical Microsoft Office host path:
             `HKCU\Software\Microsoft\Office\<Host>\Addins\OMNIX`
           - obsolete versioned registration created by earlier previews is removed during install/repair
@@ -183,7 +189,8 @@ jobs:
           - request-budget, provider-error-redaction and image-normalization runtime acceptance PASS
           - C#/WPF/VSTO solution build PASS
           - Excel, Word and PowerPoint VSTO payload packaged
-          - deterministic Privacy Gate runtime acceptance PASS
+          - deterministic Privacy Gate and provider-diagnostics runtime acceptance PASS
+          - Office-less installer preflight preserves existing installation data
           - automatic Office registration maintenance audit PASS in read-only mode
           - installer compiled and checksum-bound to the attached manifest
 
@@ -214,23 +221,6 @@ jobs:
             --notes-file release-input/RELEASE-NOTES.md \
             --prerelease
 
-      - name: Retire exact obsolete OMNIX releases after replacement is live
-        shell: bash
-        run: |
-          set -euo pipefail
-          current='${{ steps.meta.outputs.tag }}'
-          for obsolete in v1.0.9 v3.0.0-dev.3; do
-            if [[ "$obsolete" == "$current" ]]; then
-              continue
-            fi
-            if gh release view "$obsolete" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              echo "Deleting obsolete OMNIX release/tag: $obsolete"
-              gh release delete "$obsolete" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
-            else
-              echo "Obsolete release already absent: $obsolete"
-            fi
-          done
-
       - name: Report published preview
         shell: bash
         run: |
@@ -238,4 +228,3 @@ jobs:
           echo "Source: ${{ steps.meta.outputs.source_sha }}"
           echo "Installer SHA256: ${{ steps.artifact.outputs.installer_sha }}"
           echo "Installer size: ${{ steps.artifact.outputs.installer_size }} bytes"
-          echo "Obsolete exact releases v1.0.9 and v3.0.0-dev.3 were retired if present."

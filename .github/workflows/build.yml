@@ -89,6 +89,13 @@ jobs:
             -CorePath .\src\OMNIX.Core\bin\Release\OMNIX.Core.dll `
             -OutputPath .\build\artifact\privacy-acceptance.json
 
+      - name: Runtime provider diagnostics acceptance
+        shell: powershell
+        run: |
+          .\tools\provider-diagnostics-acceptance.ps1 `
+            -CorePath .\src\OMNIX.Core\bin\Release\OMNIX.Core.dll `
+            -OutputPath .\build\artifact\provider-diagnostics-acceptance.json
+
       - name: Stage installer payload and enforce complete Office payload
         shell: pwsh
         run: ./build/package.ps1
@@ -170,12 +177,17 @@ jobs:
           if (-not $exe) { throw "No installer exe found." }
 
           $log = Join-Path $PWD "install_test.log"
+          $probeInstallDir = Join-Path $env:RUNNER_TEMP 'omnix-preserved-install'
+          New-Item -ItemType Directory -Force $probeInstallDir | Out-Null
+          $marker = Join-Path $probeInstallDir 'existing-install-marker.txt'
+          $markerText = [Guid]::NewGuid().ToString('N')
+          Set-Content -LiteralPath $marker -Value $markerText -NoNewline
           $p = Start-Process -FilePath $exe.FullName `
-            -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/LOG=$log","/NORESTART" `
+            -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/LOG=$log","/NORESTART","/DIR=$probeInstallDir" `
             -Wait -PassThru
 
           if ($p.ExitCode -eq 0) {
-            $installDir = "$env:LOCALAPPDATA\Programs\OMNIX"
+            $installDir = $probeInstallDir
             if (-not (Test-Path (Join-Path $installDir 'OMNIX.Core.dll'))) { throw "Installer returned success but OMNIX.Core.dll was not installed." }
             Write-Host "Installer completed successfully on this runner."
             exit 0
@@ -186,7 +198,14 @@ jobs:
             ($text -match 'Microsoft Office .* was not detected') -or
             ($text -match 'No supported (desktop )?Excel, Word or PowerPoint installation was (found|detected)')
           if ($expectedOfficeLess) {
+            if (-not (Test-Path -LiteralPath $marker) -or (Get-Content -LiteralPath $marker -Raw) -ne $markerText) {
+              throw "Preflight failure damaged the existing installation marker."
+            }
+            if (Test-Path (Join-Path $probeInstallDir 'OMNIX.Core.dll')) {
+              throw "Preflight failure unexpectedly installed Office payload."
+            }
             Write-Host "Expected: GitHub-hosted runner has no supported Office host. Installer refused cleanly instead of crashing."
+            Write-Host "Existing install marker preserved and no new Office payload written."
             exit 0
           }
           Write-Host $text

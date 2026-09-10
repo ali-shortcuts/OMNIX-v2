@@ -115,6 +115,7 @@
 
             <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                 <Button x:Name="TestButton" Style="{StaticResource SetAccent}"
+                        ToolTip="Sends a short test message to the selected model. Provider usage limits and charges may apply."
                         Content="{DynamicResource S.Settings.TestConnection}" Click="OnTestConnection" />
             </StackPanel>
             <TextBlock x:Name="TestResultText" FontSize="11" Margin="0,6,0,0"

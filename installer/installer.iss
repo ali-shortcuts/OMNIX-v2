@@ -66,7 +66,7 @@ const
 
 var
   HostList: TStringList;
-  PrerequisiteFailed: Boolean;
+  InstallVerificationFailed: Boolean;
   VstoRestartNeeded: Boolean;
   MaintenanceTaskInstalled: Boolean;
 
@@ -121,10 +121,13 @@ function RegistryAppPathExists(const Exe: String): Boolean;
 var P: String;
 begin
   Result := False;
-  if RegQueryStringValue(HKLM64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\' + Exe, '', P) or
-     RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\' + Exe, '', P) or
-     RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\App Paths\' + Exe, '', P) then
-    Result := FileExists(RemoveQuotes(P));
+  if IsWin64 then
+    if RegQueryStringValue(HKLM64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\' + Exe, '', P) then
+      if FileExists(RemoveQuotes(P)) then begin Result := True; exit; end;
+  if RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\' + Exe, '', P) then
+    if FileExists(RemoveQuotes(P)) then begin Result := True; exit; end;
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\App Paths\' + Exe, '', P) then
+    if FileExists(RemoveQuotes(P)) then Result := True;
 end;
 
 function IsHostInstalled(const Host: String): Boolean;
@@ -140,13 +143,13 @@ begin
     exit;
   end;
 
-  Result :=
-    FileExists(ExpandConstant('{pf64}\Microsoft Office\root\Office16\' + Exe)) or
-    FileExists(ExpandConstant('{pf32}\Microsoft Office\root\Office16\' + Exe)) or
-    FileExists(ExpandConstant('{pf64}\Microsoft Office\Office16\' + Exe)) or
+  Result := FileExists(ExpandConstant('{pf32}\Microsoft Office\root\Office16\' + Exe)) or
     FileExists(ExpandConstant('{pf32}\Microsoft Office\Office16\' + Exe)) or
-    FileExists(ExpandConstant('{pf64}\Microsoft Office\Office15\' + Exe)) or
     FileExists(ExpandConstant('{pf32}\Microsoft Office\Office15\' + Exe));
+  if (not Result) and IsWin64 then
+    Result := FileExists(ExpandConstant('{pf64}\Microsoft Office\root\Office16\' + Exe)) or
+      FileExists(ExpandConstant('{pf64}\Microsoft Office\Office16\' + Exe)) or
+      FileExists(ExpandConstant('{pf64}\Microsoft Office\Office15\' + Exe));
 end;
 
 procedure DetectHosts();
@@ -162,9 +165,12 @@ end;
 function VstoRuntimeInstalled(): Boolean;
 var Ver: String;
 begin
-  Result :=
-    RegQueryStringValue(HKLM64, 'SOFTWARE\Microsoft\VSTO Runtime Setup\v4R', 'Version', Ver) or
-    RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\VSTO Runtime Setup\v4R', 'Version', Ver);
+  Result := False;
+  if IsWin64 then
+    Result := RegQueryStringValue(HKLM64, 'SOFTWARE\Microsoft\VSTO Runtime Setup\v4R', 'Version', Ver);
+  if not Result then
+    Result := RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\VSTO Runtime Setup\v4R', 'Version', Ver);
+  if Result then Result := Trim(Ver) <> '';
   InstallLog('VSTO Runtime present=' + B2S(Result));
 end;
 
@@ -269,23 +275,21 @@ function InitializeSetup(): Boolean;
 begin
   Result := True;
   HostList := nil;
-  PrerequisiteFailed := False;
+  InstallVerificationFailed := False;
   VstoRestartNeeded := False;
   MaintenanceTaskInstalled := False;
 
   ForceDirectories(ExpandConstant('{localappdata}') + '\OMNIX\logs');
   InstallLog('=== OMNIX setup initialized ({#MyAppVersion}) ===');
 
-  if IsProcessRunning('excel.exe') or IsProcessRunning('winword.exe') or IsProcessRunning('powerpnt.exe') then
-  begin
-    if MsgBox('Close Excel, Word and PowerPoint before installing OMNIX, then press OK.', mbInformation, MB_OKCANCEL) = IDCANCEL then
-      Result := False;
-  end;
+  DetectHosts();
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var VstoExe: String; ResultCode: Integer;
 begin
   Result := '';
+  NeedsRestart := False;
   try
     DetectHosts();
     if HostList.Count = 0 then
@@ -293,11 +297,61 @@ begin
       Result := 'No supported desktop Excel, Word or PowerPoint installation was detected.';
       exit;
     end;
+    if IsProcessRunning('excel.exe') or IsProcessRunning('winword.exe') or IsProcessRunning('powerpnt.exe') then
+    begin
+      Result := 'Close Excel, Word and PowerPoint, then retry installation. Save your work first.';
+      exit;
+    end;
+    if not IsDotNetInstalled(net48, 0) then
+    begin
+      Result := 'Microsoft .NET Framework 4.8 or later is required. Install it from Microsoft, then run OMNIX Setup again.';
+      exit;
+    end;
+    if VstoRestartNeeded then
+    begin
+      NeedsRestart := True;
+      Result := 'Restart Windows to finish installing Microsoft VSTO Runtime, then run OMNIX Setup again.';
+      exit;
+    end;
+    if not VstoRuntimeInstalled() then
+    begin
+      { Complete prerequisites before touching an existing OMNIX installation. }
+      try ExtractTemporaryFile('vstor_redist.exe'); except end;
+      VstoExe := ExpandConstant('{tmp}') + '\vstor_redist.exe';
+      if not FileExists(VstoExe) then
+      begin
+        Result := 'The bundled Microsoft VSTO Runtime is missing. Download a complete OMNIX installer.';
+        exit;
+      end;
+      if not ShellExec('runas', VstoExe, '/q /norestart', '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
+      begin
+        Result := 'Microsoft VSTO Runtime installation could not start or was cancelled. The existing OMNIX installation was preserved.';
+        exit;
+      end;
+      InstallLog('VSTO Runtime prerequisite exit=' + IntToStr(ResultCode));
+      if ResultCode = 3010 then
+      begin
+        VstoRestartNeeded := True;
+        NeedsRestart := True;
+        Result := 'Restart Windows to finish installing Microsoft VSTO Runtime, then run OMNIX Setup again.';
+        exit;
+      end;
+      if (ResultCode <> 0) or (not VstoRuntimeInstalled()) then
+      begin
+        Result := 'Microsoft VSTO Runtime installation failed (exit ' + IntToStr(ResultCode) + '). The existing OMNIX installation was preserved.';
+        exit;
+      end;
+    end;
     InstallLog('PrepareToInstall hosts=[' + HostsSummary() + ']');
   except
     Result := 'OMNIX could not detect Microsoft Office: ' + GetExceptionMessage;
     InstallLog('OFFICE_DETECTION_ERROR: ' + GetExceptionMessage);
   end;
+end;
+
+function GetCustomSetupExitCode(): Integer;
+begin
+  if InstallVerificationFailed then Result := 10 else Result := 0;
 end;
 
 function UpdateReadyMemo(const Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
@@ -313,47 +367,21 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   I, ResultCode, CertClassResult: Integer;
   AllOk: Boolean;
-  VstoExe, CertPath, CertClassifier, CertMarker, DevThumbprintText: String;
+  CertPath, CertClassifier, CertMarker, DevThumbprintText: String;
   DevThumbprintRaw: AnsiString;
 begin
   if CurStep = ssInstall then
   begin
     InstallLog('=== OMNIX install begin ===');
+    InstallVerificationFailed := True;
     RemoveMaintenanceTask();
-    RemoveAddinRegistry();
     PreserveOfficeResiliencyState();
-
-    if DirExists(ExpandConstant('{app}')) then DelTree(ExpandConstant('{app}'), True, True, True);
-
-    if not VstoRuntimeInstalled() then
-    begin
-      try ExtractTemporaryFile('vstor_redist.exe'); except end;
-      VstoExe := ExpandConstant('{tmp}') + '\vstor_redist.exe';
-      if FileExists(VstoExe) then
-      begin
-        if not ShellExec('runas', VstoExe, '/q /norestart', '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
-        begin
-          PrerequisiteFailed := True;
-          InstallLog('VSTO Runtime UAC/install launch failed.');
-        end
-        else
-        begin
-          InstallLog('VSTO Runtime installer exit=' + IntToStr(ResultCode));
-          if (ResultCode <> 0) and (ResultCode <> 3010) then PrerequisiteFailed := True;
-          if ResultCode = 3010 then VstoRestartNeeded := True;
-        end;
-      end
-      else
-      begin
-        PrerequisiteFailed := True;
-        InstallLog('PREREQUISITE_ERROR: bundled vstor_redist.exe missing.');
-      end;
-    end;
+    { Inno Setup owns file replacement and rollback; never delete the install tree here. }
   end;
 
   if CurStep = ssPostInstall then
   begin
-    AllOk := not PrerequisiteFailed;
+    AllOk := True;
 
     CertPath := ExpandConstant('{app}') + '\OMNIX.cer';
     CertClassifier := ExpandConstant('{app}') + '\classify-dev-cert.ps1';
@@ -400,22 +428,29 @@ begin
     begin
       if FileExists(ExpandConstant('{app}') + '\post-install-verify.ps1') then
       begin
-        Exec('powershell.exe', '-NoProfile -File "' + ExpandConstant('{app}') + '\post-install-verify.ps1"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        if not Exec('powershell.exe', '-NoProfile -File "' + ExpandConstant('{app}') + '\post-install-verify.ps1"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+          AllOk := False;
         InstallLog('post-install-verify exit=' + IntToStr(ResultCode));
         if ResultCode <> 0 then AllOk := False;
+      end
+      else
+      begin
+        InstallLog('VERIFICATION_ERROR: post-install-verify.ps1 is missing.');
+        AllOk := False;
       end;
     end;
 
+    InstallVerificationFailed := not AllOk;
     InstallLog('=== OMNIX install end verified=' + B2S(AllOk) + ' restart=' + B2S(VstoRestartNeeded) + ' ===');
 
     if not AllOk then
-      MsgBox('OMNIX files were installed, but Office add-in verification FAILED.' #13#10#13#10 +
-             'See ' + ExpandConstant('{localappdata}') + '\OMNIX\logs\install-debug.log', mbError, MB_OK)
+      SuppressibleMsgBox('OMNIX files were installed, but Office add-in verification FAILED.' #13#10#13#10 +
+             'See ' + ExpandConstant('{localappdata}') + '\OMNIX\logs\install-debug.log', mbError, MB_OK, IDOK)
     else if VstoRestartNeeded then
-      MsgBox('OMNIX was installed. Restart Windows before the first Office test because the Microsoft VSTO Runtime requested a restart.', mbInformation, MB_OK)
+      SuppressibleMsgBox('OMNIX was installed. Restart Windows before the first Office test because the Microsoft VSTO Runtime requested a restart.', mbInformation, MB_OK, IDOK)
     else
-      MsgBox('OMNIX was installed and registered for: ' + HostsSummary() + #13#10#13#10 +
-             'Open Excel, Word or PowerPoint. The OMNIX Ribbon tab should load automatically.', mbInformation, MB_OK);
+      SuppressibleMsgBox('OMNIX was installed and registered for: ' + HostsSummary() + #13#10#13#10 +
+             'Open Excel, Word or PowerPoint. The OMNIX Ribbon tab should load automatically.', mbInformation, MB_OK, IDOK);
   end;
 end;
 

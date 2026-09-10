@@ -69,7 +69,7 @@
                           Data="{StaticResource IconGeometry.Telegram}" Stretch="Uniform" Margin="0,0,10,0" />
                     <StackPanel>
                         <TextBlock Text="Telegram" Style="{StaticResource LinkName}" />
-                        <TextBlock Text="@Mr_Ali_2025" Style="{StaticResource LinkHandle}" />
+                        <TextBlock Text="@Ali_silent0" Style="{StaticResource LinkHandle}" />
                     </StackPanel>
                 </StackPanel>
             </Border>
