@@ -9,6 +9,7 @@ using OMNIX.Core.Errors;
 using OMNIX.Core.Logging;
 using OMNIX.Core.Settings;
 using OMNIX.Core.Theming;
+using OMNIX.Core.Ui.Dialogs;
 
 namespace OMNIX.Core.Ui
 {
