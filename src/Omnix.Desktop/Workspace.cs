@@ -248,10 +248,11 @@ namespace Omnix.Desktop
         {
             if(running!=null||disposed)return;
             running=new CancellationTokenSource();foreach(var b in guardedButtons)b.IsEnabled=false;
+            providers.IsEnabled=false;model.IsEnabled=false;endpoint.IsEnabled=false;key.IsEnabled=false;privacy.IsEnabled=false;vision.IsEnabled=false;
             try {await action();}
             catch(OperationCanceledException){status.Text="Request cancelled";}
             catch(Exception e){if(running.IsCancellationRequested)status.Text="Request cancelled";else Failure(e);}
-            finally {running.Dispose();running=null;foreach(var b in guardedButtons)b.IsEnabled=true;}
+            finally {running.Dispose();running=null;foreach(var b in guardedButtons)b.IsEnabled=true;providers.IsEnabled=true;model.IsEnabled=true;endpoint.IsEnabled=true;key.IsEnabled=true;privacy.IsEnabled=true;vision.IsEnabled=true;}
         }
         private void Failure(Exception e) {status.Text=e.Message;LocalData.Log("WORKSPACE_ERROR",e);}
         public void Dispose()

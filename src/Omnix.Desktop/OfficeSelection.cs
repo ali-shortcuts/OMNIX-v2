@@ -24,6 +24,7 @@ namespace Omnix.Desktop
         private SelectionSnapshot undoTarget;
         private string appliedText;
         private object oldValues;
+        private string oldWordXml;
         public OfficeSelection(object application,string hostName) { app=application; host=hostName; }
         private static bool Same(object a,object b)
         {
@@ -106,6 +107,8 @@ namespace Omnix.Desktop
                 appliedText=ReadRange(range,1,1);
             } else if(host=="Word") {
                 if((bool)app.ActiveDocument.ReadOnly) throw new InvalidOperationException("The document is read-only.");
+                oldWordXml=(string)range.WordOpenXML;
+                if(oldWordXml.Length>4*1024*1024)throw new InvalidOperationException("This selection is too complex to preserve for undo.");
                 app.UndoRecord.StartCustomRecord("OMNIX: apply selected text");
                 try { range.Text=text; } finally { app.UndoRecord.EndCustomRecord(); }
                 appliedText=(string)range.Text;
@@ -123,8 +126,9 @@ namespace Omnix.Desktop
             string now=host=="Excel"?ReadRange(range,1,1):(string)range.Text;
             if(now!=appliedText) throw new InvalidOperationException("The target was edited after OMNIX. Use Office's Undo history instead.");
             if(host=="Excel") range.Formula=oldValues;
+            else if(host=="Word")range.InsertXML(oldWordXml);
             else range.Text=undoTarget.Text;
-            undoTarget=null; oldValues=null;
+            undoTarget=null; oldValues=null;oldWordXml=null;
         }
     }
 }

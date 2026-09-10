@@ -32,7 +32,7 @@ namespace Omnix.Gateway
         public ProviderGateway(SavedSettings settings,Action<SavedSettings> persistSettings,HttpMessageHandler handler=null)
         {
             saved=settings; persist=persistSettings;
-            http=new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect=false,AutomaticDecompression=DecompressionMethods.GZip|DecompressionMethods.Deflate });
+            http=new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect=false,UseProxy=false,AutomaticDecompression=DecompressionMethods.GZip|DecompressionMethods.Deflate });
             http.Timeout=TimeSpan.FromSeconds(90);
         }
         public static Uri Endpoint(string input)
