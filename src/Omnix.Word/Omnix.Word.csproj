@@ -43,4 +43,14 @@
  </ItemGroup>
  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
  <Import Project="$(VSToolsPath)\OfficeTools\Microsoft.VisualStudio.Tools.Office.targets" />
+<ProjectExtensions>
+  <VisualStudio>
+    <FlavorProperties GUID="{BAA0C2D2-18E2-41B9-852F-F413020CAA33}">
+      <ProjectProperties HostName="Word" OfficeVersion="15.0" VstxVersion="4.0" ApplicationType="Word" Language="cs" />
+      <Host Name="Word" GeneratedCodeNamespace="Omnix.Word">
+        <HostItem Name="ThisAddIn" Code="ThisAddIn.cs" CanonicalName="AddIn" CanActivate="false" />
+      </Host>
+    </FlavorProperties>
+  </VisualStudio>
+</ProjectExtensions>
 </Project>
