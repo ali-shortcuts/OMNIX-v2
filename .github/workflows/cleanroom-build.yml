@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   compile:
-    name: Compile cleanroom source
+    name: Compile and test cleanroom source
     runs-on: windows-2022
     steps:
       - name: Checkout
@@ -26,7 +26,7 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Restore
+      - name: Restore solution
         shell: pwsh
         run: dotnet restore .\OMNIX.sln
 
@@ -49,3 +49,7 @@ jobs:
             exit 1
           }
           Write-Host 'CLEANROOM-COMPILE-001 PASS'
+
+      - name: Run core runtime acceptance
+        shell: pwsh
+        run: dotnet run --project .\tests\OMNIX.Core.Tests\OMNIX.Core.Tests.csproj -c Release
