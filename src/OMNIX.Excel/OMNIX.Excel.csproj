@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>OMNIX.Excel</AssemblyName>
+    <RootNamespace>OMNIX.Excel</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\OMNIX.Core\OMNIX.Core.csproj" />
+    <PackageReference Include="Microsoft.Office.Interop.Excel" />
+    <PackageReference Include="Ipercube.Office.Interop.Core" />
+  </ItemGroup>
+</Project>
