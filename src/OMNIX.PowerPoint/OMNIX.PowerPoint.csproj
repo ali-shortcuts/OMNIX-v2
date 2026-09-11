@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>OMNIX.PowerPoint</AssemblyName>
+    <RootNamespace>OMNIX.PowerPoint</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\OMNIX.Core\OMNIX.Core.csproj" />
+    <PackageReference Include="Microsoft.Office.Interop.PowerPoint" />
+    <PackageReference Include="Ipercube.Office.Interop.Core" />
+  </ItemGroup>
+</Project>
