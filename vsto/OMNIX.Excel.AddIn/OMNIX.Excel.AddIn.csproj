@@ -18,6 +18,8 @@
     <OfficeApplicationDescription>OMNIX AI Office Bridge</OfficeApplicationDescription>
     <LoadBehavior>3</LoadBehavior>
     <SignManifests>false</SignManifests>
+    <Deterministic>false</Deterministic>
+    <DeterministicSourcePaths>false</DeterministicSourcePaths>
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
