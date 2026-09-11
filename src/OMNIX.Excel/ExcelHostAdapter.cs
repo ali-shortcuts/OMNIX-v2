@@ -39,8 +39,6 @@ namespace OMNIX.Excel
             if (selection != null)
             {
                 string address = selection.Address[false, false, XL.XlReferenceStyle.xlA1];
-                object raw = selection.Value2;
-                object formulas = request.IncludeFormulas ? selection.Formula : null;
                 int rows = Math.Min(selection.Rows.Count, request.MaxItems);
                 int cols = Math.Min(selection.Columns.Count, Math.Max(1, request.MaxItems / Math.Max(1, rows)));
                 int emitted = 0;
@@ -83,6 +81,7 @@ namespace OMNIX.Excel
             cancellationToken.ThrowIfCancellationRequested();
             ValidateMutation(mutation);
             XL.Range target = _application.Range[mutation.Target];
+            EnsureSingleCell(target);
             string before = Convert.ToString(target.Value2) ?? string.Empty;
             string after = mutation.Tool == "insert_formula" ? mutation.Formula : mutation.Value;
             return Task.FromResult(new OfficeMutationPreview
@@ -101,7 +100,7 @@ namespace OMNIX.Excel
             cancellationToken.ThrowIfCancellationRequested();
             ValidateMutation(mutation);
             XL.Range target = _application.Range[mutation.Target];
-            if (target.Cells.CountLarge != 1) throw new InvalidOperationException("Excel write tools may target exactly one cell.");
+            EnsureSingleCell(target);
 
             if (mutation.Tool == "insert_formula")
             {
@@ -121,11 +120,18 @@ namespace OMNIX.Excel
             return Task.CompletedTask;
         }
 
+        private static void EnsureSingleCell(XL.Range range)
+        {
+            if (range == null) throw new InvalidOperationException("Excel target range was not found.");
+            long count = Convert.ToInt64(range.Cells.CountLarge);
+            if (count != 1) throw new InvalidOperationException("Excel write tools may target exactly one cell.");
+        }
+
         private static void ValidateMutation(OfficeMutation mutation)
         {
             if (mutation == null) throw new ArgumentNullException(nameof(mutation));
             if (string.IsNullOrWhiteSpace(mutation.Target)) throw new InvalidOperationException("Excel mutation target is required.");
-            if (mutation.Target.IndexOf(',', StringComparison.Ordinal) >= 0) throw new InvalidOperationException("Multi-area Excel targets are not allowed.");
+            if (mutation.Target.IndexOf(",", StringComparison.Ordinal) >= 0) throw new InvalidOperationException("Multi-area Excel targets are not allowed.");
             if (mutation.Tool != "write_to_cell" && mutation.Tool != "insert_formula")
                 throw new InvalidOperationException("Excel mutation tool is not whitelisted.");
             if ((mutation.Value?.Length ?? 0) > 32767) throw new InvalidOperationException("Excel cell value is too large.");
