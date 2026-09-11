@@ -53,3 +53,25 @@ jobs:
       - name: Run core runtime acceptance
         shell: pwsh
         run: dotnet run --project .\tests\OMNIX.Core.Tests\OMNIX.Core.Tests.csproj -c Release
+
+      - name: Build Excel VSTO bootstrap
+        shell: pwsh
+        run: |
+          msbuild .\vsto\OMNIX.Excel.AddIn\OMNIX.Excel.AddIn.csproj /t:Build /p:Configuration=Release /p:Platform=AnyCPU /m /v:minimal
+
+      - name: Verify Excel VSTO payload
+        shell: pwsh
+        run: |
+          $base = 'vsto/OMNIX.Excel.AddIn/bin/Release'
+          $dll = Join-Path $base 'OMNIX.Excel.AddIn.dll'
+          if (-not (Test-Path $dll)) {
+            Write-Error "Missing Excel VSTO assembly: $dll"
+            exit 1
+          }
+          $vsto = Get-ChildItem -Path $base -Filter '*.vsto' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          $manifest = Get-ChildItem -Path $base -Filter '*.dll.manifest' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $vsto -or -not $manifest) {
+            Write-Error 'Excel VSTO build did not produce both .vsto and .dll.manifest deployment files.'
+            exit 1
+          }
+          Write-Host ('CLEANROOM-EXCEL-VSTO-001 PASS dll=' + $dll + ' vsto=' + $vsto.Name + ' manifest=' + $manifest.Name)
