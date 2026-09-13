@@ -4,6 +4,10 @@
 # can reject stale/legacy OFFICE-E2E evidence before any broader production aggregation is trusted.
 # It performs read-only validation only: no install, Office launch, restart, network, registry or
 # security-setting changes are made here.
+#
+# Control-flow rule: this file is both directly executable and composable from another PowerShell
+# script. Failure therefore uses a terminating exception and success returns normally; it must not
+# call exit itself, because doing so can terminate a caller before the full production core runs.
 
 [CmdletBinding()]
 param(
@@ -14,8 +18,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Fail([string]$message) {
-    Write-Host ("OMNIX FINAL TASK-PANE GUARD: FAIL - " + $message) -ForegroundColor Red
-    exit 1
+    $full = "OMNIX FINAL TASK-PANE GUARD: FAIL - $message"
+    Write-Host $full -ForegroundColor Red
+    throw $full
 }
 
 if (-not (Test-Path -LiteralPath $OfficeE2EReport -PathType Leaf)) {
@@ -61,4 +66,4 @@ if (-not [bool]$taskPane.TwoRoundsPerHostRequired) {
 
 Write-Host 'OMNIX FINAL TASK-PANE GUARD: PASS'
 Write-Host 'Schema 5 Office E2E contains passing TASKPANE-LIFECYCLE-REAL-001 evidence for Excel, Word and PowerPoint.'
-exit 0
+return
