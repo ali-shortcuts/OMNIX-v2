@@ -66,13 +66,13 @@ Forbid $guard 'reg.exe' 'guard must never mutate registry state.'
 
 Parse-Ps $entry
 Need $entry 'final-production-taskpane-guard.ps1' 'canonical final entrypoint must invoke the task-pane evidence guard.'
-Need $entry '& $guard -OfficeE2EReport $OfficeE2EReport' 'guard must validate the exact Office E2E report passed to final production.'
+Need $entry '& $taskPaneGuard -OfficeE2EReport $OfficeE2EReport' 'task-pane guard must validate the exact Office E2E report passed to final production.'
 Need $entry '& $impl @PSBoundParameters' 'canonical wrapper must execute the full production core after guard PASS.'
 Need $entry 'final-production-core.ps1' 'canonical wrapper must still delegate to the full production core after guard PASS.'
 Forbid $entry 'AllowDevelopmentSignature' 'canonical production entrypoint must expose no development-signature bypass.'
 
 $entryText = Read-Repo $entry
-$guardCall = $entryText.IndexOf('& $guard -OfficeE2EReport $OfficeE2EReport', [StringComparison]::Ordinal)
+$guardCall = $entryText.IndexOf('& $taskPaneGuard -OfficeE2EReport $OfficeE2EReport', [StringComparison]::Ordinal)
 $coreCall = $entryText.IndexOf('& $impl @PSBoundParameters', [StringComparison]::Ordinal)
 if ($guardCall -lt 0 -or $coreCall -lt 0 -or $coreCall -le $guardCall) {
     $failures.Add("${entry}: production core must execute after the task-pane guard returns successfully.")
