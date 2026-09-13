@@ -100,17 +100,28 @@ namespace OMNIX.Word
             try { pane.Width = DefaultWidth; } catch { }
             pane.VisibleChanged += OnPaneVisibleChanged;
             _panes[key] = pane;
+
+            // A VSTO CustomTaskPane is window-bound. When Office destroys the underlying
+            // window it disposes our WinForms host control; use that post-close signal to
+            // release the per-window controller immediately instead of retaining stale
+            // chat/provider/cancellation/COM state until the entire add-in shuts down.
+            CustomTaskPane capturedPane = pane;
+            hostControl.SizeChanged += delegate { ClampPaneWidth(capturedPane); };
+            hostControl.Disposed += delegate
+            {
+                if (!_disposed)
+                    ReleaseWindow(key, capturedPane, "task-pane host disposed");
+            };
             Logger.Startup("Word task pane created for window " + key);
             return pane;
         }
 
-        private void OnPaneWidthChanged(object sender, EventArgs e)
+        private void ClampPaneWidth(CustomTaskPane pane)
         {
-            if (_clamping) return;
+            if (_clamping || pane == null) return;
             try
             {
-                var pane = sender as CustomTaskPane;
-                if (pane != null && pane.Width > MaxWidth)
+                if (pane.Width > MaxWidth)
                 {
                     _clamping = true;
                     pane.Width = MaxWidth;
@@ -136,6 +147,37 @@ namespace OMNIX.Word
                     }
                 }
             }
+        }
+
+        private void ReleaseWindow(IntPtr key, CustomTaskPane expectedPane, string reason)
+        {
+            if (key == IntPtr.Zero) return;
+
+            CustomTaskPane pane;
+            if (_panes.TryGetValue(key, out pane))
+            {
+                // HWND values can be reused by Windows. A late dispose from an old host must
+                // never tear down a newly-created OMNIX pane that happens to have the same key.
+                if (expectedPane != null && !ReferenceEquals(pane, expectedPane))
+                    return;
+
+                try { pane.VisibleChanged -= OnPaneVisibleChanged; } catch { }
+                _panes.Remove(key);
+            }
+            else if (expectedPane != null)
+            {
+                return;
+            }
+
+            WorkspaceController controller;
+            if (_controllers.TryGetValue(key, out controller))
+            {
+                _controllers.Remove(key);
+                try { if (controller != null) controller.OnPaneClosing(); } catch { }
+                try { if (controller != null) controller.Dispose(); } catch { }
+            }
+
+            Logger.Startup("Word task pane released for window " + key + " (" + reason + ")");
         }
 
         public void ToggleActive()

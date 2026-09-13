@@ -54,6 +54,23 @@ Require $ppt 'ppPlaceholderBody' 'notes lookup must prefer the semantic body pla
 Require $ppt 'StartNewUndoEntry' 'PowerPoint should create an undo boundary when supported.'
 Require $ppt 'range.Characters(1, Math.Min(length, remaining))' 'shape text must be bounded before full materialization where possible.'
 
+# Per-window task-pane lifecycle: Office window teardown must release the controller promptly,
+# and the compact width cap must actually be wired to a real WinForms resize event.
+$taskPaneServices = @(
+    'src/OMNIX.Excel/ExcelTaskPaneService.cs',
+    'src/OMNIX.Word/WordTaskPaneService.cs',
+    'src/OMNIX.PowerPoint/PowerPointTaskPaneService.cs'
+)
+foreach ($service in $taskPaneServices) {
+    Require $service 'hostControl.Disposed += delegate' 'window-bound host disposal must release per-window state instead of waiting for add-in shutdown.'
+    Require $service 'ReleaseWindow(' 'each host needs an idempotent/stale-safe per-window cleanup path.'
+    Require $service 'controller.OnPaneClosing()' 'active streaming/request state should be cancelled before controller disposal.'
+    Require $service 'controller.Dispose()' 'per-window controller resources must be disposed on real Office window teardown.'
+    Require $service 'hostControl.SizeChanged += delegate' 'the compact task-pane width cap must be wired to an event that actually exists.'
+    Require $service 'ClampPaneWidth' 'oversized task panes should be clamped without relying on a nonexistent CustomTaskPane WidthChanged event.'
+    Forbid $service 'pane.WidthChanged +=' 'CustomTaskPane exposes no WidthChanged event; this would not compile against the VSTO API.'
+}
+
 # Internal tool protocol must never be exposed as raw JSON in normal streaming UI.
 $gateway = 'src/OMNIX.Core/AiGateway/AiGateway.cs'
 Require $gateway 'ToolProtocolDeltaFilter' 'Gateway must filter internal omnix_tool protocol from user-visible streaming.'
