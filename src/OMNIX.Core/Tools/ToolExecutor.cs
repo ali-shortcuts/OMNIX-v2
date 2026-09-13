@@ -14,9 +14,9 @@ namespace OMNIX.Core.Tools
     /// produce a preview, require explicit user confirmation, then apply through the host
     /// adapter so native Office undo (Ctrl+Z) keeps working.
     ///
-    /// Tool execution is cancellation-aware. This is a security boundary, not only a UX feature:
-    /// when an Office document/window changes while an AI request is in flight, the request token
-    /// is cancelled and no late provider tool call may read from or mutate the newly-active document.
+    /// Tool execution is cancellation/scope-aware. This is a security boundary, not only a UX
+    /// feature: when an Office document/window changes while an AI request is in flight, no late
+    /// provider tool call may read from or mutate the newly-active document.
     /// </summary>
     public sealed class ToolExecutor
     {
@@ -24,32 +24,51 @@ namespace OMNIX.Core.Tools
         public Func<WritePreview, Task<bool>> WriteConfirmation { get; set; }
 
         /// <summary>
-        /// Compatibility overload used by existing deterministic tests/callers that do not own a
-        /// request cancellation token. Interactive gateway execution uses the token-aware overload.
+        /// Per-workspace request token provider. WorkspaceController sets this only while one
+        /// request owns the executor. Existing non-UI callers can leave it null.
+        /// </summary>
+        public Func<CancellationToken> RequestCancellationTokenProvider { get; set; }
+
+        /// <summary>
+        /// Fail-closed request scope check, normally bound to the document identity captured when
+        /// Send was pressed. Returning false aborts the tool loop before Office COM is touched.
+        /// </summary>
+        public Func<bool> RequestScopeValidator { get; set; }
+
+        /// <summary>
+        /// Compatibility overload used by AiGateway and deterministic callers. Interactive
+        /// WorkspaceController binds this executor to its current request token and document scope.
         /// </summary>
         public Task<ToolResult> ExecuteAsync(ToolCall call, IHostAdapter adapter)
         {
-            return ExecuteAsync(call, adapter, CancellationToken.None);
+            CancellationToken ct = CancellationToken.None;
+            var tokenProvider = RequestCancellationTokenProvider;
+            if (tokenProvider != null)
+            {
+                try { ct = tokenProvider(); }
+                catch { throw new OperationCanceledException("OMNIX request scope is no longer available."); }
+            }
+            return ExecuteAsync(call, adapter, ct);
         }
 
         public async Task<ToolResult> ExecuteAsync(ToolCall call, IHostAdapter adapter, CancellationToken ct)
         {
-            ct.ThrowIfCancellationRequested();
+            EnsureRequestScope(ct);
 
             if (call == null || !ToolNames.IsWhitelisted(call.Name))
                 return ToolResult.Fail("Tool not whitelisted: " + (call != null ? call.Name : "(null)"));
 
             try
             {
-                ct.ThrowIfCancellationRequested();
+                EnsureRequestScope(ct);
                 if (ToolNames.IsWriteTool(call.Name))
                     return await ExecuteWriteAsync(call, adapter, ct).ConfigureAwait(true);
                 return ExecuteRead(call, adapter, ct);
             }
             catch (OperationCanceledException)
             {
-                // Cancellation is a request-scope boundary. Never convert it into a model-visible
-                // TOOL ERROR, because the caller must abort the entire tool loop instead.
+                // Cancellation/scope loss is a request boundary. Never convert it into a
+                // model-visible TOOL ERROR because the caller must abort the entire tool loop.
                 throw;
             }
             catch (OmnixException ex)
@@ -63,29 +82,43 @@ namespace OMNIX.Core.Tools
             }
         }
 
-        private ToolResult ExecuteRead(ToolCall call, IHostAdapter adapter, CancellationToken ct)
+        private void EnsureRequestScope(CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
+
+            var validator = RequestScopeValidator;
+            if (validator == null) return;
+
+            bool valid = false;
+            try { valid = validator(); }
+            catch { valid = false; }
+            if (!valid)
+                throw new OperationCanceledException("The active Office document changed while the AI request was running.", ct);
+        }
+
+        private ToolResult ExecuteRead(ToolCall call, IHostAdapter adapter, CancellationToken ct)
+        {
+            EnsureRequestScope(ct);
 
             switch (call.Name)
             {
                 case ToolNames.ReadSelection:
                 {
-                    ct.ThrowIfCancellationRequested();
+                    EnsureRequestScope(ct);
                     string text = adapter.ReadSelection();
                     return ToolResult.Ok(UntrustedData.Wrap("READ_SELECTION RESULT", text));
                 }
                 case ToolNames.ReadDocument:
                 case ToolNames.ReadPresentation:
                 {
-                    ct.ThrowIfCancellationRequested();
+                    EnsureRequestScope(ct);
                     string text = adapter.ReadDocument(6000);
                     return ToolResult.Ok(UntrustedData.Wrap("READ_DOCUMENT RESULT", text));
                 }
                 case ToolNames.CaptureChartAsImage:
                 {
                     var args = ToolArguments.Parse(call.ArgumentsJson);
-                    ct.ThrowIfCancellationRequested();
+                    EnsureRequestScope(ct);
                     byte[] png = adapter.CaptureChartAsImage(args.Get("chart", ""));
                     if (png == null || png.Length == 0) return ToolResult.Fail("No chart found to capture.");
                     return VisionCaptureResult("Excel chart", call.Name, png);
@@ -95,14 +128,14 @@ namespace OMNIX.Core.Tools
                     var args = ToolArguments.Parse(call.ArgumentsJson);
                     int slide = 0;
                     int.TryParse(args.Get("slide", "0"), out slide);
-                    ct.ThrowIfCancellationRequested();
+                    EnsureRequestScope(ct);
                     byte[] png = adapter.CaptureSlideAsImage(slide);
                     if (png == null || png.Length == 0) return ToolResult.Fail("No slide available to capture.");
                     return VisionCaptureResult("PowerPoint slide", call.Name, png);
                 }
                 case ToolNames.CaptureCurrentViewAsImage:
                 {
-                    ct.ThrowIfCancellationRequested();
+                    EnsureRequestScope(ct);
                     byte[] png = adapter.CaptureCurrentViewAsImage();
                     if (png == null || png.Length == 0)
                         return ToolResult.Fail("The current Office view could not be captured as an image.");
@@ -126,7 +159,7 @@ namespace OMNIX.Core.Tools
 
         private async Task<ToolResult> ExecuteWriteAsync(ToolCall call, IHostAdapter adapter, CancellationToken ct)
         {
-            ct.ThrowIfCancellationRequested();
+            EnsureRequestScope(ct);
 
             WritePreview preview;
             try
@@ -139,7 +172,7 @@ namespace OMNIX.Core.Tools
             }
 
             // The active Office document may have changed while PrepareWrite inspected it.
-            ct.ThrowIfCancellationRequested();
+            EnsureRequestScope(ct);
 
             if (WriteConfirmation == null)
                 return ToolResult.Fail("Write confirmation dialog is unavailable; change was NOT applied.");
@@ -159,16 +192,16 @@ namespace OMNIX.Core.Tools
                 confirmed = false;
             }
 
-            // Confirmation can be modal and long-lived. Re-check cancellation immediately before
-            // any mutation so a document/window switch cannot redirect an approved old preview.
-            ct.ThrowIfCancellationRequested();
+            // Confirmation can be modal and long-lived. Re-check cancellation/scope immediately
+            // before any mutation so a document switch cannot redirect an approved old preview.
+            EnsureRequestScope(ct);
 
             if (!confirmed)
             {
                 return ToolResult.Fail("The user reviewed the preview and CANCELLED the change. Do not retry the same write without asking why.");
             }
 
-            ct.ThrowIfCancellationRequested();
+            EnsureRequestScope(ct);
             adapter.ApplyWrite(call.Name, call.ArgumentsJson);
             string hint = Localization.Strings.T("S.Tools.Applied");
             return ToolResult.Ok("CHANGE APPLIED. " + hint, hint);
