@@ -41,6 +41,7 @@ namespace Omnix.Tests
         private static int Main(string[] args)
         {
             string output=args.Length>0?args[0]:"artifacts/evidence";Directory.CreateDirectory(output);
+            LocalData.TestRoot=Path.Combine(Path.GetTempPath(),"omnix-tests-"+Guid.NewGuid().ToString("N"));
             try {
                 Test("Remote requests require consent at gateway boundary",()=>{var s=Settings();var h=new FakeHttp();using(var g=new ProviderGateway(s,x=>{},h)){Reject("CONSENT",()=>Call(g,Request(s)));Assert(h.Count==0,"A blocked request reached HTTP.");}});
                 Test("Local-only blocks remote chat, model discovery and probes",()=>{var s=Settings("Local only");var h=new FakeHttp();using(var g=new ProviderGateway(s,x=>{},h)){foreach(var op in new[]{"chat","models","probe"})Reject("PRIVACY",()=>Call(g,Request(s,op,true)));Assert(h.Count==0,"Privacy failed.");}});
@@ -81,6 +82,7 @@ namespace Omnix.Tests
                 });
                 File.WriteAllText(Path.Combine(output,"windows-runtime-tests.json"),Wire.Json(new {Passed=results.Count,Failed=0,RealOfficeInstalled=false,Results=results}));return 0;
             }catch(Exception e){Console.Error.WriteLine(e);File.WriteAllText(Path.Combine(output,"windows-test-failure.txt"),e.ToString());return 1;}
+            finally{if(Directory.Exists(LocalData.TestRoot))Directory.Delete(LocalData.TestRoot,true);}
         }
     }
 }

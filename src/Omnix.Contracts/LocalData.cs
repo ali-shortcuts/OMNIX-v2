@@ -7,7 +7,8 @@ namespace Omnix.Contracts
 {
     public static class LocalData
     {
-        public static readonly string Root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"OMNIX","v4");
+        internal static string TestRoot;
+        public static string Root => TestRoot ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"OMNIX","v4");
         public static T Read<T>(string name) where T:new()
         {
             string path=Path.Combine(Root,name);
