@@ -29,7 +29,7 @@ if (-not (Test-Path -LiteralPath $bindingScript -PathType Leaf)) { throw "Eviden
 function Read-Json([string]$path,[string]$label) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "$label report not found: $path" }
     try { return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json }
-    catch { throw "$label report is not valid JSON: $path — $($_.Exception.Message)" }
+    catch { throw "$label report is not valid JSON: $path - $($_.Exception.Message)" }
 }
 
 function Add-Errors($target,$items) {
