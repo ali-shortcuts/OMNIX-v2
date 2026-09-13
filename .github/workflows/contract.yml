@@ -57,6 +57,10 @@ jobs:
         shell: pwsh
         run: ./build/final-evidence-binding-contract-gates.ps1
 
+      - name: Enforce Windows PowerShell evidence parser and encoding contract
+        shell: powershell
+        run: ./build/windows-powershell-evidence-contract.ps1
+
       - name: Execute final evidence binding guard behavior acceptance
         shell: powershell
         run: ./tools/final-evidence-binding-guard-acceptance.ps1
