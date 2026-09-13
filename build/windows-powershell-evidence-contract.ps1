@@ -11,9 +11,11 @@ $root = Split-Path -Parent $PSScriptRoot
 $relativeFiles = @(
     'tools\real-evidence-binding.ps1',
     'tools\bound-real-acceptance.ps1',
+    'tools\payload-identity-binding-acceptance.ps1',
     'tools\final-production-evidence-binding-guard.ps1',
     'tools\final-evidence-binding-guard-acceptance.ps1',
-    'tools\final-production-gate.ps1'
+    'tools\final-production-gate.ps1',
+    'build\post-install-verify.ps1'
 )
 
 $failures = @()
