@@ -43,13 +43,25 @@ Need 'tools/office-maintenance-real-acceptance.ps1' 'OfficeProcessesRemainedClos
 Forbid 'tools/office-maintenance-real-acceptance.ps1' 'Restart-Computer' 'maintenance acceptance must not restart Windows.'
 Forbid 'tools/office-maintenance-real-acceptance.ps1' 'Disable-NetAdapter' 'maintenance acceptance must not alter networking.'
 
-# Full Office E2E exact-installer binding + maintenance + AI route + guarded writes.
+# Per-window task-pane teardown/reopen must be proven on the real Office machine.
+Parse-Ps 'tools/taskpane-lifecycle-real-acceptance.ps1'
+Need 'tools/taskpane-lifecycle-real-acceptance.ps1' 'TASKPANE-LIFECYCLE-REAL-001' 'stable task-pane lifecycle TestId required.'
+Need 'tools/taskpane-lifecycle-real-acceptance.ps1' 'TwoRoundsPerHostRequired = $true' 'each Office host must prove two close/reopen cycles.'
+Need 'tools/taskpane-lifecycle-real-acceptance.ps1' 'ReleaseLogCountAfter -gt $roundResult.ReleaseLogCountBefore' 'release proof must be a fresh exact-HWND log delta, not stale evidence.'
+Need 'tools/taskpane-lifecycle-real-acceptance.ps1' 'ProcessExitedPass' 'task-pane lifecycle proof must also require clean Office process exit.'
+Forbid 'tools/taskpane-lifecycle-real-acceptance.ps1' 'SaveAs' 'task-pane lifecycle evidence must use unsaved temporary Office content.'
+Forbid 'tools/taskpane-lifecycle-real-acceptance.ps1' 'Restart-Computer' 'task-pane lifecycle evidence must never restart Windows.'
+Forbid 'tools/taskpane-lifecycle-real-acceptance.ps1' 'Disable-NetAdapter' 'task-pane lifecycle evidence must never alter networking.'
+
+# Full Office E2E exact-installer binding + maintenance + task-pane lifecycle + AI route + guarded writes.
 Parse-Ps 'tools/full-office-e2e.ps1'
-Need 'tools/full-office-e2e.ps1' 'EvidenceSchema = 4' 'Office E2E v4 evidence required.'
+Need 'tools/full-office-e2e.ps1' 'EvidenceSchema = 5' 'Office E2E v5 evidence with task-pane lifecycle proof is required.'
 Need 'tools/full-office-e2e.ps1' 'ExpectedInstallerSha256' 'intended installer hash must be explicit.'
 Need 'tools/full-office-e2e.ps1' 'HashMatchedExpected' 'hash-match result must be recorded.'
 Need 'tools/full-office-e2e.ps1' 'office-maintenance-real-acceptance.ps1' 'full E2E must include automatic Office maintenance proof.'
 Need 'tools/full-office-e2e.ps1' 'Maintenance = [ordered]@{' 'maintenance result must be aggregated.'
+Need 'tools/full-office-e2e.ps1' 'taskpane-lifecycle-real-acceptance.ps1' 'full E2E must include repeated task-pane teardown/reopen proof.'
+Need 'tools/full-office-e2e.ps1' 'TaskPaneLifecycle = [ordered]@{' 'task-pane lifecycle result must be aggregated.'
 Need 'tools/full-office-e2e.ps1' 'office-write-boundary-acceptance.ps1' 'full E2E must prove approved-but-invalid writes remain blocked.'
 Need 'tools/full-office-e2e.ps1' 'WriteBoundary' 'write-boundary result must be aggregated.'
 Need 'tools/full-office-e2e.ps1' 'real-office-ai-e2e.ps1' 'full E2E must include real AI route.'
