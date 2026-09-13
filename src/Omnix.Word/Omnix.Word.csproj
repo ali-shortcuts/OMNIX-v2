@@ -1,0 +1,56 @@
+<Project ToolsVersion="Current" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+ <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" />
+ <PropertyGroup>
+  <Configuration Condition="'$(Configuration)'==''">Release</Configuration>
+  <Platform Condition="'$(Platform)'==''">AnyCPU</Platform>
+  <ProjectGuid>{871AA2D7-AFD0-50C7-87DC-2E915A29AEC3}</ProjectGuid>
+  <ProjectTypeGuids>{BAA0C2D2-18E2-41B9-852F-F413020CAA33};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
+  <OutputType>Library</OutputType><RootNamespace>Omnix.Word</RootNamespace><AssemblyName>Omnix.Word</AssemblyName>
+  <TargetFrameworkVersion>v4.8</TargetFrameworkVersion><LangVersion>7.3</LangVersion>
+  <OutputPath>bin\$(Configuration)\</OutputPath><Optimize>true</Optimize><DebugType>pdbonly</DebugType>
+  <DefineConstants>TRACE;VSTO40</DefineConstants><PlatformTarget>AnyCPU</PlatformTarget>
+  <OfficeApplication>Word</OfficeApplication><LoadBehavior>3</LoadBehavior>
+  <ApplicationVersion>4.0.0.0</ApplicationVersion><AutoIncrementApplicationRevision>false</AutoIncrementApplicationRevision>
+  <BootstrapperEnabled>false</BootstrapperEnabled><UpdateEnabled>false</UpdateEnabled>
+  <ProductName>OMNIX</ProductName><FriendlyName>OMNIX</FriendlyName><OfficeApplicationDescription>OMNIX native AI workspace</OfficeApplicationDescription>
+  <SignManifests>true</SignManifests><TargetCulture>en</TargetCulture>
+  <VSTO_TrustAssembliesLocation>true</VSTO_TrustAssembliesLocation>
+  <VSTOPIAPath Condition="'$(VSTOPIAPath)'==''">C:\Program Files (x86)\Microsoft Visual Studio\Shared\Visual Studio Tools for Office\PIA\Office15</VSTOPIAPath>
+  <VisualStudioVersion Condition="'$(VisualStudioVersion)'==''">17.0</VisualStudioVersion>
+  <VSToolsPath Condition="'$(VSToolsPath)'==''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
+ </PropertyGroup>
+ <ItemGroup>
+  <Reference Include="System"><Private>false</Private></Reference>
+  <Reference Include="System.Core"><Private>false</Private></Reference>
+  <Reference Include="System.Windows.Forms"><Private>false</Private></Reference>
+  <Reference Include="System.Drawing"><Private>false</Private></Reference>
+  <Reference Include="Microsoft.CSharp"><Private>false</Private></Reference>
+  <Reference Include="WindowsBase"><Private>false</Private></Reference>
+  <Reference Include="PresentationCore"><Private>false</Private></Reference>
+  <Reference Include="PresentationFramework"><Private>false</Private></Reference>
+  <Reference Include="WindowsFormsIntegration"><Private>false</Private></Reference>
+  <Reference Include="Microsoft.VisualStudio.Tools.Applications.Runtime"><Private>false</Private></Reference>
+  <Reference Include="Microsoft.Office.Tools"><Private>false</Private></Reference>
+  <Reference Include="Microsoft.Office.Tools.v4.0.Framework"><Private>false</Private></Reference>
+  <Reference Include="Microsoft.Office.Tools.Common"><Private>false</Private></Reference>
+  <Reference Include="Microsoft.Office.Tools.Common.v4.0.Utilities"><Private>true</Private></Reference>
+  <Reference Include="Microsoft.Office.Tools.Word"><Private>false</Private></Reference>
+  <Reference Include="office"><HintPath>$(VSTOPIAPath)\Office.dll</HintPath><EmbedInteropTypes>true</EmbedInteropTypes><Private>false</Private></Reference>
+  <Reference Include="Microsoft.Office.Interop.Word"><HintPath>$(VSTOPIAPath)\Microsoft.Office.Interop.Word.dll</HintPath><EmbedInteropTypes>true</EmbedInteropTypes><Private>false</Private></Reference>
+  <ProjectReference Include="..\Omnix.Desktop\Omnix.Desktop.csproj"><Name>Omnix.Desktop</Name></ProjectReference>
+  <ProjectReference Include="..\Omnix.Contracts\Omnix.Contracts.csproj"><Name>Omnix.Contracts</Name></ProjectReference>
+  <Compile Include="*.cs" />
+ </ItemGroup>
+ <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+ <Import Project="$(VSToolsPath)\OfficeTools\Microsoft.VisualStudio.Tools.Office.targets" />
+<ProjectExtensions>
+  <VisualStudio>
+    <FlavorProperties GUID="{BAA0C2D2-18E2-41B9-852F-F413020CAA33}">
+      <ProjectProperties HostName="Word" OfficeVersion="15.0" VstxVersion="4.0" ApplicationType="Word" Language="cs" />
+      <Host Name="Word" GeneratedCodeNamespace="Omnix.Word">
+        <HostItem Name="ThisAddIn" Code="ThisAddIn.cs" CanonicalName="AddIn" CanActivate="false" />
+      </Host>
+    </FlavorProperties>
+  </VisualStudio>
+</ProjectExtensions>
+</Project>

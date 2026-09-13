@@ -1,0 +1,9 @@
+OMNIX 4 — native Office rebuild preview
+
+This installer adds a native OMNIX ribbon and docked workspace to supported Windows desktop editions of Excel, Word and PowerPoint.
+
+Close Office before installing. Microsoft VSTO Runtime is included and may request administrator permission if it is missing. Microsoft may ask you to trust each OMNIX Office add-in. If your organization blocks development add-ins, installation stops; OMNIX does not change that policy or install a root certificate.
+
+This is a development preview. Windows build and automated component checks do not prove operation in your Office installation. Production approval requires real Office, restart, provider and signing evidence.
+
+API keys are encrypted for your Windows account. The initial privacy setting asks before every remote request. No documents are sent during installation.
