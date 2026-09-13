@@ -55,7 +55,7 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) {
 function Read-Json([string]$path,[string]$label) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "$label not found: $path" }
     try { return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json }
-    catch { throw "$label is not valid JSON: $path — $($_.Exception.Message)" }
+    catch { throw "$label is not valid JSON: $path - $($_.Exception.Message)" }
 }
 
 function Assert-FreshTimestamp($report,[DateTime]$startedUtc,[string]$label) {
