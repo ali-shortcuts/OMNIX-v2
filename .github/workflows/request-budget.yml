@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   request-budget:
-    name: Provider request + diagnostic + image runtime acceptance
+    name: Provider request + tool isolation + diagnostic + image runtime acceptance
     runs-on: windows-2022
     steps:
       - name: Checkout exact source commit
@@ -57,6 +57,13 @@ jobs:
             -CorePath .\src\OMNIX.Core\bin\Release\OMNIX.Core.dll `
             -OutputPath .\build\artifact\request-budget-acceptance.json
 
+      - name: Execute Office tool request-isolation acceptance
+        shell: powershell
+        run: |
+          .\tools\tool-request-isolation-acceptance.ps1 `
+            -CorePath .\src\OMNIX.Core\bin\Release\OMNIX.Core.dll `
+            -OutputPath .\build\artifact\tool-request-isolation-acceptance.json
+
       - name: Execute provider error redaction acceptance
         shell: powershell
         run: |
@@ -82,6 +89,22 @@ jobs:
             throw "Request-budget runtime acceptance failed."
           }
 
+          $isolationPath = '.\build\artifact\tool-request-isolation-acceptance.json'
+          if (-not (Test-Path $isolationPath)) { throw "Tool request-isolation report is missing." }
+          $isolation = Get-Content $isolationPath -Raw | ConvertFrom-Json
+          if ($isolation.TestId -ne 'TOOL-REQUEST-ISOLATION-RUNTIME-001') { throw "Unexpected tool request-isolation TestId." }
+          if (-not [bool]$isolation.OverallPass -or [int]$isolation.FailureCount -ne 0) {
+            throw "Office tool request-isolation runtime acceptance failed."
+          }
+          if (-not [bool]$isolation.PreCancelledReadBlocked -or
+              -not [bool]$isolation.InvalidScopeReadBlocked -or
+              -not [bool]$isolation.CancelAfterApprovalBlockedWrite -or
+              -not [bool]$isolation.ScopeLossAfterApprovalBlockedWrite -or
+              -not [bool]$isolation.CancellationPropagated -or
+              -not [bool]$isolation.ValidApprovedWritePass) {
+            throw "One or more request/document isolation invariants failed."
+          }
+
           $redactionPath = '.\build\artifact\provider-error-redaction-acceptance.json'
           if (-not (Test-Path $redactionPath)) { throw "Provider-error redaction report is missing." }
           $redaction = Get-Content $redactionPath -Raw | ConvertFrom-Json
@@ -97,7 +120,7 @@ jobs:
           if (-not [bool]$image.OverallPass -or [int]$image.FailureCount -ne 0) {
             throw "Image-normalization runtime acceptance failed."
           }
-          Write-Host "OMNIX request budget + diagnostic redaction + image normalization runtime acceptance: PASS"
+          Write-Host "OMNIX request budget + Office tool isolation + diagnostic redaction + image normalization runtime acceptance: PASS"
 
       - name: Upload sanitized runtime evidence
         uses: actions/upload-artifact@v4
@@ -105,6 +128,7 @@ jobs:
           name: omnix-runtime-hardening-evidence
           path: |
             build/artifact/request-budget-acceptance.json
+            build/artifact/tool-request-isolation-acceptance.json
             build/artifact/provider-error-redaction-acceptance.json
             build/artifact/image-normalization-acceptance.json
           if-no-files-found: error
