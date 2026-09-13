@@ -1,0 +1,56 @@
+# Anti-drift contract for exact-build/fresh real-machine production evidence.
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+
+$root=Split-Path -Parent $PSScriptRoot
+$files=@{
+  Helper=Join-Path $root 'tools\real-evidence-binding.ps1'
+  Runner=Join-Path $root 'tools\bound-real-acceptance.ps1'
+  Guard=Join-Path $root 'tools\final-production-evidence-binding-guard.ps1'
+  Acceptance=Join-Path $root 'tools\final-evidence-binding-guard-acceptance.ps1'
+  FinalGate=Join-Path $root 'tools\final-production-gate.ps1'
+}
+foreach($kv in $files.GetEnumerator()){
+  if(-not(Test-Path -LiteralPath $kv.Value -PathType Leaf)){throw "FINAL_EVIDENCE_BINDING_CONTRACT: missing $($kv.Key): $($kv.Value)"}
+  $tokens=$null;$errors=$null
+  [void][System.Management.Automation.Language.Parser]::ParseFile($kv.Value,[ref]$tokens,[ref]$errors)
+  if(@($errors).Count -gt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: PowerShell parse failure in $($kv.Key): $($errors[0].Message)"}
+}
+
+$helper=Get-Content -LiteralPath $files.Helper -Raw
+foreach($needle in @('SourceCommit','CoreSha256','BindingSchema','TimestampUtc','MaxAgeHours','stale')){
+  if($helper.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: helper missing '$needle'."}
+}
+
+$runner=Get-Content -LiteralPath $files.Runner -Raw
+foreach($needle in @('FullOfficeE2E','LocalOffline','Provider','RestartBefore','RestartAfter','ExpectedInstallerSha256','Save-BoundReport','restart-evidence-binding-state.json','CoreSha256','& $powershell @args')){
+  if($runner.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: canonical runner missing '$needle'."}
+}
+$runnerTokens=$null;$runnerErrors=$null
+$runnerAst=[System.Management.Automation.Language.Parser]::ParseFile($files.Runner,[ref]$runnerTokens,[ref]$runnerErrors)
+$startProcessCommands=@($runnerAst.FindAll({
+  param($node)
+  $node -is [System.Management.Automation.Language.CommandAst] -and
+  [string]::Equals($node.GetCommandName(),'Start-Process',[StringComparison]::OrdinalIgnoreCase)
+},$true))
+if($startProcessCommands.Count -gt 0){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: bound real acceptance runner must preserve child argument boundaries and must not execute Start-Process.'}
+
+$guard=Get-Content -LiteralPath $files.Guard -Raw
+foreach($needle in @('FINAL-EVIDENCE-BINDING-REJECTED','Test-OmnixEvidenceBinding','Office E2E','Office persistence','Office UI','Windows restart persistence','Offline local AI','Live provider matrix','Lifecycle','Consumer security','168','72')){
+  if($guard.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: final binding guard missing '$needle'."}
+}
+if($guard -match '(?im)^\s*exit\b'){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: composable binding guard must not call exit.'}
+
+$final=Get-Content -LiteralPath $files.FinalGate -Raw
+$bindingIndex=$final.IndexOf('& $bindingGuard',[StringComparison]::Ordinal)
+$taskPaneIndex=$final.IndexOf('& $taskPaneGuard',[StringComparison]::Ordinal)
+$coreIndex=$final.IndexOf('& $impl @PSBoundParameters',[StringComparison]::Ordinal)
+if($bindingIndex -lt 0 -or $taskPaneIndex -lt 0 -or $coreIndex -lt 0){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: canonical final gate is missing binding/task-pane/core invocation.'}
+if(-not($bindingIndex -lt $taskPaneIndex -and $taskPaneIndex -lt $coreIndex)){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: final gate order must be binding guard -> task-pane guard -> production core.'}
+
+$acceptance=Get-Content -LiteralPath $files.Acceptance -Raw
+foreach($needle in @('FINAL-EVIDENCE-BINDING-GUARD-RUNTIME-001','ValidExactBinding','MissingProviderBinding','WrongProviderCore','WrongRestartSource','StaleProvider','FutureOfficeUi','StaleLifecycle','WrongOfficeInstaller','CallerContinuation')){
+  if($acceptance.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: behavior acceptance missing '$needle'."}
+}
+
+Write-Host 'FINAL-EVIDENCE-BINDING-CONTRACT-001: PASS'

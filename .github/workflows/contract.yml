@@ -53,6 +53,18 @@ jobs:
         shell: powershell
         run: ./tools/final-taskpane-guard-acceptance.ps1
 
+      - name: Enforce exact-build real evidence binding contract
+        shell: pwsh
+        run: ./build/final-evidence-binding-contract-gates.ps1
+
+      - name: Enforce Windows PowerShell evidence parser and encoding contract
+        shell: powershell
+        run: ./build/windows-powershell-evidence-contract.ps1
+
+      - name: Execute final evidence binding guard behavior acceptance
+        shell: powershell
+        run: ./tools/final-evidence-binding-guard-acceptance.ps1
+
       - name: Enforce consumer protection release contract
         shell: pwsh
         run: ./build/consumer-security-contract-gates.ps1
