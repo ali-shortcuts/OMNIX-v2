@@ -76,6 +76,42 @@ function New-OmnixEvidenceBinding {
     }
 }
 
+function Test-OmnixEvidenceFreshness {
+    param(
+        [Parameter(Mandatory=$true)]$Report,
+        [Parameter(Mandatory=$true)][double]$MaxAgeHours,
+        [Parameter(Mandatory=$true)][string]$Label,
+        [DateTime]$NowUtc = ([DateTime]::UtcNow)
+    )
+
+    $errors = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Report) {
+        $errors.Add("$Label report is missing.")
+        return $errors
+    }
+    if ($MaxAgeHours -le 0 -or $MaxAgeHours -gt 168) {
+        $errors.Add("$Label freshness policy is invalid; MaxAgeHours must be > 0 and <= 168.")
+        return $errors
+    }
+
+    $timestamp = [DateTime]::MinValue
+    if ([string]::IsNullOrWhiteSpace([string]$Report.TimestampUtc) -or
+        -not [DateTime]::TryParse([string]$Report.TimestampUtc, [ref]$timestamp)) {
+        $errors.Add("$Label TimestampUtc is missing or invalid.")
+        return $errors
+    }
+
+    $timestamp = $timestamp.ToUniversalTime()
+    $now = $NowUtc.ToUniversalTime()
+    if ($timestamp -gt $now.AddMinutes(10)) {
+        $errors.Add("$Label TimestampUtc is implausibly in the future.")
+    }
+    elseif ($timestamp -lt $now.AddHours(-1 * $MaxAgeHours)) {
+        $errors.Add("$Label evidence is stale; maximum age is $MaxAgeHours hours.")
+    }
+    return $errors
+}
+
 function Test-OmnixEvidenceBinding {
     param(
         [Parameter(Mandatory=$true)]$Report,
@@ -121,21 +157,8 @@ function Test-OmnixEvidenceBinding {
         }
     }
 
-    $timestamp = [DateTime]::MinValue
-    if ([string]::IsNullOrWhiteSpace([string]$Report.TimestampUtc) -or
-        -not [DateTime]::TryParse([string]$Report.TimestampUtc, [ref]$timestamp)) {
-        $errors.Add("$Label TimestampUtc is missing or invalid.")
-        return $errors
+    foreach ($freshnessError in @(Test-OmnixEvidenceFreshness -Report $Report -MaxAgeHours $MaxAgeHours -Label $Label -NowUtc $NowUtc)) {
+        $errors.Add([string]$freshnessError)
     }
-
-    $timestamp = $timestamp.ToUniversalTime()
-    $now = $NowUtc.ToUniversalTime()
-    if ($timestamp -gt $now.AddMinutes(10)) {
-        $errors.Add("$Label TimestampUtc is implausibly in the future.")
-    }
-    elseif ($timestamp -lt $now.AddHours(-1 * $MaxAgeHours)) {
-        $errors.Add("$Label evidence is stale; maximum age is $MaxAgeHours hours.")
-    }
-
     return $errors
 }
