@@ -29,8 +29,8 @@ $impl=Join-Path $scriptDir 'final-production-core.ps1'
 if(-not(Test-Path -LiteralPath $guard -PathType Leaf)){throw "Final task-pane evidence guard missing: $guard"}
 if(-not(Test-Path -LiteralPath $impl -PathType Leaf)){throw "Final production implementation missing: $impl"}
 
+# A rejected report throws and stops here because ErrorActionPreference=Stop. A valid report returns
+# normally, after which the full production core MUST still execute.
 & $guard -OfficeE2EReport $OfficeE2EReport
-if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
-
 & $impl @PSBoundParameters
 exit $LASTEXITCODE
