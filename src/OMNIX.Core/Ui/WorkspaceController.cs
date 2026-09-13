@@ -38,6 +38,7 @@ namespace OMNIX.Core.Ui
         private bool _busy;
         private bool _disposed;
         private bool _pendingContextRefresh;
+        private int _documentScopeVersion;
 
         public WorkspaceView View { get; private set; }
         public AiGateway.AiGateway Gateway { get { return _gateway; } }
@@ -89,6 +90,11 @@ namespace OMNIX.Core.Ui
                 string newKey = StableDocumentKey(ctx);
                 bool docChanged = !string.Equals(newKey, _docKey, StringComparison.OrdinalIgnoreCase);
 
+                // Any observed document identity change invalidates the previous request scope
+                // immediately. Streaming callbacks can check this integer without touching COM.
+                if (docChanged)
+                    Interlocked.Increment(ref _documentScopeVersion);
+
                 // Never retarget an in-flight request/history to a different Office document.
                 // Cancel the old request and defer the history switch until its async continuation
                 // has unwound. This also causes the ToolExecutor request-scope guard to fail closed.
@@ -127,6 +133,7 @@ namespace OMNIX.Core.Ui
         {
             if (_disposed) return;
             _disposed = true;
+            Interlocked.Increment(ref _documentScopeVersion);
 
             // Cancel but do not dispose an in-flight CTS here. SendMessage owns the CTS lifetime
             // and disposes it in finally after provider/tool continuations have unwound.
@@ -153,9 +160,25 @@ namespace OMNIX.Core.Ui
                 ctx.DocumentName);
         }
 
-        private bool IsRequestScopeStillValid(string requestDocKey)
+        /// <summary>
+        /// Fast non-COM check used by high-frequency streaming callbacks. RefreshContextBar and
+        /// Dispose increment the version as soon as a document/window scope change is observed.
+        /// </summary>
+        private bool IsRequestScopeVersionValid(string requestDocKey, int requestScopeVersion)
         {
-            if (_disposed || string.IsNullOrWhiteSpace(requestDocKey)) return false;
+            return !_disposed &&
+                   Volatile.Read(ref _documentScopeVersion) == requestScopeVersion &&
+                   string.Equals(_docKey, requestDocKey, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Deep check used at low-frequency security boundaries (tool execution and post-provider
+        /// completion). It confirms both the in-memory scope generation and actual Office context.
+        /// A COM/context failure is treated as scope loss.
+        /// </summary>
+        private bool ValidateCurrentOfficeDocumentScope(string requestDocKey, int requestScopeVersion)
+        {
+            if (!IsRequestScopeVersionValid(requestDocKey, requestScopeVersion)) return false;
             try
             {
                 var ctx = _adapter.ReadContext();
@@ -164,8 +187,6 @@ namespace OMNIX.Core.Ui
             }
             catch
             {
-                // A COM/context failure means OMNIX cannot prove the tool still targets the
-                // originating document. Fail closed rather than touching an uncertain document.
                 return false;
             }
         }
@@ -183,6 +204,7 @@ namespace OMNIX.Core.Ui
             RefreshContextBar();
             if (_disposed || _busy) return;
             string requestDocKey = _docKey;
+            int requestScopeVersion = Volatile.Read(ref _documentScopeVersion);
 
             _busy = true;
             View.Chat.SetBusy(true);
@@ -220,9 +242,11 @@ namespace OMNIX.Core.Ui
             var sb = new System.Text.StringBuilder();
 
             // AiGateway owns the provider/tool loop, while this per-window executor owns the
-            // Office boundary. Bind the executor to the exact request token + originating doc.
+            // Office boundary. The validator performs a deep Office identity check only when a
+            // tool is actually about to cross into the host adapter, not for every streamed token.
             _toolExecutor.RequestCancellationTokenProvider = () => requestCts.Token;
-            _toolExecutor.RequestScopeValidator = () => IsRequestScopeStillValid(requestDocKey);
+            _toolExecutor.RequestScopeValidator = () =>
+                ValidateCurrentOfficeDocumentScope(requestDocKey, requestScopeVersion);
 
             try
             {
@@ -238,11 +262,15 @@ namespace OMNIX.Core.Ui
                     _adapter,
                     delta =>
                     {
+                        // Network adapters may emit deltas from a non-UI continuation. Never call
+                        // Office COM here. The version check is in-memory and the UI update is
+                        // dispatched only while the originating document scope remains valid.
+                        if (!IsRequestScopeVersionValid(requestDocKey, requestScopeVersion)) return;
                         var app = Application.Current;
-                        if (app == null || _disposed || !IsRequestScopeStillValid(requestDocKey)) return;
+                        if (app == null) return;
                         app.Dispatcher.BeginInvoke(new Action(delegate
                         {
-                            if (_disposed || !IsRequestScopeStillValid(requestDocKey)) return;
+                            if (!IsRequestScopeVersionValid(requestDocKey, requestScopeVersion)) return;
                             sb.Append(delta);
                             bubble.ReplaceText(sb.ToString());
                         }));
@@ -251,9 +279,9 @@ namespace OMNIX.Core.Ui
                     ct).ConfigureAwait(true);
 
                 // A provider can race cancellation and return a completed response. Re-check both
-                // token and document identity before touching UI/history after the await.
+                // token and actual Office document identity before touching UI/history after await.
                 ct.ThrowIfCancellationRequested();
-                if (!IsRequestScopeStillValid(requestDocKey))
+                if (!ValidateCurrentOfficeDocumentScope(requestDocKey, requestScopeVersion))
                     throw new OperationCanceledException("Office document changed during the AI request.", ct);
                 if (_disposed) return;
 
@@ -269,7 +297,7 @@ namespace OMNIX.Core.Ui
             {
                 // Pane disposal or document switching invalidates this request completely. Do not
                 // write a late cancellation bubble/history entry into a closed or different doc.
-                if (_disposed || !IsRequestScopeStillValid(requestDocKey)) return;
+                if (_disposed || !ValidateCurrentOfficeDocumentScope(requestDocKey, requestScopeVersion)) return;
 
                 // A user pressing Stop in the SAME document remains a normal visible cancellation.
                 assistantTurn.Text = sb.ToString() + Environment.NewLine + Localization.Strings.T("S.Chat.Cancelled");
@@ -279,14 +307,14 @@ namespace OMNIX.Core.Ui
             }
             catch (OmnixException ex)
             {
-                if (_disposed || !IsRequestScopeStillValid(requestDocKey)) return;
+                if (_disposed || !ValidateCurrentOfficeDocumentScope(requestDocKey, requestScopeVersion)) return;
                 bubble.ReplaceText("");
                 View.Chat.ShowError(ErrorPresenter.Format(ex));
             }
             catch (Exception ex)
             {
                 Logger.Error("ui", "SendMessage failed", ex);
-                if (_disposed || !IsRequestScopeStillValid(requestDocKey)) return;
+                if (_disposed || !ValidateCurrentOfficeDocumentScope(requestDocKey, requestScopeVersion)) return;
                 bubble.ReplaceText("");
                 View.Chat.ShowError(ErrorPresenter.Format(ex));
             }
