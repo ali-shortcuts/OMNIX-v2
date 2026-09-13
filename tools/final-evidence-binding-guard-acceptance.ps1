@@ -54,26 +54,24 @@ try {
             ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $paths.Security -Encoding UTF8
     }
 
-    function Guard-Args {
-        return @(
-            '-NoProfile','-File',$guard,
-            '-InstallerPath',$installer,
-            '-OfficeE2EReport',$paths.Office,
-            '-LifecycleReport',$paths.Lifecycle,
-            '-ConsumerSecurityReport',$paths.Security,
-            '-OfficePersistenceReport',$paths.Persistence,
-            '-OfficeUiReport',$paths.Ui,
-            '-OfficeRestartReport',$paths.Restart,
-            '-LocalOfflineReport',$paths.Offline,
-            '-ProviderReport',$paths.Provider,
-            '-ExpectedSourceCommit',$source
-        )
-    }
-
     function Invoke-Guard {
-        $arguments = @(Guard-Args)
-        $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
-        return [int]$p.ExitCode
+        try {
+            & $guard `
+                -InstallerPath $installer `
+                -OfficeE2EReport $paths.Office `
+                -LifecycleReport $paths.Lifecycle `
+                -ConsumerSecurityReport $paths.Security `
+                -OfficePersistenceReport $paths.Persistence `
+                -OfficeUiReport $paths.Ui `
+                -OfficeRestartReport $paths.Restart `
+                -LocalOfflineReport $paths.Offline `
+                -ProviderReport $paths.Provider `
+                -ExpectedSourceCommit $source | Out-Null
+            return [pscustomobject]@{Accepted=$true;Error=$null}
+        }
+        catch {
+            return [pscustomobject]@{Accepted=$false;Error=[string]$_.Exception.Message}
+        }
     }
 
     $script:CaseResults = @()
@@ -82,11 +80,16 @@ try {
     function Run-Case([string]$name,[scriptblock]$mutate,[bool]$shouldPass) {
         Write-ValidReports
         & $mutate
-        $exit = Invoke-Guard
-        $actualPass = ($exit -eq 0)
-        $pass = ($actualPass -eq $shouldPass)
-        $script:CaseResults += [pscustomobject]@{Name=$name;ExpectedPass=$shouldPass;ExitCode=$exit;Pass=$pass}
-        if(-not $pass){$script:CaseFailures += "$name expected pass=$shouldPass but exit=$exit"}
+        $r = Invoke-Guard
+        $pass = ([bool]$r.Accepted -eq $shouldPass)
+        $script:CaseResults += [pscustomobject]@{
+            Name=$name
+            ExpectedPass=$shouldPass
+            Accepted=[bool]$r.Accepted
+            Error=$r.Error
+            Pass=$pass
+        }
+        if(-not $pass){$script:CaseFailures += "$name expected pass=$shouldPass accepted=$($r.Accepted) error=$($r.Error)"}
     }
 
     Run-Case 'ValidExactBinding' {} $true
@@ -145,7 +148,7 @@ Set-Content -LiteralPath '$sentinel' -Value 'CONTINUED' -NoNewline
     Set-Content -LiteralPath $caller -Value $callerText -Encoding UTF8
     $cp=Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-File',$caller) -Wait -PassThru -WindowStyle Hidden
     $continued=($cp.ExitCode -eq 0 -and (Test-Path -LiteralPath $sentinel -PathType Leaf) -and (Get-Content -LiteralPath $sentinel -Raw) -eq 'CONTINUED')
-    $script:CaseResults += [pscustomobject]@{Name='CallerContinuation';ExpectedPass=$true;ExitCode=$cp.ExitCode;Pass=$continued}
+    $script:CaseResults += [pscustomobject]@{Name='CallerContinuation';ExpectedPass=$true;Accepted=$continued;Error=$null;Pass=$continued}
     if(-not $continued){$script:CaseFailures += 'Valid guard did not return control to its caller.'}
 
     $out=[ordered]@{
