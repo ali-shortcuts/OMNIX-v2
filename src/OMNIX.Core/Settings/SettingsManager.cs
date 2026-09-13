@@ -90,7 +90,15 @@ namespace OMNIX.Core.Settings
                             {
                                 byte[] prot = Convert.FromBase64String(kv.Value);
                                 byte[] plain = ProtectedData.Unprotect(prot, Entropy, DataProtectionScope.CurrentUser);
-                                _plainKeys[kv.Key] = Encoding.UTF8.GetString(plain);
+                                try
+                                {
+                                    _plainKeys[kv.Key] = Encoding.UTF8.GetString(plain);
+                                }
+                                finally
+                                {
+                                    Array.Clear(plain, 0, plain.Length);
+                                    Array.Clear(prot, 0, prot.Length);
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -219,6 +227,8 @@ namespace OMNIX.Core.Settings
 
         public void Save()
         {
+            string tmp = null;
+            var sensitiveBuffers = new List<byte[]>();
             try
             {
                 var dto = new SettingsDto { Settings = Settings };
@@ -229,21 +239,63 @@ namespace OMNIX.Core.Settings
                     foreach (var kv in _plainKeys)
                     {
                         byte[] plain = Encoding.UTF8.GetBytes(kv.Value ?? "");
-                        byte[] prot = ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser);
-                        dto.ProtectedKeys[kv.Key] = Convert.ToBase64String(prot);
+                        byte[] prot = null;
+                        sensitiveBuffers.Add(plain);
+                        try
+                        {
+                            prot = ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser);
+                            dto.ProtectedKeys[kv.Key] = Convert.ToBase64String(prot);
+                        }
+                        finally
+                        {
+                            if (prot != null) Array.Clear(prot, 0, prot.Length);
+                        }
                     }
                 }
 
                 string json = JsonConvert.SerializeObject(dto, Formatting.Indented);
                 Directory.CreateDirectory(Path.GetDirectoryName(_path));
-                string tmp = _path + ".tmp";
-                File.WriteAllBytes(tmp, Concat(Magic, Encoding.UTF8.GetBytes(json)));
-                if (File.Exists(_path)) File.Delete(_path);
-                File.Move(tmp, _path);
+                tmp = _path + ".tmp";
+                byte[] fileBytes = Concat(Magic, Encoding.UTF8.GetBytes(json));
+                try
+                {
+                    using (var stream = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        stream.Write(fileBytes, 0, fileBytes.Length);
+                        stream.Flush(true);
+                    }
+                }
+                finally
+                {
+                    Array.Clear(fileBytes, 0, fileBytes.Length);
+                }
+
+                if (File.Exists(_path))
+                {
+                    // Same-volume atomic replacement avoids the old delete-then-move window where
+                    // an Office/process crash could leave the user with no settings.dat at all.
+                    File.Replace(tmp, _path, null);
+                }
+                else
+                {
+                    File.Move(tmp, _path);
+                }
+                tmp = null;
             }
             catch (Exception ex)
             {
                 Logger.Error("settings", "Failed to save settings.", ex);
+            }
+            finally
+            {
+                foreach (var buffer in sensitiveBuffers)
+                {
+                    if (buffer != null) Array.Clear(buffer, 0, buffer.Length);
+                }
+                if (!string.IsNullOrEmpty(tmp))
+                {
+                    try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                }
             }
         }
 
