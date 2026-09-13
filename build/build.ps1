@@ -79,3 +79,5 @@ try {
 } finally {
     Remove-Item "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -ErrorAction SilentlyContinue
 }
+# A deliberately rejected installer/probe is an expected test result, not the script's exit status.
+exit 0

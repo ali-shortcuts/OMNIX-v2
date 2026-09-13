@@ -56,6 +56,17 @@ namespace Omnix.Tests
                 Test("Image capability is enforced before transport",()=>{var s=Settings();var h=new FakeHttp();using(var g=new ProviderGateway(s,x=>{},h)){var r=Request(s,approved:true);r.ImageBase64=Convert.ToBase64String(new byte[]{1,2,3});Reject("VISION",()=>Call(g,r));Assert(h.Count==0,"Unsupported image sent.");}});
                 Test("Gemini uses native contents and parses native response",()=>{var s=Settings();s.Preferences.Providers[0].Kind="gemini";var h=new FakeHttp {Reply=n=>new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent("{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello from Gemini\"}]}}]}")}};using(var g=new ProviderGateway(s,x=>{},h)){Assert(Call(g,Request(s,approved:true)).Text=="Hello from Gemini","Gemini response missing.");Assert(h.Address.EndsWith("models/test-model:generateContent")&&h.Body.Contains("system_instruction"),"Wrong Gemini protocol.");}});
                 Test("DPAPI file is encrypted and survives reload",()=>{string name="test-"+Guid.NewGuid().ToString("N")+".dat";try{LocalData.Write(name,Settings());byte[] bytes=File.ReadAllBytes(Path.Combine(LocalData.Root,name));Assert(!Encoding.UTF8.GetString(bytes).Contains("synthetic-test-secret"),"Plaintext secret on disk.");Assert(LocalData.Read<SavedSettings>(name).Keys["test"]=="synthetic-test-secret","Encrypted reload failed.");}finally{File.Delete(Path.Combine(LocalData.Root,name));}});
+                Test("Encrypted chat reload preserves messages and branches concurrent edits",()=>{
+                    string host="test-"+Guid.NewGuid().ToString("N");
+                    try {
+                        var first=ChatHistory.Save(new ChatSession {Host=host},new List<Message>{new Message {Role="user",Text="history roundtrip"}});
+                        var stale=Wire.Parse<ChatSession>(Wire.Json(first));
+                        Assert(ChatHistory.List(host).Single().Messages[0].Text=="history roundtrip","History reload failed.");
+                        ChatHistory.Save(first,new List<Message>{new Message {Role="user",Text="first window update"}});
+                        var second=ChatHistory.Save(stale,new List<Message>{new Message {Role="user",Text="second window update"}});
+                        Assert(first.Id!=second.Id && ChatHistory.List(host).Count==2,"Concurrent history was overwritten.");
+                    } finally {foreach(var item in ChatHistory.List(host))ChatHistory.Delete(item.Id);}
+                });
                 Test("Framed IPC rejects negative and truncated messages",()=>{foreach(var bytes in new[]{BitConverter.GetBytes(-1),new byte[]{10,0,0,0,1}}){bool rejected=false;try{using(var input=new MemoryStream(bytes))Wire.ReadAsync<Request>(input,CancellationToken.None).GetAwaiter().GetResult();}catch(Exception e) when(e is InvalidDataException || e is EndOfStreamException){rejected=true;}Assert(rejected,"Invalid message accepted.");}});
                 Test("PE architecture is detected from executable bytes",()=>{Assert(new[]{"x86","x64"}.Contains(Installation.Architecture(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName)),"Architecture probe failed.");});
                 Test("Missing payload fails before registration",()=>{bool rejected=false;try{Installation.ValidatePayload(Path.Combine(output,"absent"));}catch(InvalidDataException){rejected=true;}Assert(rejected,"Incomplete install accepted.");});

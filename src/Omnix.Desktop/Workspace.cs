@@ -21,6 +21,8 @@ namespace Omnix.Desktop
         private Provider editedProvider;
         private readonly Dictionary<string,string> keys=new Dictionary<string,string>();
         private readonly List<Message> messages=new List<Message>();
+        private ChatSession session;
+        private readonly ComboBox history=new ComboBox {MinHeight=28,Margin=new Thickness(0,0,0,8)};
         private readonly List<SelectionSnapshot> retained=new List<SelectionSnapshot>();
         private SelectionSnapshot selection;
         private CancellationTokenSource running;
@@ -65,7 +67,8 @@ namespace Omnix.Desktop
             Content=root;
             AddTab("Chat",CreateChat()); AddTab("Providers",CreateSettings()); AddTab("Review",CreateReview()); AddTab("Diagnostics",CreateDiagnostics());
             providers.SelectionChanged+=(s,e)=>{if(!changing)SwitchProvider();};
-            Loaded+=async(s,e)=> {if(!loaded){loaded=true;await Run(Reload);}};
+            history.SelectionChanged+=(s,e)=>{if(!changing && history.SelectedItem is ChatSession chosen)OpenSession(chosen);};
+            Loaded+=async(s,e)=> {if(!loaded){loaded=true;try{RefreshHistory(true);}catch(Exception ex){Failure(ex);}await Run(Reload);}};
         }
         private static TextBlock Label(string value) => new TextBlock {Text=value,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,14,0,6),TextWrapping=TextWrapping.Wrap};
         private void AddTab(string title,UIElement content) => tabs.Items.Add(new TabItem {Header=title,Content=content,Padding=new Thickness(8,6,8,6)});
@@ -81,6 +84,7 @@ namespace Omnix.Desktop
             var grid=new Grid {Margin=new Thickness(0,12,0,0)};
             grid.RowDefinitions.Add(new RowDefinition {Height=GridLength.Auto}); grid.RowDefinitions.Add(new RowDefinition()); grid.RowDefinitions.Add(new RowDefinition {Height=GridLength.Auto});
             var context=new StackPanel();
+            context.Children.Add(history);
             context.Children.Add(Button("Capture selection",Capture)); context.Children.Add(include);
             var preview=new Expander {Header="Selection preview",Content=captured,Margin=new Thickness(0,0,0,8)}; context.Children.Add(preview); grid.Children.Add(context);
             conversationScroll.Content=conversation; Grid.SetRow(conversationScroll,1); grid.Children.Add(conversationScroll);
@@ -89,7 +93,12 @@ namespace Omnix.Desktop
             compose.Children.Add(imageLabel); compose.Children.Add(prompt);
             var buttons=new WrapPanel(); buttons.Children.Add(AsyncButton("Send",Send)); buttons.Children.Add(Button("Cancel",()=>running?.Cancel(),false));
             buttons.Children.Add(Button("Image",AttachImage)); buttons.Children.Add(Button("Clear image",()=>{imageData=null;imageLabel.Text="No image attached";}));
-            buttons.Children.Add(Button("New chat",()=>{messages.Clear();conversation.Children.Clear();draft.Text="";status.Text="New chat started";}));
+            buttons.Children.Add(Button("New chat",()=>{OpenSession(new ChatSession {Host=host});status.Text="New chat started";}));
+            buttons.Children.Add(Button("Delete chat",()=>{
+                if(session==null)return;
+                if(MessageBox.Show("Delete this saved chat?","OMNIX",MessageBoxButton.OKCancel,MessageBoxImage.Question)!=MessageBoxResult.OK)return;
+                ChatHistory.Delete(session.Id);OpenSession(new ChatSession {Host=host});RefreshHistory(false);
+            }));
             compose.Children.Add(buttons); Grid.SetRow(compose,2); grid.Children.Add(compose); return grid;
         }
         private UIElement CreateSettings()
@@ -138,6 +147,9 @@ namespace Omnix.Desktop
                 if(File.Exists(log))diagnostics.AppendText(string.Join(Environment.NewLine,File.ReadLines(log).Reverse().Take(30).Reverse()));
             }));
             panel.Children.Add(new TextBlock {Text="Support: @Ali_silent0\nPreview build — real Office and restart acceptance must be recorded before production approval.",TextWrapping=TextWrapping.Wrap,Foreground=Brushes.SlateGray,Margin=new Thickness(0,12,0,0)});
+            var support=new System.Windows.Documents.Hyperlink(new System.Windows.Documents.Run("Telegram · @Ali_silent0")) {NavigateUri=new Uri("https://t.me/Ali_silent0")};
+            support.RequestNavigate+=(s,e)=>{System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(e.Uri.AbsoluteUri){UseShellExecute=true});e.Handled=true;};
+            var contact=new TextBlock {Margin=new Thickness(0,10,0,0)};contact.Inlines.Add(support);panel.Children.Add(contact);
             return new ScrollViewer {Content=panel,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
         }
         private void Capture()
@@ -219,7 +231,23 @@ namespace Omnix.Desktop
             messages.Add(new Message {Role="user",Text=text});messages.Add(new Message {Role="assistant",Text=response.Text});
             if(messages.Count>100)messages.RemoveRange(0,messages.Count-100);
             AddBubble("user",text);AddBubble("assistant",response.Text);prompt.Clear();draft.Text=response.Text;status.Text="Answer received. Open Review to apply selected text.";
+            try {session=ChatHistory.Save(session??new ChatSession {Host=host},messages);RefreshHistory(false);}
+            catch(Exception ex){LocalData.Log("CHAT_SAVE_FAILED",ex);status.Text="Answer received, but chat history could not be saved.";}
             conversationScroll.ScrollToEnd();
+        }
+        private void OpenSession(ChatSession value)
+        {
+            session=value;messages.Clear();messages.AddRange(value.Messages);conversation.Children.Clear();
+            foreach(var message in messages)AddBubble(message.Role,message.Text);
+            draft.Text=messages.LastOrDefault(m=>m.Role=="assistant")?.Text??"";
+            selection=null;captured.Clear();include.IsChecked=false;imageData=null;imageLabel.Text="No image attached";
+        }
+        private void RefreshHistory(bool openLatest)
+        {
+            var sessions=ChatHistory.List(host);changing=true;
+            try {history.ItemsSource=sessions;history.SelectedItem=sessions.FirstOrDefault(s=>s.Id==session?.Id);}
+            finally{changing=false;}
+            if(openLatest && sessions.Count>0) {OpenSession(sessions[0]);changing=true;history.SelectedItem=sessions[0];changing=false;}
         }
         private void AddBubble(string role,string text)
         {
@@ -249,10 +277,11 @@ namespace Omnix.Desktop
             if(running!=null||disposed)return;
             running=new CancellationTokenSource();foreach(var b in guardedButtons)b.IsEnabled=false;
             providers.IsEnabled=false;model.IsEnabled=false;endpoint.IsEnabled=false;key.IsEnabled=false;privacy.IsEnabled=false;vision.IsEnabled=false;
+            history.IsEnabled=false;
             try {await action();}
             catch(OperationCanceledException){status.Text="Request cancelled";}
             catch(Exception e){if(running.IsCancellationRequested)status.Text="Request cancelled";else Failure(e);}
-            finally {running.Dispose();running=null;foreach(var b in guardedButtons)b.IsEnabled=true;providers.IsEnabled=true;model.IsEnabled=true;endpoint.IsEnabled=true;key.IsEnabled=true;privacy.IsEnabled=true;vision.IsEnabled=true;}
+            finally {running.Dispose();running=null;foreach(var b in guardedButtons)b.IsEnabled=true;providers.IsEnabled=true;model.IsEnabled=true;endpoint.IsEnabled=true;key.IsEnabled=true;privacy.IsEnabled=true;vision.IsEnabled=true;history.IsEnabled=true;}
         }
         private void Failure(Exception e) {status.Text=e.Message;LocalData.Log("WORKSPACE_ERROR",e);}
         public void Dispose()

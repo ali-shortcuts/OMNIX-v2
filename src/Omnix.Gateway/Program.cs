@@ -39,13 +39,13 @@ namespace Omnix.Gateway
                 using(var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(5))) {
                     try { await pipe.WaitForConnectionAsync(timeout.Token).ConfigureAwait(false); }
                     catch(OperationCanceledException) { return; }
-                    string identity=null;
-                    pipe.RunAsClient(()=>identity=WindowsIdentity.GetCurrent().User.Value);
-                    if(identity!=user.Value) { LocalData.Log("IPC_WRONG_USER"); continue; }
                     using(var requestTimeout=new CancellationTokenSource(TimeSpan.FromSeconds(105))) {
                         Request request=null; Reply reply;
                         try {
                             request=await Wire.ReadAsync<Request>(pipe,requestTimeout.Token).ConfigureAwait(false);
+                            string identity=null;
+                            pipe.RunAsClient(()=>identity=WindowsIdentity.GetCurrent().User.Value);
+                            if(identity!=user.Value) { LocalData.Log("IPC_WRONG_USER"); continue; }
                             var response=gateway.HandleAsync(request,requestTimeout.Token);
                             var disconnected=pipe.ReadAsync(new byte[1],0,1,requestTimeout.Token);
                             if(await Task.WhenAny(response,disconnected).ConfigureAwait(false)==disconnected) {

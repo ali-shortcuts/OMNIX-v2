@@ -40,6 +40,6 @@ Unattended component tests and UI renders do not satisfy these gates. `Productio
 
 ## Requirements retained
 
-The documents in `docs/reference/` are preserved requirement history. Their common direction is native Office UI, secure credentials, controlled document access and honest verification. The current implementation retains VSTO/WPF and adds native IPC to meet the later specification. The full agent/tool catalog, streaming, persistent multi-session chat, automated document creation and broad vision capture workflows remain beyond this preview's implemented scope.
+The documents in `docs/reference/` are preserved requirement history. Their common direction is native Office UI, secure credentials, controlled document access and honest verification. The current implementation retains VSTO/WPF and adds native IPC to meet the later specification. The full agent/tool catalog, streaming, automated document creation and broad vision capture workflows remain beyond this preview's implemented scope.
 
 Primary deployment references: [Microsoft VSTO deployment](https://learn.microsoft.com/en-us/visualstudio/vsto/deploying-a-vsto-solution-by-using-windows-installer?view=vs-2022), [VSTO Installer and exit codes](https://learn.microsoft.com/en-us/visualstudio/vsto/deploying-an-office-solution-by-using-clickonce?view=vs-2022#create-a-custom-installer), [solution trust](https://learn.microsoft.com/en-us/visualstudio/vsto/trusting-office-solutions-by-using-inclusion-lists?view=vs-2022).

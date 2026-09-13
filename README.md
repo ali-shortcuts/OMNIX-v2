@@ -31,7 +31,7 @@ Providers: Ollama, LM Studio, OpenAI, Google Gemini, Groq, OpenRouter and custom
 | `Omnix.Setup` | Actual Office detection, prerequisites, registration and diagnostics |
 | `Omnix.Tests` | Executed Windows component and transport checks |
 
-There is no browser UI, Node.js dependency or Office-to-Core HTTP server. Provider calls use their actual HTTP APIs. The gateway starts on demand and exits after five idle minutes. Keys are encrypted using Windows DPAPI for the current user. Logs contain event categories, not API keys or document content.
+There is no browser UI, Node.js dependency or Office-to-Core HTTP server. Provider calls use their actual HTTP APIs. The gateway starts on demand and exits after five idle minutes. Keys and saved chats are encrypted using Windows DPAPI for the current user. History retains at most 20 sessions, 100 messages per session, and 180,000 text characters per session. Logs contain event categories, not API keys or document content.
 
 ## Build and evidence
 
