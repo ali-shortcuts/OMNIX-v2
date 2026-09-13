@@ -43,6 +43,31 @@ namespace Omnix.Tests
             string output=args.Length>0?args[0]:"artifacts/evidence";Directory.CreateDirectory(output);
             LocalData.TestRoot=Path.Combine(Path.GetTempPath(),"omnix-tests-"+Guid.NewGuid().ToString("N"));
             try {
+                Test("Repeated window activation reuses one workspace",()=>{
+                    int created=0;var registry=new WindowWorkspaces<object>(x=>{});
+                    object first=registry.GetOrCreate("1:doc-a",()=>{created++;return new object();});
+                    Assert(ReferenceEquals(first,registry.GetOrCreate("1:doc-a",()=>{created++;return new object();}))&&created==1,"Duplicate workspace created.");
+                });
+                Test("Closed windows release only their own workspace",()=>{
+                    var released=new List<object>();var registry=new WindowWorkspaces<object>(released.Add);
+                    object first=registry.GetOrCreate("1:doc-a",()=>new object());
+                    object second=registry.GetOrCreate("2:doc-b",()=>new object());
+                    registry.Prune(new[]{"2:doc-b"});
+                    Assert(registry.Count==1&&released.Count==1&&ReferenceEquals(released[0],first),"Wrong window released.");
+                    registry.Clear();registry.Clear();Assert(released.Count==2&&ReferenceEquals(released[1],second),"Shutdown leaked or double-disposed a workspace.");
+                });
+                Test("Recycled window handles cannot inherit another document workspace",()=>{
+                    int released=0;var registry=new WindowWorkspaces<object>(x=>released++);
+                    var old=registry.GetOrCreate("1:doc-a",()=>new object());
+                    registry.Prune(new[]{"1:doc-b"});var next=registry.GetOrCreate("1:doc-b",()=>new object());
+                    Assert(!ReferenceEquals(old,next)&&released==1,"Old document workspace survived handle reuse.");
+                });
+                Test("Failed workspace creation remains retryable",()=>{
+                    var registry=new WindowWorkspaces<object>(x=>{});
+                    try{registry.GetOrCreate("1:doc-a",()=>{throw new InvalidOperationException("Office busy");});}catch(InvalidOperationException){}
+                    Assert(registry.Count==0,"Failed workspace was cached.");
+                    Assert(registry.GetOrCreate("1:doc-a",()=>new object())!=null,"Recovery failed.");
+                });
                 Test("Remote requests require consent at gateway boundary",()=>{var s=Settings();var h=new FakeHttp();using(var g=new ProviderGateway(s,x=>{},h)){Reject("CONSENT",()=>Call(g,Request(s)));Assert(h.Count==0,"A blocked request reached HTTP.");}});
                 Test("Local-only blocks remote chat, model discovery and probes",()=>{var s=Settings("Local only");var h=new FakeHttp();using(var g=new ProviderGateway(s,x=>{},h)){foreach(var op in new[]{"chat","models","probe"})Reject("PRIVACY",()=>Call(g,Request(s,op,true)));Assert(h.Count==0,"Privacy failed.");}});
                 Test("Loopback provider works without cloud consent",()=>{var s=Settings("Local only","http://127.0.0.1:11434/v1");var h=new FakeHttp();using(var g=new ProviderGateway(s,x=>{},h)){Assert(Call(g,Request(s)).Text=="OK","Missing response.");Assert(h.Address=="http://127.0.0.1:11434/v1/chat/completions","Wrong route.");}});
@@ -69,6 +94,17 @@ namespace Omnix.Tests
                     } finally {foreach(var item in ChatHistory.List(host))ChatHistory.Delete(item.Id);}
                 });
                 Test("Framed IPC rejects negative and truncated messages",()=>{foreach(var bytes in new[]{BitConverter.GetBytes(-1),new byte[]{10,0,0,0,1}}){bool rejected=false;try{using(var input=new MemoryStream(bytes))Wire.ReadAsync<Request>(input,CancellationToken.None).GetAwaiter().GetResult();}catch(Exception e) when(e is InvalidDataException || e is EndOfStreamException){rejected=true;}Assert(rejected,"Invalid message accepted.");}});
+                Test("Office registration persists startup loading and local manifest after reopening registry",()=>{
+                    string path=@"Software\OMNIX\Tests\"+Guid.NewGuid().ToString("N");
+                    try {
+                        string manifest=Installation.Manifest(Path.Combine(output,"install with spaces"),"Word");
+                        using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(path))Installation.WriteRegistration(key,manifest);
+                        using(var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(path)) {
+                            Assert((string)key.GetValue("Manifest")==manifest&&manifest.EndsWith("|vstolocal"),"Manifest did not persist.");
+                            Assert((int)key.GetValue("LoadBehavior")==3&&key.GetValueKind("LoadBehavior")==Microsoft.Win32.RegistryValueKind.DWord,"Startup loading did not persist.");
+                        }
+                    }finally{Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(path,false);}
+                });
                 Test("PE architecture is detected from executable bytes",()=>{Assert(new[]{"x86","x64"}.Contains(Installation.Architecture(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName)),"Architecture probe failed.");});
                 Test("Missing payload fails before registration",()=>{bool rejected=false;try{Installation.ValidatePayload(Path.Combine(output,"absent"));}catch(InvalidDataException){rejected=true;}Assert(rejected,"Incomplete install accepted.");});
                 Test("Native named-pipe gateway starts and answers a real process call",()=>{string exe=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"Omnix.Gateway.exe");var response=new GatewayClient(exe).CallAsync(new Request {Operation="ping"},CancellationToken.None).GetAwaiter().GetResult();Assert(response.Ok&&response.Text=="Gateway connected","IPC process response failed.");});

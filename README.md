@@ -6,7 +6,7 @@ OMNIX 4 is a clean implementation following the review of the previous repositor
 
 ## Install
 
-Download the single `OMNIX-Setup-4.0.0-preview.1.exe` from [Releases](https://github.com/ali-shortcuts/OMNIX-v2/releases). Close Office, run Setup, and respond to Microsoft's add-in trust prompts. Open a document and select **OMNIX → Open Workspace**.
+Download the single `OMNIX-Setup-4.0.0-preview.2.exe` from [Releases](https://github.com/ali-shortcuts/OMNIX-v2/releases). Close Office, run Setup, and respond to Microsoft's add-in trust prompts. Open a document: the native workspace is created automatically in each document window after Office startup. Closing the pane keeps it hidden in that window; **OMNIX → Open Workspace** opens it again. No browser or manual manifest registration is required. Microsoft may still require its add-in trust confirmation.
 
 Supported target: Windows 10/11, .NET Framework 4.8, and x86/x64 desktop Office 2013 or newer. Native ARM64 Office, Office for the web, and macOS are outside this build's target. The installer detects Office executable architecture rather than inferring it from Windows.
 

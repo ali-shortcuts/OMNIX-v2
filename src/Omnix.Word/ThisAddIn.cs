@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
@@ -19,8 +20,16 @@ namespace Omnix.Word
         private readonly Microsoft.Office.Tools.Word.ApplicationFactory factory;
         private Microsoft.Office.Interop.Word.Application application;
         private CustomTaskPaneCollection panes;
-        private readonly Dictionary<long,CustomTaskPane> windows=new Dictionary<long,CustomTaskPane>();
-        private readonly List<Workspace> views=new List<Workspace>();
+        private WindowWorkspaces<PaneEntry> windows;
+        private Timer windowTimer;
+        private bool synchronizing, stopping;
+        private DateTime nextAttempt;
+        private sealed class PaneEntry
+        {
+            public CustomTaskPane Pane;
+            public Workspace View;
+            public UserControl Control;
+        }
         private Automation automation;
         public ThisAddIn(Microsoft.Office.Tools.Word.ApplicationFactory factory,IServiceProvider services):base(factory,services,"AddIn","ThisAddIn")
         {
@@ -38,35 +47,86 @@ namespace Omnix.Word
         {
             BeginInit();panes.BeginInit();panes.EndInit();EndInit();
         }
-        protected override void FinishInitialization() { OnStartup();LocalData.Log("Word_STARTED"); }
+        protected override void FinishInitialization()
+        {
+            windows=new WindowWorkspaces<PaneEntry>(ReleasePane);
+            OnStartup();
+            // Defer COM/UI creation until Office has returned from add-in startup.
+            windowTimer=new Timer {Interval=1500};
+            windowTimer.Tick+=SynchronizeWindows;
+            windowTimer.Start();
+            LocalData.Log("Word_STARTED");
+        }
         protected override Office.IRibbonExtensibility CreateRibbonExtensibilityObject() => new Ribbon(this);
         protected override object RequestComAddInAutomationService() => automation ?? (automation=new Automation(this));
-        internal string RuntimeState => "OMNIX/4.0;host=Word;started="+(application!=null)+";panes="+windows.Count;
+        internal string RuntimeState => "OMNIX/4.0;host=Word;started="+(application!=null)+";panes="+(windows?.Count??0);
+        private static string WindowIdentity(dynamic window)
+        {
+            object document=window.Document;
+            IntPtr identity=Marshal.GetIUnknownForObject(document);
+            try {return Convert.ToInt64(window.HWND)+":"+identity.ToInt64();}
+            finally {Marshal.Release(identity);}
+        }
+        private PaneEntry CreatePane(object current)
+        {
+            string root=Path.GetFullPath(Path.Combine(Path.GetDirectoryName(typeof(ThisAddIn).Assembly.Location),"..",".."));
+            var entry=new PaneEntry();
+            try {
+                entry.View=new Workspace(application,"Word",Path.Combine(root,"gateway","Omnix.Gateway.exe"));
+                entry.Control=new UserControl {Dock=DockStyle.Fill};
+                entry.Control.Controls.Add(new ElementHost {Dock=DockStyle.Fill,Child=entry.View});
+                entry.Pane=panes.Add(entry.Control,"OMNIX",current);
+                entry.Pane.Width=430;entry.Pane.DockPosition=Office.MsoCTPDockPosition.msoCTPDockPositionRight;
+                entry.Pane.Visible=true;
+                LocalData.Log("Word_PANE_CREATED");return entry;
+            } catch {ReleasePane(entry);throw;}
+        }
+        private void ReleasePane(PaneEntry entry)
+        {
+            try {entry.View?.Dispose();}catch(Exception e){LocalData.Log("Word_VIEW_DISPOSE_FAILED",e);}
+            // VSTO owns collection cleanup during shutdown; Remove is only valid while running.
+            if(!stopping && entry.Pane!=null)try {panes.Remove(entry.Pane);}catch(Exception e){LocalData.Log("Word_PANE_REMOVE_FAILED",e);}
+            try {entry.Control?.Dispose();}catch(Exception e){LocalData.Log("Word_CONTROL_DISPOSE_FAILED",e);}
+        }
+        private void SynchronizeWindows(object sender,EventArgs args)
+        {
+            if(stopping || synchronizing || DateTime.UtcNow<nextAttempt)return;
+            synchronizing=true;
+            try {
+                dynamic collection=application.Windows;
+                var live=new Dictionary<string,object>();
+                for(int i=1;i<=collection.Count;i++) {
+                    dynamic window=collection[i];
+                    live[WindowIdentity((object)window)]=(object)window;
+                }
+                windows.Prune(live.Keys);
+                foreach(var item in live)windows.GetOrCreate(item.Key,()=>CreatePane(item.Value));
+                // Existing panes are left alone: closing the pane is respected.
+            }catch(Exception e) {
+                nextAttempt=DateTime.UtcNow.AddSeconds(15);
+                LocalData.Log("Word_WINDOW_SYNC_DEFERRED",e);
+            }finally{synchronizing=false;}
+        }
         internal void ShowWorkspace()
         {
+            if(stopping || synchronizing)return;
+            synchronizing=true;
             try {
                 dynamic current=application.ActiveWindow;
                 if(current==null)throw new InvalidOperationException("Open a document before opening OMNIX.");
-                long handle=Convert.ToInt64(current.HWND);
-                CustomTaskPane pane;
-                if(!windows.TryGetValue(handle,out pane)) {
-                    string root=Path.GetFullPath(Path.Combine(Path.GetDirectoryName(typeof(ThisAddIn).Assembly.Location),"..",".."));
-                    var view=new Workspace(application,"Word",Path.Combine(root,"gateway","Omnix.Gateway.exe"));
-                    var control=new UserControl {Dock=DockStyle.Fill};
-                    control.Controls.Add(new ElementHost {Dock=DockStyle.Fill,Child=view});
-                    pane=panes.Add(control,"OMNIX",(object)current);pane.Width=430;pane.DockPosition=Office.MsoCTPDockPosition.msoCTPDockPositionRight;
-                    windows.Add(handle,pane);views.Add(view);
-                }
-                pane.Visible=!pane.Visible;
-                LocalData.Log("Word_PANE_SHOWN");
+                var entry=windows.GetOrCreate(WindowIdentity((object)current),()=>CreatePane((object)current));
+                // Open is idempotent; repeated ribbon/automation calls cannot hide the pane.
+                entry.Pane.Visible=true;
             } catch(Exception e) {
                 LocalData.Log("Word_PANE_FAILED",e);
                 MessageBox.Show("OMNIX could not open its workspace.\n\n"+e.Message+"\n\nRun OMNIX Diagnostics from the Start menu.","OMNIX",MessageBoxButtons.OK,MessageBoxIcon.Error);
-            }
+            }finally{synchronizing=false;}
         }
         protected override void OnShutdown()
         {
-            foreach(var view in views)view.Dispose();views.Clear();windows.Clear();panes?.Dispose();base.OnShutdown();LocalData.Log("Word_STOPPED");
+            stopping=true;
+            if(windowTimer!=null){windowTimer.Stop();windowTimer.Tick-=SynchronizeWindows;windowTimer.Dispose();}
+            windows?.Clear();base.OnShutdown();LocalData.Log("Word_STOPPED");
         }
     }
     [ComVisible(true)]

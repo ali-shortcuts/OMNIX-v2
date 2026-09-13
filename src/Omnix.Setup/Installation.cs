@@ -58,6 +58,8 @@ namespace Omnix.Setup
                     }
                 }
                 string selected=paths.FirstOrDefault();if(selected==null)continue;
+                var fileVersion=FileVersionInfo.GetVersionInfo(selected);
+                if(fileVersion.FileMajorPart<15 || fileVersion.FileMajorPart>16)continue;
                 string arch=Architecture(selected);
                 found.Add(new OfficeHost {Name=Hosts[i],Path=selected,Architecture=arch,Version=FileVersionInfo.GetVersionInfo(selected).FileVersion,RuntimeReady=RuntimeReady(arch)});
             }
@@ -104,12 +106,19 @@ namespace Omnix.Setup
                     }
                 }
                 using(var key=user.CreateSubKey(@"Software\Microsoft\Office\"+host.Name+@"\Addins\OMNIX")) {
-                    key.SetValue("FriendlyName","OMNIX");key.SetValue("Description","OMNIX native AI workspace");
-                    key.SetValue("Manifest",Manifest(root,host.Name));key.SetValue("LoadBehavior",3,RegistryValueKind.DWord);
-                    if(Convert.ToString(key.GetValue("Manifest"))!=Manifest(root,host.Name)||(int)key.GetValue("LoadBehavior")!=3)throw new InvalidOperationException("Registration verification failed.");
+                    WriteRegistration(key,Manifest(root,host.Name));
                 }
                 }
             }
+        }
+        public static void WriteRegistration(RegistryKey key,string manifest)
+        {
+            key.SetValue("FriendlyName","OMNIX");key.SetValue("Description","OMNIX native AI workspace");
+            key.SetValue("Manifest",manifest,RegistryValueKind.String);
+            key.SetValue("LoadBehavior",3,RegistryValueKind.DWord);
+            key.Flush();
+            if(Convert.ToString(key.GetValue("Manifest"))!=manifest || Convert.ToInt32(key.GetValue("LoadBehavior"))!=3)
+                throw new InvalidOperationException("Registration verification failed.");
         }
         public static string VstoInstaller(string architecture)
         {
@@ -117,7 +126,7 @@ namespace Omnix.Setup
                 foreach(string version in new[]{"v4","v4R"})using(var key=machine.OpenSubKey(@"SOFTWARE\Microsoft\VSTO Runtime Setup\"+version)) {
                     string path=Convert.ToString(key?.GetValue("InstallerPath"));if(File.Exists(path))return path;
                 }
-            string common=Environment.GetFolderPath(architecture=="x64"?Environment.SpecialFolder.CommonProgramFiles:Environment.SpecialFolder.CommonProgramFilesX86);
+            string common=Environment.GetFolderPath(architecture=="x64" || !Environment.Is64BitOperatingSystem?Environment.SpecialFolder.CommonProgramFiles:Environment.SpecialFolder.CommonProgramFilesX86);
             string fallback=System.IO.Path.Combine(common,@"Microsoft Shared\VSTO\10.0\VSTOInstaller.exe");
             if(File.Exists(fallback))return fallback;
             throw new InvalidOperationException("Microsoft VSTO Installer was not found for "+architecture+" Office.");
@@ -125,6 +134,7 @@ namespace Omnix.Setup
         public static void TrustAndInstall(string root,IEnumerable<OfficeHost> hosts,bool silent)
         {
             ValidatePayload(root);
+            if(OfficeOpen())throw new InvalidOperationException("Close Excel, Word and PowerPoint before installing.");
             foreach(var host in hosts) {
                 string manifest=System.IO.Path.Combine(root,"hosts",host.Name,"Omnix."+host.Name+".vsto");
                 using(var process=Process.Start(new ProcessStartInfo(VstoInstaller(host.Architecture),"/Install \""+manifest+"\""+(silent?" /Silent":"")) {UseShellExecute=false})) {

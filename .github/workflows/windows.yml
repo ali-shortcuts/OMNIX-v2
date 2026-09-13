@@ -62,9 +62,11 @@ jobs:
           cat > release-notes.md <<'EOF'
           Clean native OMNIX rebuild for Windows desktop Excel, Word, and PowerPoint.
 
-          Download the single `OMNIX-Setup-4.0.0-preview.1.exe` installer. SHA-256 and the exact source commit are recorded in `manifest.json`.
+          Download the single `OMNIX-Setup-4.0.0-preview.2.exe` installer. SHA-256 and the exact source commit are recorded in `manifest.json`.
 
-          Includes native docked WPF workspace, a per-user named-pipe gateway, encrypted provider settings, manual/discovered model selection, bounded selection context, image input for compatible models, and reviewed text changes with undo.
+          This preview comes from the rebuild branch in PR #147; concurrent changes on main remain preserved. It implements a subset of the master requirements.
+
+          Includes automatically created per-window native docked WPF workspaces, a per-user named-pipe gateway, encrypted provider settings, manual/discovered model selection, bounded selection context, image input for compatible models, and reviewed text changes with undo.
 
           This is a development preview. Windows component checks passed. Real Office loading, restart persistence, live provider validation and trusted production signing are not yet certified. Windows build success is not evidence that the add-in works in every Office installation. Do not disable Office security or antivirus to install it.
           EOF
