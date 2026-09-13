@@ -5,9 +5,10 @@
 #   1) automatic Office registration-maintenance/task safety acceptance,
 #   2) strict two-launch COM automatic-load/persistence acceptance,
 #   3) real Ribbon + Open Workspace + visible task-pane UI Automation acceptance,
-#   4) real compiled OMNIX.Core Office-context/read/write/PowerPoint-Vision functional acceptance,
-#   5) approved-but-invalid write boundary rejection in ALL 3 Office hosts,
-#   6) real Office-context -> AiGateway/provider -> streaming WPF UI marker round-trip in ALL 3 hosts.
+#   4) repeated real Office task-pane close/reopen lifecycle acceptance in ALL 3 hosts,
+#   5) real compiled OMNIX.Core Office-context/read/write/PowerPoint-Vision functional acceptance,
+#   6) approved-but-invalid write boundary rejection in ALL 3 Office hosts,
+#   7) real Office-context -> AiGateway/provider -> streaming WPF UI marker round-trip in ALL 3 hosts.
 #
 # This script does NOT restart Windows, alter networking, clear Office Resiliency, change Trust Center,
 # or touch user Office documents. Reboot persistence remains a separate explicit before/after gate.
@@ -121,6 +122,7 @@ Assert-OfficeClosed
 $maintenancePath = Join-Path $logDir 'office-maintenance-real-acceptance.json'
 $persistencePath = Join-Path $logDir 'real-office-acceptance.json'
 $uiPath = Join-Path $logDir 'real-office-ui-acceptance.json'
+$taskPaneLifecyclePath = Join-Path $logDir 'taskpane-lifecycle-real-acceptance.json'
 $functionalPath = Join-Path $logDir 'office-functional-acceptance.json'
 $writeBoundaryPath = Join-Path $logDir 'office-write-boundary-acceptance.json'
 $aiPath = Join-Path $logDir 'real-office-ai-e2e.json'
@@ -130,6 +132,8 @@ Assert-OfficeClosed
 $persistence = Invoke-AcceptanceScript 'real-office-acceptance.ps1' $persistencePath
 Assert-OfficeClosed
 $ui = Invoke-AcceptanceScript 'real-office-ui-acceptance.ps1' $uiPath
+Assert-OfficeClosed
+$taskPaneLifecycle = Invoke-AcceptanceScript 'taskpane-lifecycle-real-acceptance.ps1' $taskPaneLifecyclePath
 Assert-OfficeClosed
 $functional = Invoke-AcceptanceScript 'office-functional-acceptance.ps1' $functionalPath @('-InstallDir',$InstallDir)
 Assert-OfficeClosed
@@ -157,6 +161,7 @@ if (-not [bool]$installerEvidence.Pass) { $failures.Add('Installer stage failed.
 if ($maintenance.ExitCode -ne 0 -or -not [bool]$maintenance.Report.OverallPass) { $failures.Add('Automatic Office registration maintenance/task acceptance failed.') }
 if ($persistence.ExitCode -ne 0 -or -not [bool]$persistence.Report.OverallPass) { $failures.Add('Strict Office automatic-load/persistence acceptance failed.') }
 if ($ui.ExitCode -ne 0 -or -not [bool]$ui.Report.OverallPass) { $failures.Add('Real Office Ribbon/workspace UI acceptance failed.') }
+if ($taskPaneLifecycle.ExitCode -ne 0 -or -not [bool]$taskPaneLifecycle.Report.OverallPass) { $failures.Add('Real Office task-pane close/reopen lifecycle acceptance failed.') }
 if ($functional.ExitCode -ne 0 -or -not [bool]$functional.Report.OverallPass) { $failures.Add('Real Office functional context/read/write/Vision acceptance failed.') }
 if ($writeBoundary.ExitCode -ne 0 -or -not [bool]$writeBoundary.Report.OverallPass) { $failures.Add('Real Office approved-but-invalid AI write-boundary acceptance failed.') }
 if (-not $SkipAiRoundTrip) {
@@ -167,7 +172,7 @@ if (-not $SkipAiRoundTrip) {
 
 $report = [ordered]@{
     TestId = 'OFFICE-E2E-REAL-001'
-    EvidenceSchema = 4
+    EvidenceSchema = 5
     TimestampUtc = (Get-Date).ToUniversalTime().ToString('o')
     Windows = [Environment]::OSVersion.VersionString
     InteractiveSession = [Environment]::UserInteractive
@@ -200,6 +205,13 @@ $report = [ordered]@{
         TestId = [string]$ui.Report.TestId
         ExitCode = [int]$ui.ExitCode
         OverallPass = [bool]$ui.Report.OverallPass
+    }
+    TaskPaneLifecycle = [ordered]@{
+        TestId = [string]$taskPaneLifecycle.Report.TestId
+        ExitCode = [int]$taskPaneLifecycle.ExitCode
+        OverallPass = [bool]$taskPaneLifecycle.Report.OverallPass
+        InstalledHostCount = [int]$taskPaneLifecycle.Report.InstalledHostCount
+        TwoRoundsPerHostRequired = [bool]$taskPaneLifecycle.Report.TwoRoundsPerHostRequired
     }
     Functional = [ordered]@{
         TestId = [string]$functional.Report.TestId
