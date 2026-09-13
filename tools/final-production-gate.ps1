@@ -1,6 +1,8 @@
 # OMNIX canonical FINAL production gate entrypoint.
 # The implementation is isolated in final-production-core.ps1. This wrapper intentionally exposes
 # no development-signature override and performs no install/restart/network/security actions.
+# Before delegating to the broader production core it fail-closes on stale Office E2E evidence that
+# does not contain the real per-window TASKPANE-LIFECYCLE-REAL-001 acceptance result.
 
 [CmdletBinding()]
 param(
@@ -19,7 +21,16 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-$impl=Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'final-production-core.ps1'
+
+$scriptDir=Split-Path -Parent $MyInvocation.MyCommand.Path
+$guard=Join-Path $scriptDir 'final-production-taskpane-guard.ps1'
+$impl=Join-Path $scriptDir 'final-production-core.ps1'
+
+if(-not(Test-Path -LiteralPath $guard -PathType Leaf)){throw "Final task-pane evidence guard missing: $guard"}
 if(-not(Test-Path -LiteralPath $impl -PathType Leaf)){throw "Final production implementation missing: $impl"}
+
+& $guard -OfficeE2EReport $OfficeE2EReport
+if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+
 & $impl @PSBoundParameters
 exit $LASTEXITCODE

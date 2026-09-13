@@ -45,6 +45,14 @@ jobs:
         shell: pwsh
         run: ./build/final-evidence-contract-gates.ps1
 
+      - name: Enforce final task-pane production evidence contract
+        shell: pwsh
+        run: ./build/final-taskpane-contract-gates.ps1
+
+      - name: Execute final task-pane guard behavior acceptance
+        shell: powershell
+        run: ./tools/final-taskpane-guard-acceptance.ps1
+
       - name: Enforce consumer protection release contract
         shell: pwsh
         run: ./build/consumer-security-contract-gates.ps1
