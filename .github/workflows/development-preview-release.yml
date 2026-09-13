@@ -76,6 +76,9 @@ jobs:
           source_sha='${{ steps.meta.outputs.source_sha }}'
           deadline=$(( $(date +%s) + 1500 ))
           build_run=''
+          contract_run=''
+          runtime_run=''
+          provenance_run=''
 
           while (( $(date +%s) < deadline )); do
             runs="$(gh api -H 'Accept: application/vnd.github+json' \
@@ -84,28 +87,38 @@ jobs:
             build_ok="$(jq -r '[.workflow_runs[] | select(.name=="build" and .status=="completed" and .conclusion=="success")] | length' <<<"$runs")"
             contract_ok="$(jq -r '[.workflow_runs[] | select(.name=="architecture-contract" and .status=="completed" and .conclusion=="success")] | length' <<<"$runs")"
             runtime_ok="$(jq -r '[.workflow_runs[] | select(.name=="request-budget-runtime" and .status=="completed" and .conclusion=="success")] | length' <<<"$runs")"
+            provenance_ok="$(jq -r '[.workflow_runs[] | select(.name=="release-provenance-contract" and .status=="completed" and .conclusion=="success")] | length' <<<"$runs")"
 
-            failed="$(jq -r '[.workflow_runs[] | select((.name=="build" or .name=="architecture-contract" or .name=="request-budget-runtime") and .status=="completed" and .conclusion!="success")] | length' <<<"$runs")"
+            failed="$(jq -r '[.workflow_runs[] | select((.name=="build" or .name=="architecture-contract" or .name=="request-budget-runtime" or .name=="release-provenance-contract") and .status=="completed" and .conclusion!="success")] | length' <<<"$runs")"
             if [[ "$failed" != "0" ]]; then
               echo "A required exact-head CI workflow failed. Refusing preview release." >&2
-              jq -r '.workflow_runs[] | select(.name=="build" or .name=="architecture-contract" or .name=="request-budget-runtime") | "\(.name): \(.status)/\(.conclusion) run=\(.id)"' <<<"$runs"
+              jq -r '.workflow_runs[] | select(.name=="build" or .name=="architecture-contract" or .name=="request-budget-runtime" or .name=="release-provenance-contract") | "\(.name): \(.status)/\(.conclusion) run=\(.id)"' <<<"$runs"
               exit 1
             fi
 
-            if [[ "$build_ok" != "0" && "$contract_ok" != "0" && "$runtime_ok" != "0" ]]; then
+            if [[ "$build_ok" != "0" && "$contract_ok" != "0" && "$runtime_ok" != "0" && "$provenance_ok" != "0" ]]; then
               build_run="$(jq -r '[.workflow_runs[] | select(.name=="build" and .status=="completed" and .conclusion=="success")] | sort_by(.created_at) | last | .id' <<<"$runs")"
+              contract_run="$(jq -r '[.workflow_runs[] | select(.name=="architecture-contract" and .status=="completed" and .conclusion=="success")] | sort_by(.created_at) | last | .id' <<<"$runs")"
+              runtime_run="$(jq -r '[.workflow_runs[] | select(.name=="request-budget-runtime" and .status=="completed" and .conclusion=="success")] | sort_by(.created_at) | last | .id' <<<"$runs")"
+              provenance_run="$(jq -r '[.workflow_runs[] | select(.name=="release-provenance-contract" and .status=="completed" and .conclusion=="success")] | sort_by(.created_at) | last | .id' <<<"$runs")"
               break
             fi
 
-            echo "Waiting for build + architecture-contract + request-budget-runtime on $source_sha ..."
+            echo "Waiting for build + architecture-contract + request-budget-runtime + release-provenance-contract on $source_sha ..."
             sleep 20
           done
 
-          if [[ -z "$build_run" || "$build_run" == "null" ]]; then
-            echo "Timed out waiting for all exact-head CI gates." >&2
-            exit 1
-          fi
+          for value in "$build_run" "$contract_run" "$runtime_run" "$provenance_run"; do
+            if [[ -z "$value" || "$value" == "null" ]]; then
+              echo "Timed out waiting for all exact-head CI gates." >&2
+              exit 1
+            fi
+          done
+
           echo "build_run=$build_run" >> "$GITHUB_OUTPUT"
+          echo "contract_run=$contract_run" >> "$GITHUB_OUTPUT"
+          echo "runtime_run=$runtime_run" >> "$GITHUB_OUTPUT"
+          echo "provenance_run=$provenance_run" >> "$GITHUB_OUTPUT"
 
       - name: Download exact build artifact
         shell: bash
@@ -124,6 +137,47 @@ jobs:
           gh api -H 'Accept: application/vnd.github+json' \
             "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > release-input/artifact.zip
           unzip -q release-input/artifact.zip -d release-input/unpacked
+
+      - name: Download and verify exact runtime-hardening evidence
+        id: runtime_evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha='${{ steps.meta.outputs.source_sha }}'
+          runtime_run='${{ steps.ci.outputs.runtime_run }}'
+          artifacts="$(gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/$GITHUB_REPOSITORY/actions/runs/$runtime_run/artifacts?per_page=100")"
+          runtime_artifact_id="$(jq -r '.artifacts[] | select(.name=="omnix-runtime-hardening-evidence" and .expired==false) | .id' <<<"$artifacts" | head -n1)"
+          if [[ -z "$runtime_artifact_id" || "$runtime_artifact_id" == "null" ]]; then
+            echo "omnix-runtime-hardening-evidence artifact is missing or expired." >&2
+            exit 1
+          fi
+
+          mkdir -p release-input/runtime-unpacked
+          gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/$GITHUB_REPOSITORY/actions/artifacts/$runtime_artifact_id/zip" > release-input/runtime-artifact.zip
+          unzip -q release-input/runtime-artifact.zip -d release-input/runtime-unpacked
+
+          bash ./build/package-runtime-release-evidence.sh \
+            release-input/runtime-unpacked \
+            release-input \
+            "$source_sha" \
+            "$runtime_run" | tee release-input/runtime-evidence-packager.log
+
+          runtime_zip_sha="$(awk '{print $1}' release-input/OMNIX-runtime-hardening-evidence.sha256)"
+          [[ "$runtime_zip_sha" =~ ^[0-9a-f]{64}$ ]] || { echo 'Invalid runtime evidence ZIP checksum.' >&2; exit 1; }
+          jq -e \
+            --arg source "$source_sha" \
+            --argjson runtimeRun "$runtime_run" \
+            '.SourceCommit == $source and
+             .RuntimeWorkflow.RunId == $runtimeRun and
+             .OverallPass == true and
+             ([.Reports[].TestId] | index("TOOL-REQUEST-ISOLATION-RUNTIME-001")) != null' \
+            release-input/runtime-evidence-index.json >/dev/null
+
+          echo "runtime_artifact_id=$runtime_artifact_id" >> "$GITHUB_OUTPUT"
+          echo "runtime_zip_sha256=$runtime_zip_sha" >> "$GITHUB_OUTPUT"
+          echo "runtime_zip_size=$(stat -c%s release-input/OMNIX-runtime-hardening-evidence.zip)" >> "$GITHUB_OUTPUT"
 
       - name: Verify development-only artifact contract
         id: artifact
@@ -190,14 +244,54 @@ jobs:
           echo "source_sha256=$source_hash" >> "$GITHUB_OUTPUT"
           echo "source_size=$(stat -c%s release-input/OMNIX-complete-source.zip)" >> "$GITHUB_OUTPUT"
 
+      - name: Write exact-head CI provenance
+        id: provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha='${{ steps.meta.outputs.source_sha }}'
+          build_run='${{ steps.ci.outputs.build_run }}'
+          contract_run='${{ steps.ci.outputs.contract_run }}'
+          runtime_run='${{ steps.ci.outputs.runtime_run }}'
+          provenance_run='${{ steps.ci.outputs.provenance_run }}'
+
+          jq -n \
+            --arg source "$source_sha" \
+            --argjson buildRun "$build_run" \
+            --argjson contractRun "$contract_run" \
+            --argjson runtimeRun "$runtime_run" \
+            --argjson provenanceRun "$provenance_run" \
+            --argjson releaseRun "$GITHUB_RUN_ID" \
+            '{
+              EvidenceType:"OMNIX_DEVELOPMENT_PREVIEW_CI_PROVENANCE",
+              EvidenceSchema:1,
+              SourceCommit:$source,
+              RequiredExactHeadWorkflows:{
+                Build:{Name:"build",RunId:$buildRun,Conclusion:"success"},
+                ArchitectureContract:{Name:"architecture-contract",RunId:$contractRun,Conclusion:"success"},
+                RuntimeHardening:{Name:"request-budget-runtime",RunId:$runtimeRun,Conclusion:"success"},
+                ReleaseProvenance:{Name:"release-provenance-contract",RunId:$provenanceRun,Conclusion:"success"}
+              },
+              ReleaseWorkflow:{Name:"development-preview-release",RunId:$releaseRun},
+              AllRequiredSucceeded:true
+            }' > release-input/ci-provenance.json
+
+          jq -e --arg source "$source_sha" \
+            '.SourceCommit == $source and .AllRequiredSucceeded == true and (.RequiredExactHeadWorkflows | length) == 4' \
+            release-input/ci-provenance.json >/dev/null
+          provenance_sha="$(sha256sum release-input/ci-provenance.json | awk '{print $1}')"
+          printf '%s  %s\n' "$provenance_sha" 'ci-provenance.json' > release-input/ci-provenance.sha256
+          echo "provenance_sha256=$provenance_sha" >> "$GITHUB_OUTPUT"
+
       - name: Write explicit preview release notes
         shell: bash
         run: |
           cat > release-input/RELEASE-NOTES.md <<'EOF'
-          # OMNIX v3 Development Preview — privacy, installer and source integrity
+          # OMNIX v3 Development Preview — privacy, installer, runtime evidence and source integrity
 
-          This prerelease is tied to one exact source commit. The attached installer, manifest and
-          complete-source ZIP are generated from that same commit and have SHA-256 checksum files.
+          This prerelease is tied to one exact source commit. The attached installer, manifest,
+          complete-source ZIP, runtime-hardening evidence bundle and CI provenance record are all
+          derived from or explicitly bound to that same source commit and include SHA-256 evidence.
 
           Fixes and hardening in this generation:
           - chat history is DPAPI-protected for the current Windows user before persistence
@@ -215,7 +309,9 @@ jobs:
 
           Proven by CI for this exact source commit:
           - architecture / anti-drift contract PASS
-          - request-budget, provider-error-redaction and image-normalization runtime acceptance PASS
+          - request-budget, Office tool request-isolation, provider-error-redaction and image-normalization runtime acceptance PASS
+          - sanitized runtime-hardening evidence bundle attached, including exact runtime workflow Run ID and per-report SHA-256 values
+          - release-provenance packager/contract acceptance PASS
           - C#/WPF/VSTO solution build PASS
           - Excel, Word and PowerPoint VSTO payload packaged
           - deterministic Privacy Gate runtime acceptance PASS
@@ -224,6 +320,7 @@ jobs:
           - automatic Office registration maintenance audit PASS in read-only mode
           - installer compiled and checksum-bound to the attached manifest
           - complete source ZIP generated directly from the exact tested commit
+          - CI provenance record binds all required workflow Run IDs to the exact source commit
 
           Not yet proven by GitHub-hosted CI:
           - real interactive Excel + Word + PowerPoint automatic-load / Ribbon / task-pane E2E
@@ -247,6 +344,11 @@ jobs:
             release-input/OMNIX-AI-OFFICE-Setup-DEV.sha256 \
             release-input/OMNIX-complete-source.zip \
             release-input/OMNIX-complete-source.sha256 \
+            release-input/OMNIX-runtime-hardening-evidence.zip \
+            release-input/OMNIX-runtime-hardening-evidence.sha256 \
+            release-input/runtime-evidence-index.json \
+            release-input/ci-provenance.json \
+            release-input/ci-provenance.sha256 \
             release-input/manifest.json \
             --repo "$GITHUB_REPOSITORY" \
             --target "$source_sha" \
@@ -263,3 +365,7 @@ jobs:
           echo "Installer size: ${{ steps.artifact.outputs.installer_size }} bytes"
           echo "Source ZIP SHA256: ${{ steps.sourcepkg.outputs.source_sha256 }}"
           echo "Source ZIP size: ${{ steps.sourcepkg.outputs.source_size }} bytes"
+          echo "Runtime workflow run: ${{ steps.ci.outputs.runtime_run }}"
+          echo "Runtime evidence ZIP SHA256: ${{ steps.runtime_evidence.outputs.runtime_zip_sha256 }}"
+          echo "Runtime evidence ZIP size: ${{ steps.runtime_evidence.outputs.runtime_zip_size }} bytes"
+          echo "CI provenance SHA256: ${{ steps.provenance.outputs.provenance_sha256 }}"

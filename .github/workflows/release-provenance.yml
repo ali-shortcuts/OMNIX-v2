@@ -1,0 +1,37 @@
+name: release-provenance-contract
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provenance:
+    name: Runtime evidence release provenance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Report tested source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid source SHA: $source_sha" >&2; exit 1; }
+          echo "OMNIX release-provenance source commit: $source_sha"
+
+      - name: Enforce preview release provenance contract
+        shell: bash
+        run: bash ./build/release-provenance-contract-gates.sh
+
+      - name: Execute runtime evidence packager acceptance
+        shell: bash
+        run: bash ./build/runtime-release-evidence-acceptance.sh
