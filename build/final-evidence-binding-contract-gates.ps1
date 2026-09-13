@@ -23,9 +23,10 @@ foreach($needle in @('SourceCommit','CoreSha256','BindingSchema','TimestampUtc',
 }
 
 $runner=Get-Content -LiteralPath $files.Runner -Raw
-foreach($needle in @('FullOfficeE2E','LocalOffline','Provider','RestartBefore','RestartAfter','ExpectedInstallerSha256','Save-BoundReport','restart-evidence-binding-state.json','CoreSha256')){
+foreach($needle in @('FullOfficeE2E','LocalOffline','Provider','RestartBefore','RestartAfter','ExpectedInstallerSha256','Save-BoundReport','restart-evidence-binding-state.json','CoreSha256','& $powershell @args')){
   if($runner.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: canonical runner missing '$needle'."}
 }
+if($runner.IndexOf('Start-Process',[StringComparison]::OrdinalIgnoreCase) -ge 0){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: bound real acceptance runner must preserve child argument boundaries and must not use Start-Process -ArgumentList.'}
 
 $guard=Get-Content -LiteralPath $files.Guard -Raw
 foreach($needle in @('FINAL-EVIDENCE-BINDING-REJECTED','Test-OmnixEvidenceBinding','Office E2E','Office persistence','Office UI','Windows restart persistence','Offline local AI','Live provider matrix','Lifecycle','Consumer security','168','72')){
