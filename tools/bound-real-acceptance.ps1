@@ -84,9 +84,16 @@ function Save-BoundReport([string]$path,$binding,[DateTime]$startedUtc,[string]$
 function Invoke-Child([string]$scriptName,[string[]]$arguments,[string]$label) {
     $path = Join-Path $scriptDir $scriptName
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "$label script missing: $path" }
+
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $powershell -PathType Leaf)) { $powershell = 'powershell.exe' }
     $args = @('-NoProfile','-File',$path) + $arguments
-    $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $args -Wait -PassThru -WindowStyle Hidden
-    if ($p.ExitCode -ne 0) { throw "$label failed with exit code $($p.ExitCode)." }
+
+    # The call operator preserves argument boundaries, including paths with spaces. Start-Process
+    # -ArgumentList joins arguments into one command-line string and can corrupt unquoted paths.
+    & $powershell @args
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) { throw "$label failed with exit code $exitCode." }
 }
 
 function Remove-ReportIfPresent([string]$path) {
