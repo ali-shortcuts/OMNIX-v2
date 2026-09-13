@@ -89,6 +89,13 @@ jobs:
             -CorePath .\src\OMNIX.Core\bin\Release\OMNIX.Core.dll `
             -OutputPath .\build\artifact\privacy-acceptance.json
 
+      - name: Runtime encrypted chat-history acceptance
+        shell: powershell
+        run: |
+          .\tools\history-storage-acceptance.ps1 `
+            -CorePath .\src\OMNIX.Core\bin\Release\OMNIX.Core.dll `
+            -OutputPath .\build\artifact\history-storage-acceptance.json
+
       - name: Runtime provider diagnostics acceptance
         shell: powershell
         run: |
@@ -245,6 +252,11 @@ jobs:
           $privacy = Get-Content $privacyPath -Raw | ConvertFrom-Json
           if ($privacy.TestId -ne 'PRIVACY-GATE-RUNTIME-001' -or -not [bool]$privacy.OverallPass) { throw "Privacy runtime acceptance did not PASS." }
 
+          $historyPath = 'build\artifact\history-storage-acceptance.json'
+          if (-not (Test-Path $historyPath)) { throw "Encrypted history runtime acceptance evidence is missing." }
+          $history = Get-Content $historyPath -Raw | ConvertFrom-Json
+          if ($history.TestId -ne 'HISTORY-STORAGE-RUNTIME-001' -or -not [bool]$history.OverallPass) { throw "Encrypted history runtime acceptance did not PASS." }
+
           $maintenancePath = 'build\artifact\office-registration-maintenance-audit.json'
           if (-not (Test-Path $maintenancePath)) { throw "Office maintenance audit evidence is missing." }
           $maintenance = Get-Content $maintenancePath -Raw | ConvertFrom-Json
@@ -270,6 +282,10 @@ jobs:
             RequiredOfficePayloadPresent = $true
             PrivacyGatewayRuntimeTested = $true
             PrivacyGatewayRuntimePass = [bool]$privacy.OverallPass
+            EncryptedHistoryRuntimeTested = $true
+            EncryptedHistoryRuntimePass = [bool]$history.OverallPass
+            LegacyHistoryMigrationPass = [bool]$history.LegacyMigrationPass
+            HistoryPlaintextAbsentOnDisk = [bool]$history.PlaintextAbsentOnDisk
             OfficeMaintenanceAuditTested = $true
             OfficeMaintenanceAuditPass = [bool]$maintenance.OverallPass
             OfficeMaintenanceAuditOnly = [bool]$maintenance.AuditOnly
@@ -278,7 +294,7 @@ jobs:
             DefenderRealTimeProtectionEnabled = $rtp
             RealOfficeRuntimeTested = $false
             ProductionReleaseApproved = $false
-            Note = 'CI development artifact only. Deterministic privacy and maintenance audit logic are tested, but real Office/UI/provider/consumer-machine security verification and trusted production signing remain mandatory.'
+            Note = 'CI development artifact only. Deterministic privacy, encrypted-history and maintenance audit logic are tested, but real Office/UI/provider/consumer-machine security verification and trusted production signing remain mandatory.'
           }
           $manifest | ConvertTo-Json -Depth 6 | Set-Content build\artifact\manifest.json -Encoding UTF8
           $hash | Set-Content build\artifact\installer.sha256 -Encoding ASCII
@@ -294,6 +310,7 @@ jobs:
             build/artifact/installer.sha256
             build/artifact/payload-inventory.json
             build/artifact/privacy-acceptance.json
+            build/artifact/history-storage-acceptance.json
             build/artifact/office-registration-maintenance-audit.json
             build/artifact/inno-compile.log
             build/defender-report.txt
