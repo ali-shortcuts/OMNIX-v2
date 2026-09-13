@@ -70,11 +70,24 @@ Require-NotContains 'tools/office-functional-acceptance.ps1' 'SaveAs' 'Functiona
 Require-NotContains 'tools/office-functional-acceptance.ps1' 'Restart-Computer' 'Functional acceptance must never restart Windows.'
 Require-NotContains 'tools/office-functional-acceptance.ps1' 'Disable-NetAdapter' 'Functional acceptance must never change network state.'
 
+# Real task-pane close/reopen lifecycle evidence must prove per-window state release twice per host.
+Require-PowerShellParses 'tools/taskpane-lifecycle-real-acceptance.ps1'
+Require-Contains 'tools/taskpane-lifecycle-real-acceptance.ps1' 'TASKPANE-LIFECYCLE-REAL-001' 'Task-pane lifecycle evidence needs a stable TestId.'
+Require-Contains 'tools/taskpane-lifecycle-real-acceptance.ps1' 'TwoRoundsPerHostRequired = $true' 'Lifecycle evidence must repeat close/reopen per Office host.'
+Require-Contains 'tools/taskpane-lifecycle-real-acceptance.ps1' 'ReleaseLogCountAfter -gt $roundResult.ReleaseLogCountBefore' 'A stale historical release line must not create a false PASS.'
+Require-Contains 'tools/taskpane-lifecycle-real-acceptance.ps1' 'Open-Workspace $app $officeHost.Name' 'Each lifecycle round must open the real OMNIX workspace before closing the window.'
+Require-Contains 'tools/taskpane-lifecycle-real-acceptance.ps1' 'ProcessExitedPass' 'Lifecycle evidence must still prove clean host shutdown.'
+Require-NotContains 'tools/taskpane-lifecycle-real-acceptance.ps1' 'Restart-Computer' 'Lifecycle acceptance must never restart Windows.'
+Require-NotContains 'tools/taskpane-lifecycle-real-acceptance.ps1' 'Disable-NetAdapter' 'Lifecycle acceptance must never alter network state.'
+Require-NotContains 'tools/taskpane-lifecycle-real-acceptance.ps1' 'SaveAs' 'Lifecycle acceptance must use temporary unsaved Office content only.'
+
 # One-command real Office E2E orchestrator must bind install + persistence + UI + functional evidence.
 Require-PowerShellParses 'tools/full-office-e2e.ps1'
 Require-Contains 'tools/full-office-e2e.ps1' 'OFFICE-E2E-REAL-001' 'The full Office E2E run needs a stable TestId.'
 Require-Contains 'tools/full-office-e2e.ps1' 'real-office-acceptance.ps1' 'E2E must include strict automatic-load/persistence acceptance.'
 Require-Contains 'tools/full-office-e2e.ps1' 'real-office-ui-acceptance.ps1' 'E2E must include actual Ribbon/workspace UI acceptance.'
+Require-Contains 'tools/full-office-e2e.ps1' 'taskpane-lifecycle-real-acceptance.ps1' 'E2E must include repeated task-pane close/reopen lifecycle evidence.'
+Require-Contains 'tools/full-office-e2e.ps1' 'TaskPaneLifecycle' 'The consolidated E2E report must preserve task-pane lifecycle evidence.'
 Require-Contains 'tools/full-office-e2e.ps1' 'office-functional-acceptance.ps1' 'E2E must include compiled Office context/read/write/Vision acceptance.'
 Require-Contains 'tools/full-office-e2e.ps1' 'Get-FileHash -Algorithm SHA256' 'Installed E2E evidence must bind to the tested installer hash.'
 Require-NotContains 'tools/full-office-e2e.ps1' 'Restart-Computer' 'The E2E orchestrator must never restart the user machine.'
