@@ -91,9 +91,9 @@ namespace OMNIX.Excel
 
         private void OnWorkbookBeforeClose(XL.Workbook wb, ref bool cancel)
         {
-            // Excel may still cancel the close after this event handler returns, so we do not
-            // remove window-bound panes here. VSTO tears the pane down with the window; our
-            // own remaining controller references are deterministically released at add-in shutdown.
+            // Excel can still cancel this event, so cleanup must not happen here. VSTO disposes
+            // the window-bound host control only after the window is actually torn down; the
+            // host-control Disposed handler then releases the matching controller/pane state.
         }
 
         private CustomTaskPane EnsurePane(IntPtr key)
@@ -116,6 +116,18 @@ namespace OMNIX.Excel
             pane.VisibleChanged += OnPaneVisibleChanged;
             _panes[key] = pane;
 
+            // A VSTO CustomTaskPane is window-bound. When Office destroys the underlying
+            // window it disposes our WinForms host control; use that post-close signal to
+            // release the per-window controller immediately instead of retaining stale
+            // chat/provider/cancellation/COM state until the entire add-in shuts down.
+            CustomTaskPane capturedPane = pane;
+            hostControl.SizeChanged += delegate { ClampPaneWidth(capturedPane); };
+            hostControl.Disposed += delegate
+            {
+                if (!_disposed)
+                    ReleaseWindow(key, capturedPane, "task-pane host disposed");
+            };
+
             Logger.Startup("Excel task pane created for window " + key + " (width " + DefaultWidth + ", docked right)");
             return pane;
         }
@@ -126,13 +138,11 @@ namespace OMNIX.Excel
             catch { return null; }
         }
 
-        private void OnPaneWidthChanged(object sender, EventArgs e)
+        private void ClampPaneWidth(CustomTaskPane pane)
         {
-            if (_clamping) return;
+            if (_clamping || pane == null) return;
             try
             {
-                var pane = sender as CustomTaskPane;
-                if (pane == null) return;
                 if (pane.Width > MaxWidth)
                 {
                     _clamping = true;
@@ -159,6 +169,37 @@ namespace OMNIX.Excel
                     }
                 }
             }
+        }
+
+        private void ReleaseWindow(IntPtr key, CustomTaskPane expectedPane, string reason)
+        {
+            if (key == IntPtr.Zero) return;
+
+            CustomTaskPane pane;
+            if (_panes.TryGetValue(key, out pane))
+            {
+                // HWND values can be reused by Windows. A late dispose from an old host must
+                // never tear down a newly-created OMNIX pane that happens to have the same key.
+                if (expectedPane != null && !ReferenceEquals(pane, expectedPane))
+                    return;
+
+                try { pane.VisibleChanged -= OnPaneVisibleChanged; } catch { }
+                _panes.Remove(key);
+            }
+            else if (expectedPane != null)
+            {
+                return;
+            }
+
+            WorkspaceController controller;
+            if (_controllers.TryGetValue(key, out controller))
+            {
+                _controllers.Remove(key);
+                try { if (controller != null) controller.OnPaneClosing(); } catch { }
+                try { if (controller != null) controller.Dispose(); } catch { }
+            }
+
+            Logger.Startup("Excel task pane released for window " + key + " (" + reason + ")");
         }
 
         public void ToggleActive()
