@@ -223,7 +223,7 @@ namespace Omnix.Desktop
             if(include.IsChecked==true && selection==null)throw new InvalidOperationException("Capture a selection before including it.");
             request.Context=include.IsChecked==true?selection.Text:null;
             request.ImageBase64=imageData;
-            var outgoing=messages.Skip(Math.Max(0,messages.Count-10)).ToList();
+            var outgoing=messages.Skip(Math.Max(0,messages.Count-10)).Select(m=>new Message {Role=m.Role,Text=m.Text.Length<=12000?m.Text:m.Text.Substring(0,11950)+"\n[Earlier message shortened]"}).ToList();
             while(outgoing.Sum(m=>m.Text.Length)+text.Length>35000 && outgoing.Count>0)outgoing.RemoveAt(0);
             outgoing.Add(new Message {Role="user",Text=text});request.Messages=outgoing;
             status.Text="Waiting for "+editedProvider.Name+"…";

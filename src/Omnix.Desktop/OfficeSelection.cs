@@ -65,7 +65,7 @@ namespace Omnix.Desktop
                     result.Label="PowerPoint selected text";
                     result.CanApply=result.Text.Length>0 && result.Text.Length<=16000;
                 }
-                if(result.Text.Length>16000) { result.Text=result.Text.Substring(0,16000)+"\n[Selection truncated]"; result.CanApply=false; }
+                if(result.Text.Length>16000) { result.Text=result.Text.Substring(0,15960)+"\n[Selection truncated]"; result.CanApply=false; }
                 return result;
             } catch { result.Dispose(); throw; }
         }
