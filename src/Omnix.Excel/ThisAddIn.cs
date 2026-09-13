@@ -29,6 +29,7 @@ namespace Omnix.Excel
             public CustomTaskPane Pane;
             public Workspace View;
             public UserControl Control;
+            public object Document;
         }
         private Automation automation;
         public ThisAddIn(Microsoft.Office.Tools.Excel.ApplicationFactory factory,IServiceProvider services):base(factory,services,"AddIn","ThisAddIn")
@@ -72,6 +73,7 @@ namespace Omnix.Excel
             string root=Path.GetFullPath(Path.Combine(Path.GetDirectoryName(typeof(ThisAddIn).Assembly.Location),"..",".."));
             var entry=new PaneEntry();
             try {
+                dynamic window=current;entry.Document=window.ActiveSheet.Parent;
                 entry.View=new Workspace(application,"Excel",Path.Combine(root,"gateway","Omnix.Gateway.exe"));
                 entry.Control=new UserControl {Dock=DockStyle.Fill};
                 entry.Control.Controls.Add(new ElementHost {Dock=DockStyle.Fill,Child=entry.View});
@@ -86,6 +88,7 @@ namespace Omnix.Excel
             try {entry.View?.Dispose();}catch(Exception e){LocalData.Log("Excel_VIEW_DISPOSE_FAILED",e);}
             // VSTO owns collection cleanup during shutdown; Remove is only valid while running.
             if(!stopping && entry.Pane!=null)try {panes.Remove(entry.Pane);}catch(Exception e){LocalData.Log("Excel_PANE_REMOVE_FAILED",e);}
+            entry.Document=null;
             try {entry.Control?.Dispose();}catch(Exception e){LocalData.Log("Excel_CONTROL_DISPOSE_FAILED",e);}
         }
         private void SynchronizeWindows(object sender,EventArgs args)

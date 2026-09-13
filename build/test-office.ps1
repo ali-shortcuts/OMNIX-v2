@@ -22,6 +22,11 @@ function Wait-Panes($app,[int]$expected) {
 }
 foreach($hostName in @('Word','Excel','PowerPoint')) {
     for($launch=1;$launch -le 2;$launch++) {
+        $deadline=[DateTime]::UtcNow.AddSeconds(20)
+        while(Get-Process WINWORD,EXCEL,POWERPNT -ErrorAction SilentlyContinue) {
+            if([DateTime]::UtcNow -ge $deadline){throw 'An Office process is still running; no new test instance was started.'}
+            Start-Sleep -Milliseconds 500
+        }
         $app=$null;$first=$null;$second=$null
         try {
             $app=New-Object -ComObject "$hostName.Application"

@@ -42,3 +42,6 @@ Each preview includes a SHA-256 file and a manifest bound to the exact source co
 **A green Windows build is not a real Office acceptance result.** Preview manifests keep real Office runtime, reboot persistence and production signing marked unverified. See [acceptance](docs/ACCEPTANCE.md) for the remaining gates. The master requirements include a broader agent platform; multi-step autonomous plans, bulk document transactions, local model installation and full capability parity are not implemented by this preview.
 
 Support: **@Ali_silent0**.
+
+
+For real Office startup checks after installation, close Office and run the installed `diagnostics/test-office.ps1` from Windows PowerShell. It creates only blank test documents, checks automatic loading and two-window cleanup across two launches, and saves `office-runtime.json` under `%LOCALAPPDATA%\OMNIX\v4\office-acceptance`. It does not force-enable an add-in or change Office security settings. A successful result still requires a separate reboot and visual check.

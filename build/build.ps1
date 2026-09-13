@@ -3,7 +3,12 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $root=Split-Path -Parent $PSScriptRoot
 Set-Location $root
+$parseTokens=$null;$parseErrors=$null
+[void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'test-office.ps1'),[ref]$parseTokens,[ref]$parseErrors)
+if($parseErrors.Count){throw "Office acceptance script syntax error: $parseErrors"}
 New-Item -ItemType Directory -Force artifacts,artifacts\evidence,artifacts\payload,artifacts\prerequisites | Out-Null
+New-Item -ItemType Directory -Force artifacts\payload\diagnostics | Out-Null
+Copy-Item build\test-office.ps1 artifacts\payload\diagnostics\test-office.ps1
 $vswhere="${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vs=& $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
 if(-not $vs){throw 'Visual Studio with MSBuild is required.'}
