@@ -16,7 +16,8 @@ New-Item -ItemType Directory -Force -Path $temp | Out-Null
 
 try {
     $installer = Join-Path $temp 'candidate.exe'
-    [IO.File]::WriteAllBytes($installer,(New-Object byte[] 4096))
+    $bytes = New-Object byte[] 4096
+    [IO.File]::WriteAllBytes([string]$installer,[byte[]]$bytes)
     $installerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
     $source = ('a' * 40)
     $core = ('b' * 64)
@@ -70,12 +71,13 @@ try {
     }
 
     function Invoke-Guard {
-        $p = Start-Process -FilePath 'powershell.exe' -ArgumentList (Guard-Args) -Wait -PassThru -WindowStyle Hidden
+        $arguments = @(Guard-Args)
+        $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
         return [int]$p.ExitCode
     }
 
-    $results = New-Object System.Collections.Generic.List[object]
-    $failures = New-Object System.Collections.Generic.List[string]
+    $script:CaseResults = @()
+    $script:CaseFailures = @()
 
     function Run-Case([string]$name,[scriptblock]$mutate,[bool]$shouldPass) {
         Write-ValidReports
@@ -83,8 +85,8 @@ try {
         $exit = Invoke-Guard
         $actualPass = ($exit -eq 0)
         $pass = ($actualPass -eq $shouldPass)
-        $results.Add([pscustomobject]@{Name=$name;ExpectedPass=$shouldPass;ExitCode=$exit;Pass=$pass})
-        if(-not $pass){$failures.Add("$name expected pass=$shouldPass but exit=$exit")}
+        $script:CaseResults += [pscustomobject]@{Name=$name;ExpectedPass=$shouldPass;ExitCode=$exit;Pass=$pass}
+        if(-not $pass){$script:CaseFailures += "$name expected pass=$shouldPass but exit=$exit"}
     }
 
     Run-Case 'ValidExactBinding' {} $true
@@ -143,19 +145,19 @@ Set-Content -LiteralPath '$sentinel' -Value 'CONTINUED' -NoNewline
     Set-Content -LiteralPath $caller -Value $callerText -Encoding UTF8
     $cp=Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-File',$caller) -Wait -PassThru -WindowStyle Hidden
     $continued=($cp.ExitCode -eq 0 -and (Test-Path -LiteralPath $sentinel -PathType Leaf) -and (Get-Content -LiteralPath $sentinel -Raw) -eq 'CONTINUED')
-    $results.Add([pscustomobject]@{Name='CallerContinuation';ExpectedPass=$true;ExitCode=$cp.ExitCode;Pass=$continued})
-    if(-not $continued){$failures.Add('Valid guard did not return control to its caller.')}
+    $script:CaseResults += [pscustomobject]@{Name='CallerContinuation';ExpectedPass=$true;ExitCode=$cp.ExitCode;Pass=$continued}
+    if(-not $continued){$script:CaseFailures += 'Valid guard did not return control to its caller.'}
 
     $out=[ordered]@{
         TestId='FINAL-EVIDENCE-BINDING-GUARD-RUNTIME-001'
         EvidenceSchema=1
         GeneratedUtc=[DateTime]::UtcNow.ToString('o')
-        CaseCount=$results.Count
+        CaseCount=$script:CaseResults.Count
         CallerContinuationProven=$continued
-        FailureCount=$failures.Count
-        Failures=@($failures)
-        Results=@($results)
-        OverallPass=($failures.Count -eq 0)
+        FailureCount=$script:CaseFailures.Count
+        Failures=$script:CaseFailures
+        Results=$script:CaseResults
+        OverallPass=($script:CaseFailures.Count -eq 0)
     }
     $outDir=Split-Path -Parent $OutputPath
     if($outDir){New-Item -ItemType Directory -Force -Path $outDir|Out-Null}
