@@ -172,9 +172,10 @@ public static class HistoryStorageAcceptanceHarness
             if (!result.ImageBytesNotPersisted)
                 failures.Add("Raw image bytes were persisted or image metadata was not preserved correctly.");
 
-            // Legacy migration: seed the previous plaintext JSON format, then load through the
-            // current store. Migration must preserve data, create encrypted storage and delete the
-            // plaintext file only after the encrypted replacement exists.
+            // Legacy migration: reproduce the historical ChatHistoryStore format exactly:
+            // File.WriteAllBytes(path, Encoding.UTF8.GetBytes(json)), i.e. UTF-8 without a BOM.
+            // Migration must preserve data, create encrypted storage and delete the plaintext file
+            // only after the encrypted replacement exists.
             var legacyTurns = new List<ChatTurn>
             {
                 new ChatTurn
@@ -185,7 +186,9 @@ public static class HistoryStorageAcceptanceHarness
                 }
             };
             Directory.CreateDirectory(Path.GetDirectoryName(JsonPath(legacyKey)));
-            File.WriteAllText(JsonPath(legacyKey), JsonConvert.SerializeObject(legacyTurns), Encoding.UTF8);
+            File.WriteAllBytes(
+                JsonPath(legacyKey),
+                new UTF8Encoding(false).GetBytes(JsonConvert.SerializeObject(legacyTurns)));
             var migrated = store.Load(legacyKey);
             byte[] migratedDisk = File.Exists(DatPath(legacyKey)) ? File.ReadAllBytes(DatPath(legacyKey)) : new byte[0];
             result.LegacyMigrationPass =
