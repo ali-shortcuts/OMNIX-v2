@@ -18,7 +18,7 @@ foreach ($path in @($preflightPath,$validatorPath,$workflowPath)) {
 foreach ($scriptPath in @($preflightPath,$validatorPath)) {
     $tokens = $null
     $errors = $null
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath,[ref]$tokens,[ref]$errors)
+    [void][System.Management.Automation.Language.Parser]::ParseFile($scriptPath,[ref]$tokens,[ref]$errors)
     if (@($errors).Count -gt 0) {
         throw "REAL_MACHINE_PREFLIGHT_CONTRACT: PowerShell parse failure in $scriptPath : $($errors[0].Message)"
     }
@@ -47,6 +47,9 @@ $validator = Get-Content -LiteralPath $validatorPath -Raw
 foreach ($needle in @(
     'BOUND-OFFICE-EVIDENCE-SET-001',
     'Test-OmnixEvidenceBinding',
+    'New-OmnixEvidenceBinding',
+    'InstallDir',
+    'InstalledPayloadValidated',
     'ExpectedInstallerSha256',
     'CoreSha256',
     'PayloadIdentitySha256',
