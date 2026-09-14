@@ -122,20 +122,24 @@ namespace OMNIX.Core.Tools
                 }
                 case ToolNames.SearchDocument:
                 {
-                    var args = ToolArguments.Parse(call.ArgumentsJson);
-                    string query = (args.Get("query", "") ?? "").Trim();
+                    var search = adapter as IDocumentSearchProvider;
+                    if (search == null)
+                        return ToolResult.Fail("search_document is unavailable for the active Office host.");
+
+                    var searchArgs = ToolArguments.Parse(call.ArgumentsJson);
+                    string query = (searchArgs.Get("query", "") ?? "").Trim();
                     if (query.Length == 0)
                         return ToolResult.Fail("search_document requires a non-empty query.");
                     if (query.Length > SearchQueryMaxChars)
                         return ToolResult.Fail("search_document query is too long (maximum 200 characters).");
 
                     int maxResults;
-                    if (!int.TryParse(args.Get("max_results", SearchResultDefaultCount.ToString()), out maxResults))
+                    if (!int.TryParse(searchArgs.Get("max_results", SearchResultDefaultCount.ToString()), out maxResults))
                         maxResults = SearchResultDefaultCount;
                     maxResults = Math.Max(1, Math.Min(SearchResultMaxCount, maxResults));
 
                     EnsureRequestScope(ct);
-                    string text = adapter.SearchDocument(query, maxResults, SearchResultCharCap);
+                    string text = search.SearchDocument(query, maxResults, SearchResultCharCap);
                     return ToolResult.Ok(UntrustedData.Wrap("SEARCH_DOCUMENT RESULT", text));
                 }
                 case ToolNames.CaptureChartAsImage:
