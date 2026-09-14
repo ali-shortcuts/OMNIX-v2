@@ -133,7 +133,44 @@ OMNIX.Word.dll
 OMNIX.PowerPoint.dll
 ```
 
-The workflow rejects evidence that lacks binding schema 2 or newer, has a different source commit, or does not prove `PrimaryAssembliesValidated=true`.
+## Coherent evidence-set validation
+
+Individual bound JSON files are not enough. Before the workflow can complete successfully, it runs:
+
+```powershell
+.\tools\validate-bound-office-evidence.ps1
+```
+
+The validator treats these four reports as **one evidence set**:
+
+```text
+full-office-e2e.json
+real-office-acceptance.json
+real-office-ui-acceptance.json
+taskpane-lifecycle-real-acceptance.json
+```
+
+It fails closed unless all four reports:
+
+- exist and contain valid JSON;
+- have `OverallPass=true`;
+- carry `EvidenceBinding` schema 2 or newer;
+- have `BuildIdentityTestId=OMNIX-BUILD-IDENTITY-001`;
+- have `PrimaryAssembliesValidated=true`;
+- are fresh under the configured evidence-age policy;
+- carry the exact same `SourceCommit`;
+- carry the exact same `CoreSha256`;
+- carry the exact same `PayloadIdentitySha256`.
+
+The Full Office E2E report must additionally prove that its installer SHA-256 equals the exact `expected_installer_sha256` supplied to the workflow and that `HashMatchedExpected=true`.
+
+A mismatch in even one subordinate report rejects the whole evidence set. The validator produces the sanitized aggregate report:
+
+```text
+BOUND-OFFICE-EVIDENCE-SET-001
+```
+
+This closes the gap where individually bound reports could otherwise be collected from inconsistent payload identities and only be rejected later by the final production gate.
 
 ## Uploaded evidence
 
@@ -144,6 +181,7 @@ Expected staged reports include:
 ```text
 real-machine-preflight-before.json
 real-machine-preflight-after.json
+bound-office-evidence-validation.json
 full-office-e2e.json
 real-office-acceptance.json
 real-office-ui-acceptance.json
