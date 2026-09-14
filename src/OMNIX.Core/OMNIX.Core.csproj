@@ -96,6 +96,7 @@
     <Compile Include="AiGateway\PrivacyGate.cs" />
     <Compile Include="AiGateway\ProviderContracts.cs" />
     <Compile Include="AiGateway\ProviderDiagnostics.cs" />
+    <Compile Include="AiGateway\ProviderHealth.cs" />
     <Compile Include="AiGateway\ProviderRegistry.cs" />
     <Compile Include="AiGateway\Resilience.cs" />
     <Compile Include="Context\ContextModels.cs" />
