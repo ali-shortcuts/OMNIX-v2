@@ -46,8 +46,8 @@ namespace OMNIX.Core.AiGateway
 
         /// <summary>
         /// Raised when OMNIX can identify a genuinely usable alternative after a provider failure
-        /// or while the selected provider is in a short circuit-breaker cooldown. This remains a
-        /// suggestion only: OMNIX never silently moves Office data from one cloud provider to another.
+        /// or while the selected provider is in a short circuit-breaker cooldown. This is a suggestion only:
+        /// OMNIX never silently moves Office data from one cloud provider to another.
         /// </summary>
         public event Action<IProviderAdapter> SuggestFailover;
 
