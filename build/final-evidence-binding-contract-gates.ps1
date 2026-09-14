@@ -56,10 +56,10 @@ foreach($needle in @('FINAL-EVIDENCE-BINDING-REJECTED','BOUND-OFFICE-EVIDENCE-SE
 if($guard -match '(?im)^\s*exit\b'){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: composable binding guard must not call exit.'}
 
 $final=Get-Content -LiteralPath $files.FinalGate -Raw
-foreach($needle in @('BoundOfficeEvidenceReport','& $bindingGuard','-BoundOfficeEvidenceReport $BoundOfficeEvidenceReport','& $taskPaneGuard','coreParams.Remove','& $impl @coreParams')){
+foreach($needle in @('BoundOfficeEvidenceReport','& $bindingGuard','-BoundOfficeEvidenceReport $BoundOfficeEvidenceReport','& $taskPaneGuard','PSBoundParameters.Remove','& $impl @PSBoundParameters')){
   if($final.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: canonical final gate missing '$needle'."}
 }
-$bindingIndex=$final.IndexOf('& $bindingGuard',[StringComparison]::Ordinal);$taskPaneIndex=$final.IndexOf('& $taskPaneGuard',[StringComparison]::Ordinal);$coreIndex=$final.IndexOf('& $impl @coreParams',[StringComparison]::Ordinal)
+$bindingIndex=$final.IndexOf('& $bindingGuard',[StringComparison]::Ordinal);$taskPaneIndex=$final.IndexOf('& $taskPaneGuard',[StringComparison]::Ordinal);$coreIndex=$final.IndexOf('& $impl @PSBoundParameters',[StringComparison]::Ordinal)
 if($bindingIndex -lt 0 -or $taskPaneIndex -lt 0 -or $coreIndex -lt 0){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: canonical final gate is missing binding/task-pane/core invocation.'}
 if(-not($bindingIndex -lt $taskPaneIndex -and $taskPaneIndex -lt $coreIndex)){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: final gate order must be binding guard -> task-pane guard -> production core.'}
 
