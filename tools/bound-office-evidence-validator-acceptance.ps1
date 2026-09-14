@@ -13,12 +13,43 @@ if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) {
 }
 
 $sourceCommit = ('a' * 40)
-$coreSha = ('b' * 64)
-$payloadSha = ('c' * 64)
 $installerSha = ('d' * 64)
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('omnix-bound-office-' + [Guid]::NewGuid().ToString('N'))
 $logRoot = Join-Path $tempRoot 'logs'
+$installDir = Join-Path $tempRoot 'installed'
+$coreSha = $null
+$payloadSha = $null
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+
+function Write-InstalledPayload {
+    $files = [ordered]@{
+        'OMNIX.Core.dll' = 'deterministic-core-payload-v1'
+        'OMNIX.Excel.dll' = 'deterministic-excel-payload-v1'
+        'OMNIX.Word.dll' = 'deterministic-word-payload-v1'
+        'OMNIX.PowerPoint.dll' = 'deterministic-powerpoint-payload-v1'
+    }
+    foreach ($entry in $files.GetEnumerator()) {
+        Set-Content -LiteralPath (Join-Path $script:installDir $entry.Key) -Value $entry.Value -Encoding ASCII
+    }
+
+    $script:coreSha = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $script:installDir 'OMNIX.Core.dll')).Hash.ToLowerInvariant()
+    $excelSha = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $script:installDir 'OMNIX.Excel.dll')).Hash.ToLowerInvariant()
+    $wordSha = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $script:installDir 'OMNIX.Word.dll')).Hash.ToLowerInvariant()
+    $powerPointSha = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $script:installDir 'OMNIX.PowerPoint.dll')).Hash.ToLowerInvariant()
+
+    $identityPath = Join-Path $script:installDir 'OMNIX-build-identity.json'
+    [ordered]@{
+        TestId = 'OMNIX-BUILD-IDENTITY-001'
+        EvidenceSchema = 1
+        SourceCommit = $script:sourceCommit
+        CoreSha256 = $script:coreSha
+        ExcelSha256 = $excelSha
+        WordSha256 = $wordSha
+        PowerPointSha256 = $powerPointSha
+    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $identityPath -Encoding UTF8
+    $script:payloadSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $identityPath).Hash.ToLowerInvariant()
+}
 
 function New-Binding {
     param([string]$PayloadSha = $script:payloadSha,[string]$BuildIdentityTestId = 'OMNIX-BUILD-IDENTITY-001')
@@ -62,6 +93,11 @@ function Write-ValidEvidenceSet {
     }
 }
 
+function Reset-ValidState {
+    Write-InstalledPayload
+    Write-ValidEvidenceSet
+}
+
 function Invoke-Validator([string]$CaseName) {
     $outputPath = Join-Path $script:tempRoot ($CaseName + '.json')
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -69,6 +105,7 @@ function Invoke-Validator([string]$CaseName) {
     $arguments = @(
         '-NoProfile','-File',$script:validator,
         '-LogRoot',$script:logRoot,
+        '-InstallDir',$script:installDir,
         '-SourceCommit',$script:sourceCommit,
         '-ExpectedInstallerSha256',$script:installerSha,
         '-MaxAgeHours','168',
@@ -87,7 +124,10 @@ function Require-Pass([string]$CaseName) {
         throw "$CaseName should have passed but exited $($result.ExitCode)."
     }
     $report = Get-Content -LiteralPath $result.OutputPath -Raw | ConvertFrom-Json
-    if ($report.TestId -ne 'BOUND-OFFICE-EVIDENCE-SET-001' -or -not [bool]$report.OverallPass -or [int]$report.FailureCount -ne 0) {
+    if ($report.TestId -ne 'BOUND-OFFICE-EVIDENCE-SET-001' -or
+        -not [bool]$report.InstalledPayloadValidated -or
+        -not [bool]$report.OverallPass -or
+        [int]$report.FailureCount -ne 0) {
         throw "$CaseName did not produce a valid passing coherent evidence report."
     }
 }
@@ -104,36 +144,40 @@ function Require-Rejection([string]$CaseName) {
 }
 
 try {
-    Write-ValidEvidenceSet
+    Reset-ValidState
     Require-Pass 'valid-coherent-set'
 
-    Write-ValidEvidenceSet
+    Reset-ValidState
     $tamperedPath = Join-Path $logRoot 'real-office-ui-acceptance.json'
     $tampered = Get-Content -LiteralPath $tamperedPath -Raw | ConvertFrom-Json
     $tampered.EvidenceBinding.PayloadIdentitySha256 = ('e' * 64)
     $tampered | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $tamperedPath -Encoding UTF8
     Require-Rejection 'payload-identity-mismatch'
 
-    Write-ValidEvidenceSet
+    Reset-ValidState
     $failedPath = Join-Path $logRoot 'taskpane-lifecycle-real-acceptance.json'
     $failed = Get-Content -LiteralPath $failedPath -Raw | ConvertFrom-Json
     $failed.OverallPass = $false
     $failed | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $failedPath -Encoding UTF8
     Require-Rejection 'subreport-overall-failure'
 
-    Write-ValidEvidenceSet
+    Reset-ValidState
     $installerPath = Join-Path $logRoot 'full-office-e2e.json'
     $installerReport = Get-Content -LiteralPath $installerPath -Raw | ConvertFrom-Json
     $installerReport.Installer.Sha256 = ('f' * 64)
     $installerReport | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $installerPath -Encoding UTF8
     Require-Rejection 'installer-hash-mismatch'
 
-    Write-ValidEvidenceSet
+    Reset-ValidState
     $identityPath = Join-Path $logRoot 'real-office-acceptance.json'
     $identityReport = Get-Content -LiteralPath $identityPath -Raw | ConvertFrom-Json
     $identityReport.EvidenceBinding.BuildIdentityTestId = 'INVALID-BUILD-IDENTITY'
     $identityReport | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $identityPath -Encoding UTF8
     Require-Rejection 'build-identity-testid-mismatch'
+
+    Reset-ValidState
+    Set-Content -LiteralPath (Join-Path $installDir 'OMNIX.Excel.dll') -Value 'tampered-installed-excel-payload' -Encoding ASCII
+    Require-Rejection 'installed-assembly-tamper'
 
     [ordered]@{
         TestId = 'BOUND-OFFICE-EVIDENCE-VALIDATOR-RUNTIME-001'
@@ -142,6 +186,7 @@ try {
         FailedSubreportRejected = $true
         InstallerHashMismatchRejected = $true
         InvalidBuildIdentityRejected = $true
+        InstalledAssemblyTamperRejected = $true
         OverallPass = $true
     } | ConvertTo-Json -Depth 4
     exit 0
