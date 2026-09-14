@@ -118,7 +118,7 @@ namespace OMNIX.Core.AiGateway
                 catch (OmnixException ex)
                 {
                     sw.Stop();
-                    _health.RecordFailure(provider.Info.Id, ex.Code);
+                    _health.RecordFailure(provider.Info.Id, ex);
                     if (ShouldSuggestAlternative(ex))
                         SuggestAlternative(provider, req.HasImages, "request_failure_" + ex.Code);
                     throw;
