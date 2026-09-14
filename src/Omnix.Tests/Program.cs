@@ -55,6 +55,21 @@ namespace Omnix.Tests
                         }
                     }
                 });
+                Test("Undo restores formula-looking text as literal text",()=>{
+                    var app=new FakeExcel();app.Selection.Value2="=1+1";
+                    using(var office=new OfficeSelection(app,"Excel"))using(var original=office.Capture()) {
+                        office.Apply(original,"replacement",false);office.Undo();
+                        Assert((string)app.Selection.Value2=="=1+1"&&!app.Selection.HasFormula,"Undo converted literal text into an executable formula.");
+                    }
+                });
+                Test("Undo preserves actual formulas and numeric cell types",()=>{
+                    var app=new FakeExcel();app.Selection.Formula="=1+1";
+                    using(var office=new OfficeSelection(app,"Excel")) {
+                        using(var formula=office.Capture()){office.Apply(formula,"replacement",false);office.Undo();Assert(app.Selection.HasFormula,"Formula was restored as text.");}
+                        app.Selection.Value2=42.0;
+                        using(var number=office.Capture()){office.Apply(number,"replacement",false);office.Undo();Assert(app.Selection.Value2 is double&&(double)app.Selection.Value2==42.0,"Numeric type was lost.");}
+                    }
+                });
                 Test("A changed selection cannot overwrite a user edit",()=>{
                     var app=new FakeExcel();using(var office=new OfficeSelection(app,"Excel"))using(var captured=office.Capture()) {
                         app.Selection.Value2="user edit";bool rejected=false;

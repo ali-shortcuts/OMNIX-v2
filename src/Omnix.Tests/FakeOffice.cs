@@ -7,6 +7,7 @@ namespace Omnix.Tests
     public sealed class FakeRange
     {
         private object value="original";
+        public bool HasFormula {get;private set;}
         public long CountLarge => 1;
         public FakeCount Areas => new FakeCount();
         public FakeCount Rows => new FakeCount();
@@ -16,8 +17,8 @@ namespace Omnix.Tests
         public bool HasArray => false;
         public bool Locked => false;
         public FakeSheet Worksheet => new FakeSheet();
-        public object Formula {get=>value;set=>this.value=value;}
-        public object Value2 {get=>value;set=>this.value=value is string text&&text.StartsWith("'")?text.Substring(1):value;}
+        public object Formula {get=>value;set{this.value=value;HasFormula=value is string text&&text.StartsWith("=");}}
+        public object Value2 {get=>value;set{this.value=value is string text&&text.StartsWith("'")?text.Substring(1):value;HasFormula=false;}}
     }
     public sealed class FakeExcel
     {

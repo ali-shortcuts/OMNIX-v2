@@ -26,6 +26,7 @@ namespace Omnix.Desktop
         public SelectionSnapshot UndoSnapshot => undoTarget;
         private string appliedText;
         private object oldValues;
+        private bool oldWasFormula;
         private string oldWordXml;
         public OfficeSelection(object application,string hostName) { app=application; host=hostName; }
         private static bool Same(object a,object b)
@@ -97,10 +98,11 @@ namespace Omnix.Desktop
                     throw new InvalidOperationException("The selected text box changed. Capture it again.");
             }
             dynamic range=target.Target;
-            object previousValues=null;string previousXml=null;string resultingText;
+            object previousValues=null;bool previousWasFormula=false;string previousXml=null;string resultingText;
             if(host=="Excel") {
                 if((bool)range.Worksheet.ProtectContents && (bool)range.Locked) throw new InvalidOperationException("This cell is protected.");
-                previousValues=range.Formula;
+                previousWasFormula=(bool)range.HasFormula;
+                previousValues=previousWasFormula?range.Formula:range.Value2;
                 if(formula) {
                     if(!text.StartsWith("=",StringComparison.Ordinal) || text.IndexOfAny(new[]{'[',']','|','\r','\n'})>=0 ||
                        new[]{"WEBSERVICE(","HYPERLINK(","RTD(","STOCKHISTORY(","IMAGE("}.Any(x=>text.ToUpperInvariant().Replace(" ","").Contains(x)))
@@ -118,7 +120,7 @@ namespace Omnix.Desktop
             } else {
                 app.StartNewUndoEntry(); range.Text=text; resultingText=(string)range.Text;
             }
-            undoTarget=target;oldValues=previousValues;oldWordXml=previousXml;appliedText=resultingText;
+            undoTarget=target;oldValues=previousValues;oldWasFormula=previousWasFormula;oldWordXml=previousXml;appliedText=resultingText;
         }
         public void Dispose(){undoTarget=null;oldValues=null;oldWordXml=null;appliedText=null;}
         public void Undo()
@@ -129,7 +131,10 @@ namespace Omnix.Desktop
             dynamic range=undoTarget.Target;
             string now=host=="Excel"?ReadRange(range,1,1):(string)range.Text;
             if(now!=appliedText) throw new InvalidOperationException("The target was edited after OMNIX. Use Office's Undo history instead.");
-            if(host=="Excel") range.Formula=oldValues;
+            if(host=="Excel") {
+                if(oldWasFormula)range.Formula=oldValues;
+                else range.Value2=oldValues is string literal?"'"+literal:oldValues;
+            }
             else if(host=="Word")range.InsertXML(oldWordXml);
             else range.Text=undoTarget.Text;
             undoTarget=null; oldValues=null;oldWordXml=null;
