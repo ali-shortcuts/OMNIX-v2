@@ -101,6 +101,25 @@ jobs:
           }
           Write-Host 'Canonical bound real Office evidence is present for the exact source.'
 
+      - name: Stage explicit sanitized evidence
+        if: always()
+        shell: powershell
+        run: |
+          $stage = '.\build\artifact\real-machine-evidence'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          $logRoot = Join-Path $env:LOCALAPPDATA 'OMNIX\logs'
+          foreach ($name in @(
+            'full-office-e2e.json',
+            'real-office-acceptance.json',
+            'real-office-ui-acceptance.json',
+            'taskpane-lifecycle-real-acceptance.json'
+          )) {
+            $sourcePath = Join-Path $logRoot $name
+            if (Test-Path -LiteralPath $sourcePath -PathType Leaf) {
+              Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $stage $name) -Force
+            }
+          }
+
       - name: Upload sanitized real-machine evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -111,10 +130,7 @@ jobs:
           path: |
             build/artifact/real-machine-preflight-before.json
             build/artifact/real-machine-preflight-after.json
-            ${{ env.LOCALAPPDATA }}\OMNIX\logs\full-office-e2e.json
-            ${{ env.LOCALAPPDATA }}\OMNIX\logs\real-office-acceptance.json
-            ${{ env.LOCALAPPDATA }}\OMNIX\logs\real-office-ui-acceptance.json
-            ${{ env.LOCALAPPDATA }}\OMNIX\logs\taskpane-lifecycle-real-acceptance.json
+            build/artifact/real-machine-evidence/*.json
 
 # Safety boundary:
 # - This workflow is manual only and requires an explicitly labelled interactive self-hosted runner.
