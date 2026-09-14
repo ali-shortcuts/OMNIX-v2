@@ -1,51 +1,116 @@
-# CI Verification — what a green build proves, and what still needs a human
+# CI Verification - what a green build proves, and what still requires a real machine
 
-The OMNIX spec (Section 12) is explicit: code and green CI are **not** acceptance.
-This document states exactly what the CI proves and what a human must verify.
+The OMNIX release contract is explicit: code compilation and green hosted CI are **not** production acceptance.
 
-## What a green CI run proves
+This document records what current GitHub Actions actually proves and what must still be executed on the intended Windows/Office environment. The canonical real-machine procedure is [PRODUCTION-ACCEPTANCE.md](./PRODUCTION-ACCEPTANCE.md).
 
-1. `OMNIX.sln` compiles under MSBuild on `windows-latest` with .NET Framework 4.8 and the VSTO SDK.
-2. ClickOnce/VSTO manifests are signed (temporary self-signed cert created in CI).
-3. All three hosts produce `.vsto` + `.dll.manifest` + DLLs.
-4. Inno Setup produces ONE `OMNIX-Setup-1.0.0.exe`.
-5. Windows Defender (real-time protection ON) scanned the installer; the honest result is in `defender-report.txt`.
+## What current hosted CI proves
 
-## First-run risk areas (honest, per Rule 9/12)
+For the exact source commit checked out by the workflow, current Windows CI verifies the following classes of evidence:
 
-This codebase was written **without executing a Windows build**. The following
-spots are the most likely first-build friction points, all with mechanical fixes:
+1. `OMNIX.sln` compiles with .NET Framework 4.8, the VSTO SDK, Office PIAs, WPF, and the native Excel/Word/PowerPoint host projects.
+2. Excel, Word, and PowerPoint each produce the required VSTO DLL, deployment manifest, and application manifest artifacts.
+3. The validated compiled handoff is staged into a single installer payload rather than packaging transient build folders directly.
+4. `build/package.ps1` generates `OMNIX-build-identity.json` containing the exact Git source commit plus SHA-256 values for `OMNIX.Core.dll`, `OMNIX.Excel.dll`, `OMNIX.Word.dll`, and `OMNIX.PowerPoint.dll`.
+5. The payload inventory is generated and the installer build fails closed if required Office/Core files or the installed build identity are absent.
+6. Inno Setup compiles a single development installer executable.
+7. Deterministic runtime acceptance covers the AI Gateway privacy boundary, encrypted chat-history storage/migration, provider diagnostics, request budgets, tool isolation, image normalization, evidence guards, and installed-payload tamper detection.
+8. Windows PowerShell 5.1 parses the production-evidence scripts and the evidence-critical scripts are kept ASCII-safe for that compatibility baseline.
+9. The development artifact manifest records the exact source commit and installer hash and explicitly reports `ProductionReleaseApproved=false`.
+10. The development-preview workflow waits for exact-head CI gates, downloads the exact build artifact, verifies runtime-hardening evidence, builds an exact-source ZIP, writes CI provenance, and only then publishes a prerelease when explicitly triggered by the preview marker.
 
-| Area | Risk | Fix if MSBuild complains |
-| --- | --- | --- |
-| `ThisAddIn.Designer.cs` (×3) | Base-ctor argument shape of `AddInBase` differs in your SDK version | The error message prints the expected signature — align the 6 base args (this is exactly what VS regenerates) |
-| VSTO targets path | Runner has `OfficeTools` vs `VisualStudioToolsForOffice` folder | Both candidates are imported with `Exists` guards; `ensure-vsto-sdk.ps1` installs the SDK if absent |
-| PIA resolution | `$(VSTOPIAPath)` folder missing → references unresolved | Install the Office dev tools workload (workflow does it) or set `/p:VSTOPIAPath=…` |
-| XAML Page build in a classic classlib | Very stable since MSBuild 4.0 — unlikely to fail | If it does, add `{60dc8134-eba5-43b8-bcc9-bb4bc16c2548}` to OMNIX.Core `ProjectTypeGuids` |
-| Inno PascalScript | Minor syntax/version differences (Inno 6.3+ required for `DownloadPage`) | Error messages include line numbers; choco always installs the latest 6.x |
+A successful hosted build therefore proves a reproducible **development artifact** for that exact commit. It does not prove that desktop Office loaded the add-in on a real user machine.
 
-Debugging tip: the workflow uploads `build/logs/build.binlog` — open it in
-[MSBuild Structured Log Viewer](https://msbuildlog.com/).
+## Current payload identity contract
 
-## Human acceptance checklist (spec Section 12 + Phase 2 output)
+Every current staged/installed payload must contain:
 
-- [ ] Download the single `.exe` from GitHub Release; run it **without any other file**.
-- [ ] Installer asks nothing unusual; VSTO Runtime UAC only when actually missing.
-- [ ] `%LOCALAPPDATA%\OMNIX\logs\install-debug.log` shows every step + VERIFIED lines.
-- [ ] `%LOCALAPPDATA%\OMNIX\logs\startup-debug.log` shows the static-ctor line as the FIRST line.
-- [ ] OMNIX tab visible in Excel/Word/PowerPoint (only installed hosts) — **attach screenshot**.
-- [ ] "Open Workspace" opens a docked right panel (~360 px), document stays interactive.
-- [ ] Two workbooks open → two independent panes/contexts.
-- [ ] Chat answers stream word-by-word; Stop truly stops (verify with network tool or provider usage page).
-- [ ] `write_to_cell` preview → Apply → Ctrl+Z undoes it (Excel native undo).
-- [ ] Privacy Mode "Ask before sending" shows the confirmation before the first cloud call.
-- [ ] DPAPI check: `settings.dat` contains NO plain-text key (open in editor).
-- [ ] Uninstall: no `Addins\OMNIX` keys, no program folder, no leftover certificate.
-- [ ] Windows restarted → tab still there (persistence, Phase 20).
-- [ ] Windows Defender (default settings, ON): run the installer on a real machine — record any warning honestly (Phase 2.9).
+```text
+OMNIX-build-identity.json
+```
 
-## Word HostPackage note
+The identity binds the exact source commit to SHA-256 values for the four primary OMNIX assemblies:
 
-`ProjectExtensions` (design-time only, ignored by MSBuild) is included for Excel and
-PowerPoint with the GUIDs taken from real shipped projects; the Word project omits
-this optional block. Visual Studio recreates it automatically on first save.
+```text
+OMNIX.Core.dll
+OMNIX.Excel.dll
+OMNIX.Word.dll
+OMNIX.PowerPoint.dll
+```
+
+The deterministic `PAYLOAD-IDENTITY-BINDING-RUNTIME-001` acceptance rejects at least these conditions:
+
+- tampered Core assembly;
+- tampered Office-host assembly;
+- missing build identity;
+- source-checkout mismatch.
+
+Real-machine `EvidenceBinding` schema 2 additionally carries the installed payload identity hash. The final production binding guard rejects reports from another source, another Core, another payload identity, or an expired evidence window.
+
+## Defender evidence: important limitation
+
+Hosted CI performs a custom Microsoft Defender scan of the built development installer when Defender tooling is available and records the actual protection state in `defender-report.txt`/artifact metadata.
+
+That scan is **not** the consumer-security release gate. If hosted CI reports `RealTimeProtectionEnabled=false`, the scan may still be useful for build diagnostics, but it cannot be described as a normal protected consumer-machine scenario.
+
+Production security evidence must be created separately with `tools/consumer-security-acceptance.ps1` on a real Windows consumer test machine with Defender Antivirus, real-time protection, behavior monitoring, and current signatures enabled, plus an honest normal SmartScreen observation. The test must not weaken or bypass those protections.
+
+## What hosted CI does not prove
+
+Hosted GitHub Windows runners do not provide the real desktop Office environment needed for the production claims below. Green CI does **not** by itself prove:
+
+- automatic OMNIX loading in installed desktop Excel, Word, and PowerPoint;
+- real Ribbon visibility and `Open Workspace` behavior;
+- a visible docked WPF task pane that remains isolated per Office window;
+- real Office read/write/undo behavior against user-hosted Office applications;
+- real Office-context -> workspace -> AI Gateway/provider -> rendered streaming response E2E;
+- persistence across an actual user-initiated Windows restart;
+- a real local Ollama/LM Studio response while public Internet is observably disconnected;
+- current live-provider behavior for the intended accounts/quotas/models;
+- repair/uninstall behavior on the final production candidate;
+- consumer Defender + SmartScreen behavior under normal protection;
+- trusted, timestamped production Authenticode signing.
+
+Those remain mandatory real-machine release gates.
+
+## Canonical real-machine evidence path
+
+For Office E2E, local-offline, live-provider, and restart evidence, operators must use:
+
+```powershell
+.\tools\bound-real-acceptance.ps1
+```
+
+Do not use raw PASS output from the lower-level Office/provider/offline/restart harnesses as production evidence. Those scripts are implementation details for the canonical wrapper. The wrapper runs the harness, requires a newly generated report, validates the installed build identity and primary assembly hashes, and only then writes the bound evidence consumed by the final gate.
+
+See [PRODUCTION-ACCEPTANCE.md](./PRODUCTION-ACCEPTANCE.md) for the exact sequence and commands.
+
+Lifecycle and consumer-security acceptance remain separate exact-candidate harnesses because they intentionally exercise repair/uninstall state and normal Windows security state respectively.
+
+## Final production condition
+
+The canonical production entrypoint is:
+
+```powershell
+.\tools\final-production-gate.ps1 -InstallerPath <exact-final-installer>
+```
+
+It runs the evidence-binding guard before the task-pane guard and before the complete production core.
+
+The only production approval result is:
+
+```json
+{
+  "TestId": "OMNIX-FINAL-PRODUCTION-GATE-002",
+  "FailureCount": 0,
+  "OverallPass": true
+}
+```
+
+Anything else is not a production release.
+
+## Build debugging
+
+The hosted build uploads MSBuild binary logs where configured. Open `build/logs/*.binlog` with MSBuild Structured Log Viewer when diagnosing compilation or VSTO target resolution.
+
+Build-system troubleshooting must never be converted into a compatibility claim. A compiler PASS is evidence about the build environment; `FULLY_TESTED` Office compatibility requires real-machine Office evidence for that specific Windows/Office environment.
