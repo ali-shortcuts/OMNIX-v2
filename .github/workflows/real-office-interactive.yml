@@ -79,27 +79,15 @@ jobs:
             -RequireInstalledPayload `
             -OutputPath .\build\artifact\real-machine-preflight-after.json
 
-      - name: Validate bound Office evidence
+      - name: Validate one coherent bound Office evidence set
         if: ${{ inputs.mode == 'full-office-e2e' }}
         shell: powershell
         run: |
-          $logRoot = Join-Path $env:LOCALAPPDATA 'OMNIX\logs'
-          $required = @(
-            'full-office-e2e.json',
-            'real-office-acceptance.json',
-            'real-office-ui-acceptance.json',
-            'taskpane-lifecycle-real-acceptance.json'
-          )
-          foreach ($name in $required) {
-            $path = Join-Path $logRoot $name
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required real Office evidence missing: $name" }
-            $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-            if ($null -eq $report.EvidenceBinding) { throw "Bound EvidenceBinding missing from $name" }
-            if ([int]$report.EvidenceBinding.BindingSchema -lt 2) { throw "Old EvidenceBinding schema in $name" }
-            if ([string]$report.EvidenceBinding.SourceCommit -ne '${{ steps.source.outputs.sha }}') { throw "Source binding mismatch in $name" }
-            if (-not [bool]$report.EvidenceBinding.PrimaryAssembliesValidated) { throw "Primary assembly validation missing in $name" }
-          }
-          Write-Host 'Canonical bound real Office evidence is present for the exact source.'
+          .\tools\validate-bound-office-evidence.ps1 `
+            -LogRoot (Join-Path $env:LOCALAPPDATA 'OMNIX\logs') `
+            -SourceCommit '${{ steps.source.outputs.sha }}' `
+            -ExpectedInstallerSha256 $env:OMNIX_EXPECTED_INSTALLER_SHA256 `
+            -OutputPath .\build\artifact\bound-office-evidence-validation.json
 
       - name: Stage explicit sanitized evidence
         if: always()
@@ -130,10 +118,13 @@ jobs:
           path: |
             build/artifact/real-machine-preflight-before.json
             build/artifact/real-machine-preflight-after.json
+            build/artifact/bound-office-evidence-validation.json
             build/artifact/real-machine-evidence/*.json
 
 # Safety boundary:
 # - This workflow is manual only and requires an explicitly labelled interactive self-hosted runner.
 # - It never restarts Windows or changes network/firewall/Defender/SmartScreen/Office Trust Center state.
+# - Full Office E2E is accepted only when all canonical reports form one coherent passing evidence set
+#   with the same source, Core hash, payload identity and exact installer hash.
 # - Restart, offline-network observation, live-provider and lifecycle/consumer-security evidence remain
 #   separate operator-controlled phases documented in docs/PRODUCTION-EVIDENCE-RUNBOOK.md.
