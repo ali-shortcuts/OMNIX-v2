@@ -79,6 +79,37 @@ Require $gateway 'visibleDelta.Complete(call == null, response.Text)' 'Gateway m
 Require $gateway 'return ONLY one fenced tool block' 'system prompt must tell models not to mix tool protocol with user-facing prose.'
 Require $gateway 'await _privacy.EnsureAllowedAsync(provider)' 'privacy must still execute before cloud/provider SendAsync.'
 
+# Adaptive provider resilience: provider health is isolated per provider, retry classification is
+# deterministic, open circuits do not get selected, and cloud failover remains suggestion-only.
+$health = 'src/OMNIX.Core/AiGateway/ProviderHealth.cs'
+$resilience = 'src/OMNIX.Core/AiGateway/Resilience.cs'
+$router = 'src/OMNIX.Core/AiGateway/PrivacyGate.cs'
+Require $health 'ProviderHealthTracker' 'provider health must be tracked independently instead of one global failure streak.'
+Require $health 'AverageLatencyMs' 'routing needs a bounded latency signal.'
+Require $health 'CircuitOpenUntilUtc' 'repeated availability failures need a cooldown circuit.'
+Require $health 'PayloadIdentity' ''
+# The previous Require is intentionally not used as a data requirement; health state must stay content-free.
+Forbid $health 'ChatRequest' 'provider health state must not retain prompts or Office request content.'
+Forbid $health 'ApiKey' 'provider health state must not retain API keys.'
+Require $health 'ShouldOpenCircuit(OmnixException error)' 'provider HTTP category must distinguish outages/rate pressure from deterministic request failures.'
+Require $health 'category=rate_limit_or_quota' 'rate pressure should use cooldown instead of repeated hammering.'
+Require $health 'category=request_too_large' ''
+# request_too_large is validated behaviorally; health source must not special-case it as an outage.
+Require $resilience 'IsRetryable(OmnixException ex)' 'retry behavior must be centrally classified.'
+Require $resilience 'category=provider_unavailable' 'provider outages may be retried.'
+Require $resilience 'provider_response_body=REDACTED' 'unexpected transport errors must not surface provider payload text.'
+Require $gateway 'ProviderHealthTracker _health' 'AI Gateway must own adaptive health state.'
+Require $gateway '_health.IsCircuitOpen(provider.Info.Id)' 'open circuits must fail fast before a provider send.'
+Require $gateway 'Stopwatch.StartNew()' 'real request latency must feed adaptive health.'
+Require $gateway '_health.RecordSuccess(provider.Info.Id' 'successful calls must recover provider health.'
+Require $gateway 'SuggestAlternative' 'failover remains an explicit suggestion path.'
+Require $gateway 'never silently moves Office data' 'cloud failover must remain user-controlled.'
+Require $router 'ThenBy(x => _health != null ? _health.GetRoutingPenalty(x.Info.Id) : 0)' 'local routing must consider live health within compatible candidates.'
+Require $router '_health.IsCircuitOpen(provider.Info.Id)' 'local routing must exclude open circuits.'
+Require 'src/OMNIX.Core/OMNIX.Core.csproj' 'AiGateway\ProviderHealth.cs' 'adaptive health source must be part of the compiled Core assembly.'
+Require 'tools/provider-resilience-acceptance.ps1' 'PROVIDER-ADAPTIVE-RESILIENCE-RUNTIME-001' 'adaptive resilience must have compiled runtime acceptance.'
+Require '.github/workflows/request-budget.yml' 'Execute adaptive provider resilience acceptance' 'adaptive resilience acceptance must run in CI.'
+
 # Provider-bound request memory: long history and stale screenshots must not be replayed forever.
 $models = 'src/OMNIX.Core/AiGateway/Models/Models.cs'
 Require $models 'ChatRequestBudgeter' 'every provider transport needs one deterministic request budget implementation.'
@@ -150,5 +181,5 @@ if ($failures.Count -gt 0) {
     exit 1
 }
 Write-Host 'OMNIX RUNTIME-HARDENING CONTRACT: PASS'
-Write-Host 'Write bounds, hidden tool protocol, request/storage memory limits, transport safety, privacy ordering and provider-source traceability are structurally intact.'
+Write-Host 'Write bounds, hidden tool protocol, adaptive provider resilience, request/storage memory limits, transport safety, privacy ordering and provider-source traceability are structurally intact.'
 exit 0
