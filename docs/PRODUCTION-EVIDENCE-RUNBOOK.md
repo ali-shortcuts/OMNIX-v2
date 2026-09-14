@@ -30,6 +30,16 @@ Lifecycle evidence uses the same verified installed build identity. Its Baseline
 
 The lower-level scripts such as `real-office-acceptance.ps1`, `full-office-e2e.ps1`, `provider-acceptance.ps1`, `local-offline-acceptance.ps1`, and `reboot-persistence-acceptance.ps1` are implementation harnesses. A raw PASS from one of them is not production evidence by itself.
 
+## Interactive self-hosted Office orchestration
+
+The repository includes a manual `real-office-interactive` GitHub Actions workflow for an explicitly prepared self-hosted Windows desktop runner. It is an orchestration helper for the canonical bound `FullOfficeE2E` path, not a production shortcut.
+
+Before using it, follow [`INTERACTIVE-OFFICE-RUNNER.md`](./INTERACTIVE-OFFICE-RUNNER.md). The runner must execute interactively under the same Windows user that runs Office, with Explorer in the same session and the custom label `omnix-office-interactive`. Do not run real Office/UI acceptance as a Windows service, LocalSystem, or Session 0 process.
+
+Always dispatch the workflow in `preflight` mode first. `tools/real-machine-preflight.ps1` is read-only and fails closed if the session is non-interactive, required Office hosts are missing, Office is already running, or the exact installer hash is wrong. Only after that preflight passes should the same exact installer/hash be used with `full-office-e2e` mode.
+
+The workflow deliberately does not restart Windows, disconnect networking, weaken Defender/SmartScreen/firewall/Trust Center, perform lifecycle repair/uninstall, or produce final production approval. Those remain separate phases below.
+
 ## 1. Freeze the release candidate
 
 Use one exact source checkout and one exact installer file for the complete acceptance cycle.
