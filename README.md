@@ -2,7 +2,7 @@
 
 OMNIX is a Windows Office AI bridge: a native **C# / WPF / VSTO** add-in that connects **Excel, Word and PowerPoint** to local AI runtimes, cloud providers and custom OpenAI-compatible endpoints from one docked workspace inside Office.
 
-> **Release status:** active v3 rebuild. The code compiles and the development installer is produced in CI, but this repository does **not** call the current branch production-ready until the real-machine release gates in [issue #53](https://github.com/ali-shortcuts/OMNIX-v2/issues/53) pass. A green hosted CI build is not a substitute for opening real desktop Excel/Word/PowerPoint.
+> **Release status:** active v3 rebuild. The code compiles and development previews are produced from exact-head CI, but this repository does **not** call the current branch production-ready until the real-machine release gates in [issue #53](https://github.com/ali-shortcuts/OMNIX-v2/issues/53) pass. A green hosted CI build is not a substitute for opening real desktop Excel/Word/PowerPoint.
 
 Download the newest **Development Preview** `.exe` from [GitHub Releases](https://github.com/ali-shortcuts/OMNIX-v2/releases). This is the canonical native Office repository. The separate `OMINIX.exe` repository contains an older browser/server prototype; its executable is not this native installer. See the [repository audit and consolidation decision](docs/REPOSITORY-AUDIT-2026-09-10.md).
 
@@ -94,12 +94,19 @@ intentional user install
   → detect Office / host apps / platform
   → ensure official Microsoft VSTO Runtime prerequisite when genuinely required
   → copy validated Excel + Word + PowerPoint + Core payload
+  → install OMNIX-build-identity.json for exact source/payload verification
   → register only OMNIX-owned Office add-in keys
   → preserve shared Office Resiliency state
-  → perform post-install diagnostics
+  → perform post-install diagnostics and payload-identity verification
 ```
 
 OMNIX does **not** clear shared `DisabledItems`/`CrashingAddinList` state to force itself enabled. It does not bypass Trust Center or organizational Office policy.
+
+### Installed build identity
+
+Current installer payloads contain `OMNIX-build-identity.json`. It records the exact source commit and SHA-256 values for `OMNIX.Core.dll`, `OMNIX.Excel.dll`, `OMNIX.Word.dll`, and `OMNIX.PowerPoint.dll`.
+
+Post-install verification and the canonical real-machine evidence runner re-hash those files and fail closed if the identity is missing, source-mismatched, or any primary assembly differs. Bound real-machine evidence carries `PayloadIdentitySha256` so the final production gate can reject stale or cross-build report replay.
 
 ### Development manifest trust
 
@@ -109,21 +116,25 @@ Production release requires a normal trusted code-signing certificate and valid 
 
 ## Real release gates
 
-The repository contains executable acceptance tooling rather than relying on a “looks okay” checklist:
+The canonical operator runbook is [docs/PRODUCTION-ACCEPTANCE.md](docs/PRODUCTION-ACCEPTANCE.md).
 
-- `tools/real-office-acceptance.ps1` — Excel/Word/PowerPoint must auto-load OMNIX on two independent launches; diagnostic force-connect cannot turn failure into PASS.
-- `tools/real-office-ui-acceptance.ps1` — verifies the real OMNIX Ribbon, `Open Workspace`, and visible WPF task-pane evidence through UI Automation.
-- `tools/office-functional-acceptance.ps1` — exercises the installed compiled Core against temporary unsaved Office documents: context/read tools, denied/approved writes and PowerPoint visual capture.
-- `tools/real-office-ai-e2e.ps1` — creates a random marker inside a temporary Excel/Word/PowerPoint document and requires that marker to travel through **Office Context → Workspace → AI Gateway/provider → streaming rendered assistant UI**. The prompt itself never contains the marker.
-- `tools/full-office-e2e.ps1` — binds the intended installer SHA-256 to install + persistence + UI + functional + real AI round-trip evidence.
-- `tools/reboot-persistence-acceptance.ps1` — before/after a normal user-initiated Windows restart; the test never restarts the machine itself.
-- `tools/local-offline-acceptance.ps1` — requires public Internet to be observed disconnected while a real Ollama/LM Studio model completes a local chat; the script never changes networking/firewall state.
-- `tools/provider-acceptance.ps1` — live model discovery + real streaming provider evidence without copying API keys/prompts/responses into reports.
-- `tools/privacy-acceptance.ps1` — deterministic compiled Gateway test proving privacy enforcement occurs before cloud `SendAsync`.
-- `tools/lifecycle-acceptance.ps1` — exact-build repair + uninstall lifecycle. It hashes settings and precisely fingerprints shared Office `DisabledItems`, `CrashingAddinList` and `DoNotDisableAddinList` state without dumping their raw values.
-- `tools/consumer-security-acceptance.ps1` — requires normal Defender real-time/behavior protection, scans the exact installer, and records a normal SmartScreen UI observation without disabling/bypassing protection.
-- `tools/release-readiness.ps1` — base fail-closed evidence aggregator.
-- `tools/final-production-gate.ps1` — final production aggregator. It requires exact installer hash binding, all real Office/AI/lifecycle/security evidence, offline/provider/privacy gates and trusted timestamped Authenticode.
+For Office E2E, local-offline AI, live-provider, and restart evidence, the production entrypoint is:
+
+```powershell
+.\tools\bound-real-acceptance.ps1
+```
+
+The lower-level scripts (`real-office-acceptance.ps1`, `real-office-ui-acceptance.ps1`, `office-functional-acceptance.ps1`, `real-office-ai-e2e.ps1`, `full-office-e2e.ps1`, `reboot-persistence-acceptance.ps1`, `local-offline-acceptance.ps1`, and `provider-acceptance.ps1`) are implementation harnesses. They remain useful for debugging, but raw PASS reports from them are not sufficient production evidence.
+
+The bound runner executes the underlying harness, requires fresh evidence, validates the installed build identity and all four primary assembly hashes, verifies the source commit, and only then adds the `EvidenceBinding` consumed by the final production gate.
+
+Other mandatory release components include:
+
+- `tools/privacy-acceptance.ps1` — deterministic compiled Gateway proof that privacy enforcement occurs before cloud send.
+- `tools/lifecycle-acceptance.ps1` — exact-installer repair/uninstall lifecycle evidence while preserving shared Office recovery state.
+- `tools/consumer-security-acceptance.ps1` — real consumer-machine Defender/SmartScreen evidence without weakening protection.
+- `build/sign-production.ps1` — trusted production Authenticode signing using a provisioned code-signing certificate and timestamp service.
+- `tools/final-production-gate.ps1` — canonical final fail-closed aggregator. It checks exact installer identity, bound real Office/restart/offline/provider evidence, lifecycle, security, privacy, real task-pane evidence and trusted timestamped Authenticode.
 
 The final production result must be:
 
@@ -153,7 +164,9 @@ Local entry point:
 build\build.bat
 ```
 
-GitHub Actions builds a **development artifact**. It does not automatically publish a production release merely because a tag exists or CI is green.
+GitHub Actions builds a **development artifact**. Preview publication is separate from production approval and is allowed only through the repository's explicit development-preview workflow/provenance contract. A tag or green CI alone does not create a production release.
+
+See [docs/CI-VERIFICATION.md](docs/CI-VERIFICATION.md) for the exact boundary of hosted CI evidence.
 
 ## Security and data locations
 
@@ -162,6 +175,7 @@ Settings / protected keys  %LOCALAPPDATA%\OMNIX\settings.dat
 Logs                       %LOCALAPPDATA%\OMNIX\logs\
 Chat history               %LOCALAPPDATA%\OMNIX\history\
 Application                %LOCALAPPDATA%\Programs\OMNIX\
+Build identity              %LOCALAPPDATA%\Programs\OMNIX\OMNIX-build-identity.json
 ```
 
 Logs and acceptance reports are designed not to contain API keys or full private Office documents. Real release evidence stores hashes/status/timing where possible instead of copying sensitive content.
@@ -181,31 +195,32 @@ build/
   build-with-fallbacks.ps1
   package.ps1
   contract-gates.ps1
-  real-evidence-contract-gates.ps1
-  final-evidence-contract-gates.ps1
+  final-evidence-binding-contract-gates.ps1
   consumer-security-contract-gates.ps1
   sign-production.ps1
 tools/
-  real-office-acceptance.ps1
-  real-office-ui-acceptance.ps1
-  office-functional-acceptance.ps1
-  real-office-ai-e2e.ps1
+  bound-real-acceptance.ps1
+  real-evidence-binding.ps1
   full-office-e2e.ps1
-  reboot-persistence-acceptance.ps1
   local-offline-acceptance.ps1
   provider-acceptance.ps1
-  privacy-acceptance.ps1
+  reboot-persistence-acceptance.ps1
   lifecycle-acceptance.ps1
   consumer-security-acceptance.ps1
-  release-readiness.ps1
+  privacy-acceptance.ps1
   final-production-gate.ps1
+docs/
+  PRODUCTION-ACCEPTANCE.md
+  CI-VERIFICATION.md
 ```
 
 ## Current honesty boundary
 
-Hosted Windows CI can compile VSTO, validate payloads, build the installer, execute deterministic Core privacy tests and scan the development installer. Hosted CI does **not** provide desktop Excel/Word/PowerPoint and therefore cannot produce the real Office/UI/restart evidence required for production.
+Hosted Windows CI can compile VSTO, validate payloads, build the installer, execute deterministic runtime/security contracts, prove installed-payload tamper detection, create exact-source packages, and publish a provenance-bound **development preview** when explicitly requested.
 
-Do not merge/publish the v3 rebuild as production until issue #53 and `OMNIX-FINAL-PRODUCTION-GATE-002` are satisfied on the intended Windows/Office environment.
+Hosted CI does **not** provide the real desktop Office/consumer environment required for production Office/UI/restart/live-provider/consumer-security evidence. A Defender scan on a hosted runner also does not replace the consumer-security gate when normal real-time protection is not enabled on that runner.
+
+Do not publish or label the v3 rebuild as production until issue #53 and `OMNIX-FINAL-PRODUCTION-GATE-002` are satisfied for the intended signed installer on the intended Windows/Office environment.
 
 ## License
 
