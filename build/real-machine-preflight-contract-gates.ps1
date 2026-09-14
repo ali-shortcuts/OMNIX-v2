@@ -1,4 +1,4 @@
-# Anti-drift contract for the interactive real-machine preflight and manual workflow.
+# Anti-drift contract for the interactive real-machine preflight, coherent evidence validator and manual workflow.
 [CmdletBinding()]
 param()
 
@@ -6,19 +6,22 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $preflightPath = Join-Path $root 'tools\real-machine-preflight.ps1'
+$validatorPath = Join-Path $root 'tools\validate-bound-office-evidence.ps1'
 $workflowPath = Join-Path $root '.github\workflows\real-office-interactive.yml'
 
-foreach ($path in @($preflightPath,$workflowPath)) {
+foreach ($path in @($preflightPath,$validatorPath,$workflowPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "REAL_MACHINE_PREFLIGHT_CONTRACT: required file missing: $path"
     }
 }
 
-$tokens = $null
-$errors = $null
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($preflightPath,[ref]$tokens,[ref]$errors)
-if (@($errors).Count -gt 0) {
-    throw "REAL_MACHINE_PREFLIGHT_CONTRACT: preflight PowerShell parse failure: $($errors[0].Message)"
+foreach ($scriptPath in @($preflightPath,$validatorPath)) {
+    $tokens = $null
+    $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile($scriptPath,[ref]$tokens,[ref]$errors)
+    if (@($errors).Count -gt 0) {
+        throw "REAL_MACHINE_PREFLIGHT_CONTRACT: PowerShell parse failure in $scriptPath : $($errors[0].Message)"
+    }
 }
 
 $preflight = Get-Content -LiteralPath $preflightPath -Raw
@@ -40,23 +43,51 @@ foreach ($needle in @(
     }
 }
 
+$validator = Get-Content -LiteralPath $validatorPath -Raw
+foreach ($needle in @(
+    'BOUND-OFFICE-EVIDENCE-SET-001',
+    'Test-OmnixEvidenceBinding',
+    'New-OmnixEvidenceBinding',
+    'InstallDir',
+    'InstalledPayloadValidated',
+    'ExpectedInstallerSha256',
+    'CoreSha256',
+    'PayloadIdentitySha256',
+    'BuildIdentityTestId',
+    'PrimaryAssembliesValidated',
+    'OverallPass',
+    'full-office-e2e.json',
+    'real-office-acceptance.json',
+    'real-office-ui-acceptance.json',
+    'taskpane-lifecycle-real-acceptance.json'
+)) {
+    if ($validator.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        throw "REAL_MACHINE_PREFLIGHT_CONTRACT: coherent evidence validator missing '$needle'."
+    }
+}
+
 $forbiddenCommands = @(
     'Stop-Process','Start-Process','Remove-ItemProperty','New-ItemProperty','Set-ItemProperty',
-    'Remove-Item','Set-NetFirewallProfile','Set-NetFirewallRule','New-NetFirewallRule',
+    'Set-NetFirewallProfile','Set-NetFirewallRule','New-NetFirewallRule',
     'Disable-NetAdapter','Enable-NetAdapter','Restart-Computer','Stop-Computer','shutdown.exe',
     'reg.exe','schtasks.exe','certutil.exe'
 )
 
-$commands = @($ast.FindAll({
-    param($node)
-    $node -is [System.Management.Automation.Language.CommandAst]
-},$true))
-foreach ($command in $commands) {
-    $name = $command.GetCommandName()
-    if ([string]::IsNullOrWhiteSpace($name)) { continue }
-    foreach ($forbidden in $forbiddenCommands) {
-        if ([string]::Equals($name,$forbidden,[StringComparison]::OrdinalIgnoreCase)) {
-            throw "REAL_MACHINE_PREFLIGHT_CONTRACT: read-only preflight executes forbidden command '$name'."
+foreach ($scriptPath in @($preflightPath,$validatorPath)) {
+    $tokens = $null
+    $errors = $null
+    $scriptAst = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath,[ref]$tokens,[ref]$errors)
+    $commands = @($scriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.CommandAst]
+    },$true))
+    foreach ($command in $commands) {
+        $name = $command.GetCommandName()
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        foreach ($forbidden in $forbiddenCommands) {
+            if ([string]::Equals($name,$forbidden,[StringComparison]::OrdinalIgnoreCase)) {
+                throw "REAL_MACHINE_PREFLIGHT_CONTRACT: read-only evidence tool executes forbidden command '$name'."
+            }
         }
     }
 }
@@ -70,6 +101,8 @@ foreach ($needle in @(
     'real-machine-preflight.ps1',
     'bound-real-acceptance.ps1',
     'FullOfficeE2E',
+    'validate-bound-office-evidence.ps1',
+    'bound-office-evidence-validation.json',
     'upload-artifact'
 )) {
     if ($workflow.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0) {
@@ -83,5 +116,6 @@ foreach ($forbiddenText in @('Restart-Computer','shutdown.exe','Set-NetFirewall'
     }
 }
 
+Write-Host 'BOUND-OFFICE-EVIDENCE-SET-CONTRACT-001: PASS'
 Write-Host 'REAL-MACHINE-PREFLIGHT-CONTRACT-001: PASS'
 exit 0

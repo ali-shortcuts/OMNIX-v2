@@ -65,6 +65,10 @@ jobs:
         shell: pwsh
         run: ./build/real-machine-preflight-contract-gates.ps1
 
+      - name: Execute coherent bound Office evidence validator acceptance
+        shell: powershell
+        run: ./tools/bound-office-evidence-validator-acceptance.ps1
+
       - name: Execute installed payload identity tamper acceptance
         shell: powershell
         run: ./tools/payload-identity-binding-acceptance.ps1
