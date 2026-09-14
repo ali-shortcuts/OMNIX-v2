@@ -8,6 +8,8 @@
 # Release-safety invariants:
 #   * Packaging MUST fail if any host DLL/.vsto/.dll.manifest is missing.
 #   * OMNIX.Core.dll MUST be present in the staged payload.
+#   * Installed payload identity MUST bind the exact Git source commit to the
+#     exact Core + Excel + Word + PowerPoint assembly hashes shipped in setup.
 #   * A successful source build is not enough; a hollow installer is a failure.
 #   * Only the PUBLIC OMNIX.cer may be staged. No PFX/private key may enter the
 #     installer payload or CI artifact.
@@ -122,6 +124,42 @@ if ($payloadPrivateKeys.Count -gt 0) {
     throw 'Private key detected in installer payload. Packaging aborted.'
 }
 
+# Create a deterministic, installed build identity BEFORE the payload inventory is generated.
+# This is the cryptographic source -> installed-payload bridge used by real-machine release evidence.
+$sourceCommit = (& git -C $root rev-parse HEAD 2>$null).Trim().ToLowerInvariant()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') {
+    throw 'PAYLOAD_IDENTITY_GUARD: could not resolve the exact Git source commit.'
+}
+
+function Payload-Hash([string]$name) {
+    $path = Join-Path $payload $name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "PAYLOAD_IDENTITY_GUARD: required assembly missing: $name"
+    }
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+}
+
+$buildIdentity = [ordered]@{
+    TestId = 'OMNIX-BUILD-IDENTITY-001'
+    EvidenceSchema = 1
+    SourceCommit = $sourceCommit
+    CoreSha256 = Payload-Hash 'OMNIX.Core.dll'
+    ExcelSha256 = Payload-Hash 'OMNIX.Excel.dll'
+    WordSha256 = Payload-Hash 'OMNIX.Word.dll'
+    PowerPointSha256 = Payload-Hash 'OMNIX.PowerPoint.dll'
+    Scope = 'Exact source commit and primary managed assemblies staged into this installer payload.'
+}
+$buildIdentityPath = Join-Path $payload 'OMNIX-build-identity.json'
+$buildIdentity | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $buildIdentityPath -Encoding ASCII
+$identityCheck = Get-Content -LiteralPath $buildIdentityPath -Raw | ConvertFrom-Json
+if ($identityCheck.TestId -ne 'OMNIX-BUILD-IDENTITY-001' -or
+    [int]$identityCheck.EvidenceSchema -lt 1 -or
+    [string]$identityCheck.SourceCommit -ne $sourceCommit -or
+    [string]$identityCheck.CoreSha256 -ne (Payload-Hash 'OMNIX.Core.dll')) {
+    throw 'PAYLOAD_IDENTITY_GUARD: generated build identity did not round-trip correctly.'
+}
+Write-Host "Installed payload identity created for source $sourceCommit."
+
 $readmeFirst = Join-Path $payload 'README-first.txt'
 @'
 OMNIX — what to do next
@@ -164,4 +202,4 @@ $inventory = foreach ($file in $payloadFiles) {
 }
 $inventory | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $inventoryDir 'payload-inventory.json') -Encoding UTF8
 
-Write-Host 'OMNIX PAYLOAD GATE: PASS — all three Office hosts, OMNIX.Core and maintenance helpers are present.'
+Write-Host 'OMNIX PAYLOAD GATE: PASS — all three Office hosts, OMNIX.Core, installed build identity and maintenance helpers are present.'

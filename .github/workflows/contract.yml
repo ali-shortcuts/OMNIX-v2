@@ -61,6 +61,10 @@ jobs:
         shell: powershell
         run: ./build/windows-powershell-evidence-contract.ps1
 
+      - name: Execute installed payload identity tamper acceptance
+        shell: powershell
+        run: ./tools/payload-identity-binding-acceptance.ps1
+
       - name: Execute final evidence binding guard behavior acceptance
         shell: powershell
         run: ./tools/final-evidence-binding-guard-acceptance.ps1

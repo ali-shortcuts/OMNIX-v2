@@ -2,7 +2,8 @@
 #
 # This wrapper prevents stale PASS reports from being replayed against another build. It executes
 # the real acceptance harness first, requires a freshly generated report, and only then adds a
-# sanitized EvidenceBinding containing the exact source commit + installed OMNIX.Core SHA-256.
+# sanitized EvidenceBinding. The binding is created only after the installed OMNIX-build-identity
+# proves the exact source commit and the hashes of Core + all three Office host assemblies.
 #
 # It never disables security, changes networking, restarts Windows, or alters Office Trust Center.
 # Restart testing remains a two-phase user-driven process.
@@ -100,6 +101,21 @@ function Remove-ReportIfPresent([string]$path) {
     if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
 }
 
+function Binding-Summary($binding,[string]$kind,[string]$installerSha=$null,[string]$nextAction=$null) {
+    $row = [ordered]@{
+        TestId = 'BOUND-REAL-ACCEPTANCE-001'
+        Kind = $kind
+        SourceCommit = $binding.SourceCommit
+        CoreSha256 = $binding.CoreSha256
+        PayloadIdentitySha256 = $binding.PayloadIdentitySha256
+        PrimaryAssembliesValidated = [bool]$binding.PrimaryAssembliesValidated
+        OverallPass = $true
+    }
+    if (-not [string]::IsNullOrWhiteSpace($installerSha)) { $row.InstallerSha256 = $installerSha }
+    if (-not [string]::IsNullOrWhiteSpace($nextAction)) { $row.NextAction = $nextAction }
+    return [pscustomobject]$row
+}
+
 $startedUtc = [DateTime]::UtcNow
 
 if ($Kind -eq 'FullOfficeE2E') {
@@ -125,6 +141,7 @@ if ($Kind -eq 'FullOfficeE2E') {
         '-OutputPath',$OutputPath
     ) 'Full Office E2E'
 
+    # New-OmnixEvidenceBinding validates the installed build identity and all four primary assemblies.
     $binding = New-OmnixEvidenceBinding -CorePath $CorePath -SourceCommit $SourceCommit
     $office = Save-BoundReport $OutputPath $binding $startedUtc 'Full Office E2E report'
     if ([string]$office.Installer.Sha256 -ne $expected -or -not [bool]$office.Installer.HashMatchedExpected) {
@@ -139,14 +156,7 @@ if ($Kind -eq 'FullOfficeE2E') {
         [void](Save-BoundReport $row.Path $binding $startedUtc $row.Label)
     }
 
-    [pscustomobject]@{
-        TestId = 'BOUND-REAL-ACCEPTANCE-001'
-        Kind = $Kind
-        SourceCommit = $binding.SourceCommit
-        CoreSha256 = $binding.CoreSha256
-        InstallerSha256 = $expected
-        OverallPass = $true
-    } | ConvertTo-Json -Depth 5
+    Binding-Summary $binding $Kind $expected | ConvertTo-Json -Depth 5
     exit 0
 }
 
@@ -155,7 +165,7 @@ if ($Kind -eq 'LocalOffline') {
     Invoke-Child 'local-offline-acceptance.ps1' @('-OutputPath',$OutputPath,'-TimeoutSeconds',[string]$TimeoutSeconds) 'Local offline acceptance'
     $binding = New-OmnixEvidenceBinding -CorePath $CorePath -SourceCommit $SourceCommit
     [void](Save-BoundReport $OutputPath $binding $startedUtc 'Local offline report')
-    [pscustomobject]@{TestId='BOUND-REAL-ACCEPTANCE-001';Kind=$Kind;SourceCommit=$binding.SourceCommit;CoreSha256=$binding.CoreSha256;OverallPass=$true} | ConvertTo-Json -Depth 5
+    Binding-Summary $binding $Kind | ConvertTo-Json -Depth 5
     exit 0
 }
 
@@ -164,7 +174,7 @@ if ($Kind -eq 'Provider') {
     Invoke-Child 'provider-acceptance.ps1' @('-OutputPath',$OutputPath,'-TimeoutSeconds',[string]$TimeoutSeconds) 'Provider acceptance'
     $binding = New-OmnixEvidenceBinding -CorePath $CorePath -SourceCommit $SourceCommit
     [void](Save-BoundReport $OutputPath $binding $startedUtc 'Provider report')
-    [pscustomobject]@{TestId='BOUND-REAL-ACCEPTANCE-001';Kind=$Kind;SourceCommit=$binding.SourceCommit;CoreSha256=$binding.CoreSha256;OverallPass=$true} | ConvertTo-Json -Depth 5
+    Binding-Summary $binding $Kind | ConvertTo-Json -Depth 5
     exit 0
 }
 
@@ -181,20 +191,20 @@ if ($Kind -eq 'RestartBefore') {
     ) 'Restart persistence BeforeRestart'
 
     [ordered]@{
-        StateSchema = 1
+        StateSchema = 2
         TestId = 'OMNIX-RESTART-EVIDENCE-BINDING-STATE-001'
         CreatedUtc = [DateTime]::UtcNow.ToString('o')
         EvidenceBinding = $binding
     } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $RestartBindingStatePath -Encoding UTF8
 
-    [pscustomobject]@{TestId='BOUND-REAL-ACCEPTANCE-001';Kind=$Kind;SourceCommit=$binding.SourceCommit;CoreSha256=$binding.CoreSha256;OverallPass=$true;NextAction='Restart Windows normally, then run Kind=RestartAfter.'} | ConvertTo-Json -Depth 5
+    Binding-Summary $binding $Kind $null 'Restart Windows normally, then run Kind=RestartAfter.' | ConvertTo-Json -Depth 5
     exit 0
 }
 
 # RestartAfter
 $bindingState = Read-Json $RestartBindingStatePath 'Restart evidence binding state'
-if ($bindingState.TestId -ne 'OMNIX-RESTART-EVIDENCE-BINDING-STATE-001' -or [int]$bindingState.StateSchema -lt 1) {
-    throw 'Restart evidence binding state is invalid or too old.'
+if ($bindingState.TestId -ne 'OMNIX-RESTART-EVIDENCE-BINDING-STATE-001' -or [int]$bindingState.StateSchema -lt 2) {
+    throw 'Restart evidence binding state is invalid or too old for installed payload identity.'
 }
 $currentBinding = New-OmnixEvidenceBinding -CorePath $CorePath -SourceCommit $SourceCommit
 if ([string]$bindingState.EvidenceBinding.SourceCommit -ne [string]$currentBinding.SourceCommit) {
@@ -202,6 +212,9 @@ if ([string]$bindingState.EvidenceBinding.SourceCommit -ne [string]$currentBindi
 }
 if ([string]$bindingState.EvidenceBinding.CoreSha256 -ne [string]$currentBinding.CoreSha256) {
     throw 'Installed OMNIX.Core.dll changed across the Windows restart.'
+}
+if ([string]$bindingState.EvidenceBinding.PayloadIdentitySha256 -ne [string]$currentBinding.PayloadIdentitySha256) {
+    throw 'Installed OMNIX payload identity changed across the Windows restart.'
 }
 Remove-ReportIfPresent $OutputPath
 Invoke-Child 'reboot-persistence-acceptance.ps1' @(
@@ -211,5 +224,5 @@ Invoke-Child 'reboot-persistence-acceptance.ps1' @(
 ) 'Restart persistence AfterRestart'
 $restart = Save-BoundReport $OutputPath $currentBinding $startedUtc 'Restart persistence report'
 if (-not [bool]$restart.BootSessionChanged) { throw 'Restart report did not prove a changed Windows boot session.' }
-[pscustomobject]@{TestId='BOUND-REAL-ACCEPTANCE-001';Kind=$Kind;SourceCommit=$currentBinding.SourceCommit;CoreSha256=$currentBinding.CoreSha256;OverallPass=$true} | ConvertTo-Json -Depth 5
+Binding-Summary $currentBinding $Kind | ConvertTo-Json -Depth 5
 exit 0
