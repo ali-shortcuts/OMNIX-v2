@@ -11,17 +11,27 @@
 # - "remember for session" suppresses repeat confirmation only inside that gateway session;
 # - CloudAllowed does not invoke the confirmation callback;
 # - LocalOnly can still route to an explicitly available local provider.
+#
+# The report is bound to the exact source checkout and exact OMNIX.Core.dll that executed the test.
 
 [CmdletBinding()]
 param(
     [string]$CorePath = ".\src\OMNIX.Core\bin\Release\OMNIX.Core.dll",
-    [string]$OutputPath = ".\build\artifact\privacy-acceptance.json"
+    [string]$OutputPath = ".\build\artifact\privacy-acceptance.json",
+    [string]$SourceCommit
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$bindingScript = Join-Path $scriptDir 'real-evidence-binding.ps1'
+if (-not (Test-Path -LiteralPath $bindingScript -PathType Leaf)) { throw "Privacy evidence binding helper missing: $bindingScript" }
+. $bindingScript
+
 $core = (Resolve-Path -LiteralPath $CorePath -ErrorAction Stop).Path
+$coreHash = Get-OmnixCoreSha256 -CorePath $core
+$resolvedSource = Resolve-OmnixSourceCommit -ExplicitSourceCommit $SourceCommit
 $coreDir = Split-Path -Parent $core
 $newtonsoft = Join-Path $coreDir 'Newtonsoft.Json.dll'
 if (Test-Path -LiteralPath $newtonsoft) {
@@ -178,7 +188,7 @@ public static class PrivacyAcceptanceHarness
         var result = new PrivacyAcceptanceResult
         {
             TestId = "PRIVACY-GATE-RUNTIME-001",
-            EvidenceSchema = 1,
+            EvidenceSchema = 2,
             Failures = failures
         };
 
@@ -200,8 +210,6 @@ public static class PrivacyAcceptanceHarness
             foreach (var local in registry.All.Where(p => p.Info.Kind == ProviderKind.Local))
                 registry.SetLocalAvailability(local.Info.Id, false);
 
-            // 1) LocalOnly: every built-in cloud route must be refused. Custom is tested as a
-            // remote URL here, so it must also be refused; loopback Custom is intentionally local.
             settings.Privacy = PrivacyMode.LocalOnly;
             var cloudIds = registry.All
                 .Where(p => p.Info.Kind == ProviderKind.Cloud && p.Info.Id != fakeCloud.Info.Id)
@@ -228,7 +236,6 @@ public static class PrivacyAcceptanceHarness
             if (!result.LocalOnlyFakeCloudSendPrevented)
                 failures.Add("LocalOnly allowed the instrumented cloud adapter SendAsync path.");
 
-            // 2) AskBeforeSending denied: callback must run and SendAsync must remain untouched.
             fakeCloud.Reset();
             settings.Privacy = PrivacyMode.AskBeforeSending;
             settings.SelectedProviderId = fakeCloud.Info.Id;
@@ -245,7 +252,6 @@ public static class PrivacyAcceptanceHarness
             if (!result.AskDeniedBlockedBeforeSend)
                 failures.Add("AskBeforeSending denial did not stop SendAsync.");
 
-            // 3) AskBeforeSending approved: confirmation must occur before the provider send.
             fakeCloud.Reset();
             var approveGateway = new AiGateway(registry);
             int approveConfirmCount = 0;
@@ -263,8 +269,6 @@ public static class PrivacyAcceptanceHarness
             if (!result.AskApprovedBeforeSend)
                 failures.Add("AskBeforeSending approval was not observed before SendAsync.");
 
-            // 4) Remember for this gateway session only: first request confirms, second request sends
-            // without another callback. This proves the intended scoped session behavior.
             fakeCloud.Reset();
             var rememberGateway = new AiGateway(registry);
             int rememberConfirmCount = 0;
@@ -280,7 +284,6 @@ public static class PrivacyAcceptanceHarness
             if (!result.AskRememberSessionPass)
                 failures.Add("AskBeforeSending session approval behavior is incorrect.");
 
-            // 5) CloudAllowed: no confirmation callback should be consulted.
             fakeCloud.Reset();
             settings.Privacy = PrivacyMode.CloudAllowed;
             var cloudAllowedGateway = new AiGateway(registry);
@@ -295,7 +298,6 @@ public static class PrivacyAcceptanceHarness
             if (!result.CloudAllowedNoPromptPass)
                 failures.Add("CloudAllowed unexpectedly invoked confirmation or failed to send.");
 
-            // 6) LocalOnly must still permit a provider positively classified/marked as local.
             fakeCloud.Reset();
             fakeLocal.Reset();
             settings.Privacy = PrivacyMode.LocalOnly;
@@ -334,6 +336,15 @@ public static class PrivacyAcceptanceHarness
 Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies @($core)
 
 $result = [PrivacyAcceptanceHarness]::Run()
+$result.EvidenceSchema = 2
+$result | Add-Member -NotePropertyName TimestampUtc -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
+$result | Add-Member -NotePropertyName CoreEvidenceBinding -NotePropertyValue ([pscustomobject][ordered]@{
+    BindingSchema = 1
+    SourceCommit = $resolvedSource
+    CoreSha256 = $coreHash
+    CoreFileName = [IO.Path]::GetFileName($core)
+}) -Force
+
 $outDir = Split-Path -Parent $OutputPath
 if ($outDir) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
 $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
