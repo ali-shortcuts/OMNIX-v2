@@ -130,8 +130,8 @@ namespace Omnix.Desktop
             var actions=new WrapPanel(); actions.Children.Add(Button("Apply to selection",()=>{
                 if(office==null)throw new InvalidOperationException("Open this workspace inside Office to edit a document.");
                 if(MessageBox.Show("Apply the reviewed text to the captured selection?\n\n"+(selection?.Label??"No selection"),"Confirm document change",MessageBoxButton.OKCancel,MessageBoxImage.Question)!=MessageBoxResult.OK)return;
-                office.Apply(selection,draft.Text,asFormula.IsChecked==true); status.Text="Change applied. Undo is available.";
-            })); actions.Children.Add(Button("Undo OMNIX change",()=>{office?.Undo();status.Text="OMNIX change undone";}));
+                office.Apply(selection,draft.Text,asFormula.IsChecked==true);PruneSnapshots(); status.Text="Change applied. Undo is available.";
+            })); actions.Children.Add(Button("Undo OMNIX change",()=>{office?.Undo();PruneSnapshots();status.Text="OMNIX change undone";}));
             actions.Children.Add(Button("Copy text",()=>Clipboard.SetText(draft.Text))); panel.Children.Add(actions);
             return new ScrollViewer {Content=panel,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
         }
@@ -141,7 +141,7 @@ namespace Omnix.Desktop
             panel.Children.Add(Label("Connection and startup"));
             panel.Children.Add(new TextBlock {Text="This report records component status and error categories. It does not include API keys or document text.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12)});
             panel.Children.Add(diagnostics); panel.Children.Add(AsyncButton("Refresh diagnostics",async()=>{
-                var response=await gateway.CallAsync(new Request {Operation="ping"},running.Token);
+                var response=await gateway.CallAsync(new Request {Operation="ping"},running.Token); running.Token.ThrowIfCancellationRequested();
                 diagnostics.Text="OMNIX 4.0 preview\nHost: "+host+"\nProcess: "+(Environment.Is64BitProcess?"64-bit":"32-bit")+"\n"+response.Text+"\nNative Office pane: "+(office==null?"Preview only":"Created")+"\n\n";
                 string log=Path.Combine(LocalData.Root,"diagnostics.log");
                 if(File.Exists(log))diagnostics.AppendText(string.Join(Environment.NewLine,File.ReadLines(log).Reverse().Take(30).Reverse()));
@@ -155,8 +155,12 @@ namespace Omnix.Desktop
         private void Capture()
         {
             if(office==null)throw new InvalidOperationException("Open this workspace inside Office to capture a selection.");
-            selection=office.Capture(); retained.Add(selection); captured.Text=selection.Label+"\n\n"+selection.Text;
+            selection=office.Capture(); retained.Add(selection);PruneSnapshots(); captured.Text=selection.Label+"\n\n"+selection.Text;
             status.Text="Selection captured. Enable inclusion if you want to send it to the model.";
+        }
+        private void PruneSnapshots()
+        {
+            foreach(var item in retained.ToArray())if(item!=selection && item!=office?.UndoSnapshot){item.Dispose();retained.Remove(item);}
         }
         private void CaptureFields()
         {
@@ -175,7 +179,7 @@ namespace Omnix.Desktop
         }
         private async Task Reload()
         {
-            var response=await gateway.CallAsync(new Request {Operation="settings"},running.Token);
+            var response=await gateway.CallAsync(new Request {Operation="settings"},running.Token); running.Token.ThrowIfCancellationRequested();
             SetPreferences(response.Settings); status.Text="Settings loaded";
         }
         private void SetPreferences(Preferences value)
@@ -189,7 +193,7 @@ namespace Omnix.Desktop
         {
             if(preferences==null)throw new InvalidOperationException("Reload settings first.");
             CaptureFields(); preferences.Privacy=Convert.ToString(privacy.SelectedItem);
-            var response=await gateway.CallAsync(new Request {Operation="save",Settings=preferences,NewKeys=new Dictionary<string,string>(keys)},running.Token);
+            var response=await gateway.CallAsync(new Request {Operation="save",Settings=preferences,NewKeys=new Dictionary<string,string>(keys)},running.Token); running.Token.ThrowIfCancellationRequested();
             SetPreferences(response.Settings);status.Text=response.Text;
         }
         private void UpdateDestination() => destination.Text=editedProvider==null?"Choose a provider":editedProvider.Name+" · "+(string.IsNullOrEmpty(editedProvider.Model)?"No model selected":editedProvider.Model)+"\n"+preferences.Privacy;
@@ -208,12 +212,12 @@ namespace Omnix.Desktop
         }
         private async Task FindModels()
         {
-            await Save(); var response=await gateway.CallAsync(Prepare("models"),running.Token);
+            await Save(); var response=await gateway.CallAsync(Prepare("models"),running.Token); running.Token.ThrowIfCancellationRequested();
             string selected=model.Text;model.ItemsSource=response.Models;model.Text=selected;status.Text=response.Models.Count+" models found. You can also enter a model manually.";
         }
         private async Task Probe()
         {
-            await Save();var response=await gateway.CallAsync(Prepare("probe"),running.Token);status.Text=response.Text;
+            await Save();var response=await gateway.CallAsync(Prepare("probe"),running.Token); running.Token.ThrowIfCancellationRequested();status.Text=response.Text;
         }
         private async Task Send()
         {
@@ -227,7 +231,7 @@ namespace Omnix.Desktop
             while(outgoing.Sum(m=>m.Text.Length)+text.Length>35000 && outgoing.Count>0)outgoing.RemoveAt(0);
             outgoing.Add(new Message {Role="user",Text=text});request.Messages=outgoing;
             status.Text="Waiting for "+editedProvider.Name+"…";
-            var response=await gateway.CallAsync(request,running.Token);
+            var response=await gateway.CallAsync(request,running.Token); running.Token.ThrowIfCancellationRequested();
             messages.Add(new Message {Role="user",Text=text});messages.Add(new Message {Role="assistant",Text=response.Text});
             if(messages.Count>100)messages.RemoveRange(0,messages.Count-100);
             AddBubble("user",text);AddBubble("assistant",response.Text);prompt.Clear();draft.Text=response.Text;status.Text="Answer received. Open Review to apply selected text.";
@@ -240,7 +244,7 @@ namespace Omnix.Desktop
             session=value;messages.Clear();messages.AddRange(value.Messages);conversation.Children.Clear();
             foreach(var message in messages)AddBubble(message.Role,message.Text);
             draft.Text=messages.LastOrDefault(m=>m.Role=="assistant")?.Text??"";
-            selection=null;captured.Clear();include.IsChecked=false;imageData=null;imageLabel.Text="No image attached";
+            selection=null;PruneSnapshots();captured.Clear();include.IsChecked=false;imageData=null;imageLabel.Text="No image attached";
         }
         private void RefreshHistory(bool openLatest)
         {
@@ -277,16 +281,16 @@ namespace Omnix.Desktop
             if(running!=null||disposed)return;
             running=new CancellationTokenSource();foreach(var b in guardedButtons)b.IsEnabled=false;
             providers.IsEnabled=false;model.IsEnabled=false;endpoint.IsEnabled=false;key.IsEnabled=false;privacy.IsEnabled=false;vision.IsEnabled=false;
-            history.IsEnabled=false;
+            history.IsEnabled=false;prompt.IsEnabled=false;include.IsEnabled=false;
             try {await action();}
-            catch(OperationCanceledException){status.Text="Request cancelled";}
-            catch(Exception e){if(running.IsCancellationRequested)status.Text="Request cancelled";else Failure(e);}
-            finally {running.Dispose();running=null;foreach(var b in guardedButtons)b.IsEnabled=true;providers.IsEnabled=true;model.IsEnabled=true;endpoint.IsEnabled=true;key.IsEnabled=true;privacy.IsEnabled=true;vision.IsEnabled=true;history.IsEnabled=true;}
+            catch(OperationCanceledException){if(!disposed)status.Text="Request cancelled";}
+            catch(Exception e){if(disposed)return;if(running.IsCancellationRequested)status.Text="Request cancelled";else Failure(e);}
+            finally {running.Dispose();running=null;if(!disposed){foreach(var b in guardedButtons)b.IsEnabled=true;providers.IsEnabled=true;model.IsEnabled=true;endpoint.IsEnabled=true;key.IsEnabled=true;privacy.IsEnabled=true;vision.IsEnabled=true;history.IsEnabled=true;prompt.IsEnabled=true;include.IsEnabled=true;}}
         }
         private void Failure(Exception e) {status.Text=e.Message;LocalData.Log("WORKSPACE_ERROR",e);}
         public void Dispose()
         {
-            disposed=true;running?.Cancel();foreach(var snapshot in retained)snapshot.Dispose();retained.Clear();imageData=null;keys.Clear();key.Clear();
+            if(disposed)return;disposed=true;running?.Cancel();office?.Dispose();foreach(var snapshot in retained)snapshot.Dispose();retained.Clear();imageData=null;keys.Clear();key.Clear();
         }
     }
 }

@@ -15,7 +15,7 @@ namespace Omnix.Setup
             string root=args.Length>1?Path.GetFullPath(args[1]):Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,".."));
             try {
                 var hosts=Installation.Detect();
-                string report=Wire.Json(new {Product="OMNIX",Version="4.0.0-preview.2",TimestampUtc=DateTime.UtcNow,InstalledHosts=hosts,OfficeOpen=Installation.OfficeOpen(),RealOfficeAcceptance="Not yet verified"});
+                string report=Wire.Json(new {Product="OMNIX",Version="4.0.0-preview.3",TimestampUtc=DateTime.UtcNow,InstalledHosts=hosts,OfficeOpen=Installation.OfficeOpen(),RealOfficeAcceptance="Not yet verified"});
                 Directory.CreateDirectory(LocalData.Root);File.WriteAllText(Path.Combine(LocalData.Root,"installation.json"),report);
                 if(action=="probe") {
                     if(hosts.Count==0)return 20;if(Installation.OfficeOpen())return 21;if(hosts.Any(h=>!h.RuntimeReady))return 23;return 0;

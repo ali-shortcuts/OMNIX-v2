@@ -52,3 +52,10 @@ Setup detects desktop Office 15/16 executables (Office 2013 and the Office 2016+
 Automated checks exercise registry persistence in an isolated test key, duplicate prevention, window cleanup, handle reuse and failed creation recovery. These do not establish that Office actually loads the VSTO assemblies. Run `build/test-office.ps1` on an interactive Windows machine with Office and the installed preview to check real startup and two-window lifecycle across two Office launches. The script refuses to run while any Office process is open and only creates/discards its own blank test documents. Reboot, ribbon visibility, pane close/reopen, protected view, signing/trust prompts and live providers still require manual acceptance. Never mark the production gate passed using component tests alone.
 
 References: [Microsoft task pane lifecycle](https://learn.microsoft.com/en-us/visualstudio/vsto/custom-task-panes?view=vs-2022), [Microsoft VSTO startup registration](https://learn.microsoft.com/en-us/visualstudio/vsto/registry-entries-for-vsto-add-ins?view=vs-2022).
+
+
+## Preview 3 bug fixes
+
+Failed edit validation no longer replaces the undo data for the last successful edit. Snapshot disposal drops borrowed Office references instead of forcing COM release; only the current selection and undo selection remain retained. Pending requests disable the input box, reject cancelled responses before UI updates, and do not reactivate a disposed workspace. Chat saving clones caller state before persistence, so a failed file replacement leaves the caller revision intact. A busy gateway gets up to 100 seconds to accept another window, within the existing 110-second total request budget, rather than failing after 12 seconds while another model request runs.
+
+Regression checks use an Office object-model double for edit/undo, an actual locked encrypted history file for write failure, and a WPF view with a pending request for disposal. These tests do not replace real Office COM, installation and reboot acceptance.

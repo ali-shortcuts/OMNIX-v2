@@ -43,6 +43,48 @@ namespace Omnix.Tests
             string output=args.Length>0?args[0]:"artifacts/evidence";Directory.CreateDirectory(output);
             LocalData.TestRoot=Path.Combine(Path.GetTempPath(),"omnix-tests-"+Guid.NewGuid().ToString("N"));
             try {
+                Test("Rejected formula preserves the previous successful edit undo",()=>{
+                    var app=new FakeExcel();using(var office=new OfficeSelection(app,"Excel")) {
+                        using(var first=office.Capture()) {
+                            office.Apply(first,"first edit",false);
+                            using(var next=office.Capture()) {
+                                bool rejected=false;try{office.Apply(next,"=WEBSERVICE(1)",true);}catch(InvalidOperationException){rejected=true;}
+                                Assert(rejected,"External formula was accepted.");
+                            }
+                            office.Undo();Assert((string)app.Selection.Value2=="original","Failed edit corrupted previous undo.");
+                        }
+                    }
+                });
+                Test("A changed selection cannot overwrite a user edit",()=>{
+                    var app=new FakeExcel();using(var office=new OfficeSelection(app,"Excel"))using(var captured=office.Capture()) {
+                        app.Selection.Value2="user edit";bool rejected=false;
+                        try{office.Apply(captured,"AI edit",false);}catch(InvalidOperationException){rejected=true;}
+                        Assert(rejected&&(string)app.Selection.Value2=="user edit","Stale selection overwrote user content.");
+                    }
+                });
+                Test("History write failure leaves caller revision and persisted content intact",()=>{
+                    string host="write-failure-test";
+                    var session=ChatHistory.Save(new ChatSession {Host=host},new List<Message>{new Message {Role="user",Text="original"}});
+                    int revision=session.Revision;bool failed=false;
+                    try {
+                        using(var locked=File.Open(Path.Combine(LocalData.Root,"chats.dat"),FileMode.Open,FileAccess.Read,FileShare.Read)) {
+                            try{ChatHistory.Save(session,new List<Message>{new Message {Role="user",Text="unsaved"}});}catch(IOException){failed=true;}
+                        }
+                        Assert(failed&&session.Revision==revision&&session.Messages[0].Text=="original","Failed persistence mutated the caller.");
+                        Assert(ChatHistory.List(host).Single().Messages[0].Text=="original","Previous archive was lost.");
+                    }finally{ChatHistory.Delete(session.Id);}
+                });
+                Test("Busy workspace protects input and safely handles disposal during a request",()=>{
+                    using(var view=new Workspace(null,"Word","unused")) {
+                        var pending=new TaskCompletionSource<bool>();
+                        var flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+                        var operation=(Task)typeof(Workspace).GetMethod("Run",flags).Invoke(view,new object[]{(Func<Task>)(()=>pending.Task)});
+                        var input=(TextBox)typeof(Workspace).GetField("prompt",flags).GetValue(view);
+                        Assert(!input.IsEnabled,"Input remained editable while a send could clear it.");
+                        view.Dispose();pending.SetCanceled();operation.GetAwaiter().GetResult();view.Dispose();
+                        Assert(!input.IsEnabled,"A disposed view was reactivated.");
+                    }
+                });
                 Test("Repeated window activation reuses one workspace",()=>{
                     int created=0;var registry=new WindowWorkspaces<object>(x=>{});
                     object first=registry.GetOrCreate("1:doc-a",()=>{created++;return new object();});

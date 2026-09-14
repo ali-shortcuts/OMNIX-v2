@@ -14,14 +14,16 @@ namespace Omnix.Desktop
         internal object Document,Target;
         internal string Identity;
         internal int Rows,Columns;
-        public void Dispose() { Release(Target); Target=null; Release(Document); Document=null; }
-        internal static void Release(object value) { if(value!=null && Marshal.IsComObject(value)) Marshal.ReleaseComObject(value); }
+        // Office owns these RCWs and may share them with another pane or add-in.
+        // Drop our references; forcing ReleaseComObject can disconnect live users.
+        public void Dispose() { Target=null; Document=null; }
     }
-    public sealed class OfficeSelection
+    public sealed class OfficeSelection : IDisposable
     {
         private readonly dynamic app;
         private readonly string host;
         private SelectionSnapshot undoTarget;
+        public SelectionSnapshot UndoSnapshot => undoTarget;
         private string appliedText;
         private object oldValues;
         private string oldWordXml;
@@ -95,28 +97,30 @@ namespace Omnix.Desktop
                     throw new InvalidOperationException("The selected text box changed. Capture it again.");
             }
             dynamic range=target.Target;
+            object previousValues=null;string previousXml=null;string resultingText;
             if(host=="Excel") {
                 if((bool)range.Worksheet.ProtectContents && (bool)range.Locked) throw new InvalidOperationException("This cell is protected.");
-                oldValues=range.Formula;
+                previousValues=range.Formula;
                 if(formula) {
                     if(!text.StartsWith("=",StringComparison.Ordinal) || text.IndexOfAny(new[]{'[',']','|','\r','\n'})>=0 ||
                        new[]{"WEBSERVICE(","HYPERLINK(","RTD(","STOCKHISTORY(","IMAGE("}.Any(x=>text.ToUpperInvariant().Replace(" ","").Contains(x)))
                         throw new InvalidOperationException("Use a single formula without external links, network functions, or DDE.");
                     range.Formula=text;
                 } else range.Value2="'"+text;
-                appliedText=ReadRange(range,1,1);
+                resultingText=ReadRange(range,1,1);
             } else if(host=="Word") {
                 if((bool)app.ActiveDocument.ReadOnly) throw new InvalidOperationException("The document is read-only.");
-                oldWordXml=(string)range.WordOpenXML;
-                if(oldWordXml.Length>4*1024*1024)throw new InvalidOperationException("This selection is too complex to preserve for undo.");
+                previousXml=(string)range.WordOpenXML;
+                if(previousXml.Length>4*1024*1024)throw new InvalidOperationException("This selection is too complex to preserve for undo.");
                 app.UndoRecord.StartCustomRecord("OMNIX: apply selected text");
                 try { range.Text=text; } finally { app.UndoRecord.EndCustomRecord(); }
-                appliedText=(string)range.Text;
+                resultingText=(string)range.Text;
             } else {
-                app.StartNewUndoEntry(); range.Text=text; appliedText=(string)range.Text;
+                app.StartNewUndoEntry(); range.Text=text; resultingText=(string)range.Text;
             }
-            undoTarget=target;
+            undoTarget=target;oldValues=previousValues;oldWordXml=previousXml;appliedText=resultingText;
         }
+        public void Dispose(){undoTarget=null;oldValues=null;oldWordXml=null;appliedText=null;}
         public void Undo()
         {
             if(undoTarget==null) throw new InvalidOperationException("There is no OMNIX change to undo in this pane.");

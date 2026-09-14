@@ -22,7 +22,7 @@ namespace Omnix.Desktop
                     catch(TimeoutException) {
                         if(!File.Exists(gateway)) throw new InvalidOperationException("The OMNIX gateway is missing. Run the installer again.");
                         Process.Start(new ProcessStartInfo(gateway) { UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Path.GetDirectoryName(gateway) })?.Dispose();
-                        await pipe.ConnectAsync(12000,timeout.Token).ConfigureAwait(false);
+                        await pipe.ConnectAsync(100000,timeout.Token).ConfigureAwait(false);
                     }
                     using(timeout.Token.Register(()=>pipe.Dispose())) {
                         await Wire.WriteAsync(pipe,request,timeout.Token).ConfigureAwait(false);

@@ -35,6 +35,7 @@ namespace Omnix.Desktop
         }
         public static List<ChatSession> List(string host)=>Locked(()=>LocalData.Read<ChatArchive>("chats.dat").Sessions.Where(s=>s.Host==host).OrderByDescending(s=>s.UpdatedUtc).ToList());
         public static ChatSession Save(ChatSession session,List<Message> messages)=>Locked(()=>{
+            session=Wire.Parse<ChatSession>(Wire.Json(session));
             var archive=LocalData.Read<ChatArchive>("chats.dat");
             var existing=archive.Sessions.FirstOrDefault(s=>s.Id==session.Id);
             // Concurrent edits branch into another session instead of overwriting another window's chat.

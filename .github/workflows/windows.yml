@@ -62,7 +62,7 @@ jobs:
           cat > release-notes.md <<'EOF'
           Clean native OMNIX rebuild for Windows desktop Excel, Word, and PowerPoint.
 
-          Download the single `OMNIX-Setup-4.0.0-preview.2.exe` installer. SHA-256 and the exact source commit are recorded in `manifest.json`.
+          Download the single `OMNIX-Setup-4.0.0-preview.3.exe` installer. SHA-256 and the exact source commit are recorded in `manifest.json`.
 
           This preview comes from the rebuild branch in PR #147; concurrent changes on main remain preserved. It implements a subset of the master requirements.
 
