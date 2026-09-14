@@ -88,3 +88,7 @@ jobs:
       - name: Enforce automatic Office registration maintenance contract
         shell: pwsh
         run: ./build/office-maintenance-contract-gates.ps1
+
+      - name: Enforce canonical production evidence runbook contract
+        shell: pwsh
+        run: ./build/production-runbook-contract-gates.ps1

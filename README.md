@@ -2,9 +2,9 @@
 
 OMNIX is a Windows Office AI bridge: a native **C# / WPF / VSTO** add-in that connects **Excel, Word and PowerPoint** to local AI runtimes, cloud providers and custom OpenAI-compatible endpoints from one docked workspace inside Office.
 
-> **Release status:** active v3 rebuild. The code compiles and the development installer is produced in CI, but this repository does **not** call the current branch production-ready until the real-machine release gates in [issue #53](https://github.com/ali-shortcuts/OMNIX-v2/issues/53) pass. A green hosted CI build is not a substitute for opening real desktop Excel/Word/PowerPoint.
+> **Release status:** active v3 rebuild. The solution and development installer are built and hardened in Windows CI, but this repository does **not** call the current branch production-ready until the real-machine release gates in [issue #53](https://github.com/ali-shortcuts/OMNIX-v2/issues/53) pass. Green hosted CI is not a substitute for real desktop Excel/Word/PowerPoint.
 
-Download the newest **Development Preview** `.exe` from [GitHub Releases](https://github.com/ali-shortcuts/OMNIX-v2/releases). This is the canonical native Office repository. The separate `OMINIX.exe` repository contains an older browser/server prototype; its executable is not this native installer. See the [repository audit and consolidation decision](docs/REPOSITORY-AUDIT-2026-09-10.md).
+Download the newest **Development Preview** `.exe` from [GitHub Releases](https://github.com/ali-shortcuts/OMNIX-v2/releases). Development previews are intentionally marked `DEVELOPMENT_ONLY`; they are not production releases. This is the canonical native Office repository. The separate `OMINIX.exe` repository contains an older browser/server prototype; its executable is not this native installer. See the [repository audit and consolidation decision](docs/REPOSITORY-AUDIT-2026-09-10.md).
 
 The installer checks Office, .NET Framework 4.8 and VSTO prerequisites before replacing existing files. Close all Office applications before installing. A prerequisite restart stops the upgrade so the existing installation is preserved. Post-install verification failure returns exit code `10`, including in silent mode.
 
@@ -51,11 +51,11 @@ OMNIX is the bridge, not the destination. The user works in Office; OMNIX obtain
 - **Dynamic provider behavior** — live model discovery is used where supported. OpenRouter runtime acceptance prefers `openrouter/free` and current `:free` routes before paid routes. Free/free-tier/trial status is treated as provider/account dependent rather than guaranteed forever.
 - **Privacy modes** — `Local Only`, `Cloud Allowed`, `Ask Before Sending`. Enforcement occurs in the AI Gateway before a cloud provider's send path, not just in the UI.
 - **DPAPI-protected API keys** — provider keys are protected for the current Windows user in `%LOCALAPPDATA%\OMNIX\settings.dat`; plaintext keys are not written to logs or reports.
+- **Encrypted bounded history** — chat history is protected for the current Windows user, bounded by configured age/count limits, and raw attached Office screenshots are not persisted into history.
 - **Untrusted Office data boundary** — document content is data, never executable instructions. Prompt-like content from a workbook/document/presentation remains inside the untrusted-data boundary.
 - **Whitelisted Office tools only** — no unrestricted PowerShell, CMD, registry, process-control or arbitrary filesystem tool is exposed to the model.
-- **Fail-closed writes** — a write tool requires a before/after preview and explicit user approval. If the confirmation callback is unavailable or the user denies the preview, no write is applied. Runtime acceptance tests this behavior against temporary Office documents.
+- **Fail-closed writes** — a write tool requires a before/after preview and explicit user approval. If the confirmation callback is unavailable or the user denies the preview, no write is applied.
 - **Categorized errors** — network/auth/model/privacy/provider/local-runtime failures are kept distinct instead of turning every failure into “check your Internet.”
-- **Bounded storage** — chat history is per-document-key, bounded by configured age/count limits, and raw attached Office screenshots are not persisted into history.
 
 ## Provider matrix
 
@@ -85,7 +85,7 @@ UNSUPPORTED / LEGACY / PARTIAL / SUPPORTED / FULLY_TESTED
 
 `FULLY_TESTED` is reserved for a specific Office/Windows environment with real-machine evidence. OMNIX does not claim that one VSTO build universally supports every historical Office version or non-Windows Office.
 
-## Installation model
+## Installation and build identity
 
 The development installer is an Inno Setup per-user installer. Its supported path is:
 
@@ -94,10 +94,13 @@ intentional user install
   → detect Office / host apps / platform
   → ensure official Microsoft VSTO Runtime prerequisite when genuinely required
   → copy validated Excel + Word + PowerPoint + Core payload
+  → install OMNIX-build-identity.json
   → register only OMNIX-owned Office add-in keys
   → preserve shared Office Resiliency state
   → perform post-install diagnostics
 ```
+
+`OMNIX-build-identity.json` is generated during packaging for the exact source commit and records SHA-256 for `OMNIX.Core.dll`, `OMNIX.Excel.dll`, `OMNIX.Word.dll` and `OMNIX.PowerPoint.dll`. Post-install verification and the real-machine evidence binder reject missing or mismatched identity/assembly hashes.
 
 OMNIX does **not** clear shared `DisabledItems`/`CrashingAddinList` state to force itself enabled. It does not bypass Trust Center or organizational Office policy.
 
@@ -107,23 +110,42 @@ Current CI development builds use a temporary development manifest certificate. 
 
 Production release requires a normal trusted code-signing certificate and valid timestamped Authenticode evidence. `build/sign-production.ps1` signs using an already provisioned certificate in the Windows certificate/key provider; it does not create/export a private key or handle a PFX password.
 
-## Real release gates
+## Canonical real release gates
 
-The repository contains executable acceptance tooling rather than relying on a “looks okay” checklist:
+The authoritative operator procedure is [docs/PRODUCTION-EVIDENCE-RUNBOOK.md](docs/PRODUCTION-EVIDENCE-RUNBOOK.md).
 
-- `tools/real-office-acceptance.ps1` — Excel/Word/PowerPoint must auto-load OMNIX on two independent launches; diagnostic force-connect cannot turn failure into PASS.
-- `tools/real-office-ui-acceptance.ps1` — verifies the real OMNIX Ribbon, `Open Workspace`, and visible WPF task-pane evidence through UI Automation.
-- `tools/office-functional-acceptance.ps1` — exercises the installed compiled Core against temporary unsaved Office documents: context/read tools, denied/approved writes and PowerPoint visual capture.
-- `tools/real-office-ai-e2e.ps1` — creates a random marker inside a temporary Excel/Word/PowerPoint document and requires that marker to travel through **Office Context → Workspace → AI Gateway/provider → streaming rendered assistant UI**. The prompt itself never contains the marker.
-- `tools/full-office-e2e.ps1` — binds the intended installer SHA-256 to install + persistence + UI + functional + real AI round-trip evidence.
-- `tools/reboot-persistence-acceptance.ps1` — before/after a normal user-initiated Windows restart; the test never restarts the machine itself.
-- `tools/local-offline-acceptance.ps1` — requires public Internet to be observed disconnected while a real Ollama/LM Studio model completes a local chat; the script never changes networking/firewall state.
-- `tools/provider-acceptance.ps1` — live model discovery + real streaming provider evidence without copying API keys/prompts/responses into reports.
-- `tools/privacy-acceptance.ps1` — deterministic compiled Gateway test proving privacy enforcement occurs before cloud `SendAsync`.
-- `tools/lifecycle-acceptance.ps1` — exact-build repair + uninstall lifecycle. It hashes settings and precisely fingerprints shared Office `DisabledItems`, `CrashingAddinList` and `DoNotDisableAddinList` state without dumping their raw values.
-- `tools/consumer-security-acceptance.ps1` — requires normal Defender real-time/behavior protection, scans the exact installer, and records a normal SmartScreen UI observation without disabling/bypassing protection.
+For Office/provider/offline/restart production evidence, the canonical entrypoint is **only**:
+
+```text
+tools/bound-real-acceptance.ps1 -Kind FullOfficeE2E
+tools/bound-real-acceptance.ps1 -Kind Provider
+tools/bound-real-acceptance.ps1 -Kind LocalOffline
+tools/bound-real-acceptance.ps1 -Kind RestartBefore
+tools/bound-real-acceptance.ps1 -Kind RestartAfter
+```
+
+The bound runner executes the underlying real harness, requires a freshly generated report, validates the installed `OMNIX-build-identity.json`, validates Core + Excel + Word + PowerPoint assembly hashes, and only then adds `EvidenceBinding` with the exact source commit and installed payload identity.
+
+The lower-level scripts below are **implementation harnesses**. Their raw PASS files are not production evidence by themselves:
+
+- `tools/real-office-acceptance.ps1`
+- `tools/real-office-ui-acceptance.ps1`
+- `tools/office-functional-acceptance.ps1`
+- `tools/real-office-ai-e2e.ps1`
+- `tools/full-office-e2e.ps1`
+- `tools/reboot-persistence-acceptance.ps1`
+- `tools/local-offline-acceptance.ps1`
+- `tools/provider-acceptance.ps1`
+
+Other canonical release entrypoints are:
+
+- `tools/privacy-acceptance.ps1` — deterministic compiled Gateway privacy enforcement.
+- `tools/lifecycle-acceptance.ps1` — exact-installer Baseline → AfterRepair → AfterUninstall lifecycle evidence.
+- `tools/consumer-security-acceptance.ps1` — real consumer Defender + SmartScreen evidence without disabling/bypassing protection.
 - `tools/release-readiness.ps1` — base fail-closed evidence aggregator.
-- `tools/final-production-gate.ps1` — final production aggregator. It requires exact installer hash binding, all real Office/AI/lifecycle/security evidence, offline/provider/privacy gates and trusted timestamped Authenticode.
+- `tools/final-production-gate.ps1` — final fail-closed production aggregator.
+
+Production signing changes the outer installer SHA-256. Therefore exact-installer evidence for production must be generated against the **final signed installer**, not reused from the unsigned development preview.
 
 The final production result must be:
 
@@ -153,7 +175,9 @@ Local entry point:
 build\build.bat
 ```
 
-GitHub Actions builds a **development artifact**. It does not automatically publish a production release merely because a tag exists or CI is green.
+GitHub Actions builds a **development artifact**. Development preview publication waits for successful exact-head build, architecture-contract, request-budget-runtime and release-provenance-contract workflows. It still does not publish a production release merely because CI is green.
+
+See [docs/CI-VERIFICATION.md](docs/CI-VERIFICATION.md) for the exact CI/human evidence boundary.
 
 ## Security and data locations
 
@@ -183,29 +207,30 @@ build/
   contract-gates.ps1
   real-evidence-contract-gates.ps1
   final-evidence-contract-gates.ps1
+  final-evidence-binding-contract-gates.ps1
   consumer-security-contract-gates.ps1
   sign-production.ps1
 tools/
-  real-office-acceptance.ps1
-  real-office-ui-acceptance.ps1
-  office-functional-acceptance.ps1
-  real-office-ai-e2e.ps1
+  bound-real-acceptance.ps1
+  real-evidence-binding.ps1
   full-office-e2e.ps1
-  reboot-persistence-acceptance.ps1
-  local-offline-acceptance.ps1
-  provider-acceptance.ps1
-  privacy-acceptance.ps1
   lifecycle-acceptance.ps1
   consumer-security-acceptance.ps1
+  privacy-acceptance.ps1
   release-readiness.ps1
   final-production-gate.ps1
+docs/
+  CI-VERIFICATION.md
+  PRODUCTION-EVIDENCE-RUNBOOK.md
 ```
 
 ## Current honesty boundary
 
-Hosted Windows CI can compile VSTO, validate payloads, build the installer, execute deterministic Core privacy tests and scan the development installer. Hosted CI does **not** provide desktop Excel/Word/PowerPoint and therefore cannot produce the real Office/UI/restart evidence required for production.
+Hosted Windows CI can compile VSTO, validate and hash-bind the payload, build the installer, execute deterministic Core/runtime tests, package exact-head runtime/provenance evidence and scan the development installer. Hosted CI does **not** provide the real desktop Office/restart/consumer-security environment required for production.
 
-Do not merge/publish the v3 rebuild as production until issue #53 and `OMNIX-FINAL-PRODUCTION-GATE-002` are satisfied on the intended Windows/Office environment.
+A development preview may correctly have `ArtifactType=DEVELOPMENT_ONLY`, `ProductionReleaseApproved=false` and `RealOfficeRuntimeTested=false` even while all required hosted CI workflows pass.
+
+Do not publish the v3 rebuild as production until issue #53 and `OMNIX-FINAL-PRODUCTION-GATE-002` are satisfied on the intended Windows/Office environment.
 
 ## License
 
