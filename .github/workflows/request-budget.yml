@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   request-budget:
-    name: Provider request + tool isolation + diagnostic + image runtime acceptance
+    name: Provider routing + request + tool + diagnostic + image runtime acceptance
     runs-on: windows-2022
     steps:
       - name: Checkout exact source commit
@@ -50,6 +50,13 @@ jobs:
             throw "Compiled OMNIX.Core.dll is missing."
           }
 
+      - name: Execute adaptive provider resilience acceptance
+        shell: powershell
+        run: |
+          .\tools\provider-resilience-acceptance.ps1 `
+            -CorePath .\src\OMNIX.Core\bin\Release\OMNIX.Core.dll `
+            -OutputPath .\build\artifact\provider-resilience-acceptance.json
+
       - name: Execute provider request budget acceptance
         shell: powershell
         run: |
@@ -81,6 +88,14 @@ jobs:
       - name: Validate sanitized acceptance reports
         shell: pwsh
         run: |
+          $resiliencePath = '.\build\artifact\provider-resilience-acceptance.json'
+          if (-not (Test-Path $resiliencePath)) { throw "Adaptive-provider resilience report is missing." }
+          $resilience = Get-Content $resiliencePath -Raw | ConvertFrom-Json
+          if ($resilience.TestId -ne 'PROVIDER-ADAPTIVE-RESILIENCE-RUNTIME-001') { throw "Unexpected adaptive-provider TestId." }
+          if (-not [bool]$resilience.OverallPass -or [int]$resilience.FailureCount -ne 0) {
+            throw "Adaptive provider resilience runtime acceptance failed."
+          }
+
           $budgetPath = '.\build\artifact\request-budget-acceptance.json'
           if (-not (Test-Path $budgetPath)) { throw "Request-budget report is missing." }
           $budget = Get-Content $budgetPath -Raw | ConvertFrom-Json
@@ -120,13 +135,14 @@ jobs:
           if (-not [bool]$image.OverallPass -or [int]$image.FailureCount -ne 0) {
             throw "Image-normalization runtime acceptance failed."
           }
-          Write-Host "OMNIX request budget + Office tool isolation + diagnostic redaction + image normalization runtime acceptance: PASS"
+          Write-Host "OMNIX adaptive provider + request budget + Office tool isolation + diagnostic redaction + image normalization runtime acceptance: PASS"
 
       - name: Upload sanitized runtime evidence
         uses: actions/upload-artifact@v4
         with:
           name: omnix-runtime-hardening-evidence
           path: |
+            build/artifact/provider-resilience-acceptance.json
             build/artifact/request-budget-acceptance.json
             build/artifact/tool-request-isolation-acceptance.json
             build/artifact/provider-error-redaction-acceptance.json
