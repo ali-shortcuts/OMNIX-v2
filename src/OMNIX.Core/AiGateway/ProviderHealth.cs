@@ -27,7 +27,8 @@ namespace OMNIX.Core.AiGateway
     /// Adaptive, in-memory provider health engine.
     ///
     /// - Tracks every provider independently instead of using one global failure counter.
-    /// - Opens a short circuit only for availability-type failures (network/timeout/provider outage).
+    /// - Opens a short circuit only for availability/outage or rate-limit pressure.
+    /// - Deterministic request/config errors never poison provider availability.
     /// - Uses bounded exponential cooldowns so a broken provider cannot repeatedly stall Office.
     /// - Maintains a latency EWMA used only to rank compatible failover/local candidates.
     /// - Never persists user data and never silently changes cloud providers.
@@ -90,27 +91,27 @@ namespace OMNIX.Core.AiGateway
             }
         }
 
+        /// <summary>
+        /// Records a coarse failure classification. This overload is used by local connectivity
+        /// probes where no provider HTTP category exists.
+        /// </summary>
         public void RecordFailure(string providerId, ErrorCode code)
         {
-            if (string.IsNullOrWhiteSpace(providerId)) return;
-            lock (_gate)
+            RecordFailureCore(providerId, code, IsAvailabilityFailure(code));
+        }
+
+        /// <summary>
+        /// Records a gateway/provider failure with enough classification to avoid treating
+        /// deterministic request/config errors as provider availability outages.
+        /// </summary>
+        public void RecordFailure(string providerId, OmnixException error)
+        {
+            if (error == null)
             {
-                var state = GetOrCreate(providerId);
-                state.FailureCount++;
-                state.LastFailureUtc = DateTime.UtcNow;
-                state.LastErrorCode = code;
-
-                if (!IsAvailabilityFailure(code)) return;
-
-                state.ConsecutiveAvailabilityFailures++;
-                if (state.ConsecutiveAvailabilityFailures < _failureThreshold) return;
-
-                state.ConsecutiveAvailabilityFailures = 0;
-                state.CircuitOpenCount++;
-                double multiplier = Math.Pow(2.0, Math.Min(6, state.CircuitOpenCount - 1));
-                long ticks = (long)Math.Min(_maxCooldown.Ticks, _baseCooldown.Ticks * multiplier);
-                state.CircuitOpenUntilUtc = DateTime.UtcNow.AddTicks(ticks);
+                RecordFailureCore(providerId, ErrorCode.PROVIDER_ERROR, true);
+                return;
             }
+            RecordFailureCore(providerId, error.Code, ShouldOpenCircuit(error));
         }
 
         public bool IsCircuitOpen(string providerId)
@@ -199,6 +200,46 @@ namespace OMNIX.Core.AiGateway
             return code == ErrorCode.NETWORK_ERROR ||
                    code == ErrorCode.TIMEOUT ||
                    code == ErrorCode.PROVIDER_ERROR;
+        }
+
+        public static bool ShouldOpenCircuit(OmnixException error)
+        {
+            if (error == null) return true;
+            if (error.Code == ErrorCode.NETWORK_ERROR || error.Code == ErrorCode.TIMEOUT) return true;
+            if (error.Code != ErrorCode.PROVIDER_ERROR) return false;
+
+            string details = error.TechnicalDetails ?? string.Empty;
+            return details.IndexOf("category=provider_unavailable", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   details.IndexOf("category=provider_timeout", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   details.IndexOf("category=rate_limit_or_quota", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   details.IndexOf("category=circuit_open", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private void RecordFailureCore(string providerId, ErrorCode code, bool availabilityFailure)
+        {
+            if (string.IsNullOrWhiteSpace(providerId)) return;
+            lock (_gate)
+            {
+                var state = GetOrCreate(providerId);
+                state.FailureCount++;
+                state.LastFailureUtc = DateTime.UtcNow;
+                state.LastErrorCode = code;
+
+                if (!availabilityFailure)
+                {
+                    state.ConsecutiveAvailabilityFailures = 0;
+                    return;
+                }
+
+                state.ConsecutiveAvailabilityFailures++;
+                if (state.ConsecutiveAvailabilityFailures < _failureThreshold) return;
+
+                state.ConsecutiveAvailabilityFailures = 0;
+                state.CircuitOpenCount++;
+                double multiplier = Math.Pow(2.0, Math.Min(6, state.CircuitOpenCount - 1));
+                long ticks = (long)Math.Min(_maxCooldown.Ticks, _baseCooldown.Ticks * multiplier);
+                state.CircuitOpenUntilUtc = DateTime.UtcNow.AddTicks(ticks);
+            }
         }
 
         private State GetOrCreate(string providerId)
