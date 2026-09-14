@@ -137,24 +137,24 @@ try {
         }
     }
 
-    $hosts = @(
+    $officeHosts = @(
         [pscustomobject]@{ Name='Excel'; Exe='EXCEL.EXE'; Process='EXCEL' },
         [pscustomobject]@{ Name='Word'; Exe='WINWORD.EXE'; Process='WINWORD' },
         [pscustomobject]@{ Name='PowerPoint'; Exe='POWERPNT.EXE'; Process='POWERPNT' }
     )
 
-    foreach ($host in $hosts) {
-        $exePath = Find-OfficeExe $host.Name $host.Exe
+    foreach ($officeHost in $officeHosts) {
+        $exePath = Find-OfficeExe $officeHost.Name $officeHost.Exe
         $installed = -not [string]::IsNullOrWhiteSpace($exePath)
-        $running = @(Get-Process -Name $host.Process -ErrorAction SilentlyContinue).Count -gt 0
+        $running = @(Get-Process -Name $officeHost.Process -ErrorAction SilentlyContinue).Count -gt 0
         $hostRows += [pscustomobject]@{
-            Host = $host.Name
+            Host = $officeHost.Name
             Installed = $installed
             Running = $running
         }
-        if (-not $installed) { Add-Failure ("Required Office host is not installed: $($host.Name).") }
+        if (-not $installed) { Add-Failure ("Required Office host is not installed: $($officeHost.Name).") }
         if ($running -and -not $AllowRunningOffice) {
-            Add-Failure ("$($host.Name) is already running. Close Office applications before starting the canonical acceptance run.")
+            Add-Failure ("$($officeHost.Name) is already running. Close Office applications before starting the canonical acceptance run.")
         }
     }
 
