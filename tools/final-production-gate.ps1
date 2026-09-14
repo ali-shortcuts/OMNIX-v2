@@ -2,12 +2,14 @@
 # The implementation is isolated in final-production-core.ps1. This wrapper intentionally exposes
 # no development-signature override and performs no install/restart/network/security actions.
 # Before delegating to the broader production core it fail-closes on:
-#   1) stale or cross-build real-machine evidence, and
-#   2) Office E2E evidence missing the real per-window TASKPANE-LIFECYCLE-REAL-001 result.
+#   1) a missing/invalid coherent Office evidence set produced while the payload was installed,
+#   2) stale or cross-build real-machine evidence, and
+#   3) Office E2E evidence missing the real per-window TASKPANE-LIFECYCLE-REAL-001 result.
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$InstallerPath,
+    [string]$BoundOfficeEvidenceReport = "$env:LOCALAPPDATA\OMNIX\logs\bound-office-evidence-validation.json",
     [string]$OfficeE2EReport = "$env:LOCALAPPDATA\OMNIX\logs\full-office-e2e.json",
     [string]$LifecycleReport = "$env:LOCALAPPDATA\OMNIX\logs\lifecycle-acceptance.json",
     [string]$ConsumerSecurityReport = "$env:LOCALAPPDATA\OMNIX\logs\consumer-security-acceptance.json",
@@ -36,6 +38,7 @@ if(-not(Test-Path -LiteralPath $impl -PathType Leaf)){throw "Final production im
 # production core MUST still execute after both guards pass.
 & $bindingGuard `
     -InstallerPath $InstallerPath `
+    -BoundOfficeEvidenceReport $BoundOfficeEvidenceReport `
     -OfficeE2EReport $OfficeE2EReport `
     -LifecycleReport $LifecycleReport `
     -ConsumerSecurityReport $ConsumerSecurityReport `
@@ -46,5 +49,9 @@ if(-not(Test-Path -LiteralPath $impl -PathType Leaf)){throw "Final production im
     -ProviderReport $ProviderReport
 
 & $taskPaneGuard -OfficeE2EReport $OfficeE2EReport
+
+# BoundOfficeEvidenceReport is a wrapper-only guard input. Preserve the long-standing canonical
+# production-core invocation shape after removing that one wrapper-only named parameter.
+[void]$PSBoundParameters.Remove('BoundOfficeEvidenceReport')
 & $impl @PSBoundParameters
 exit $LASTEXITCODE

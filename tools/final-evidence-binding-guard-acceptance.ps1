@@ -17,7 +17,7 @@ try {
     $installerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
     $source = ('a' * 40); $core = ('b' * 64); $identity = ('f' * 64)
     $paths = [ordered]@{
-        Office=(Join-Path $temp 'office.json');Lifecycle=(Join-Path $temp 'lifecycle.json');Security=(Join-Path $temp 'security.json')
+        Bound=(Join-Path $temp 'bound-office.json');Office=(Join-Path $temp 'office.json');Lifecycle=(Join-Path $temp 'lifecycle.json');Security=(Join-Path $temp 'security.json')
         Persistence=(Join-Path $temp 'persistence.json');Ui=(Join-Path $temp 'ui.json');Restart=(Join-Path $temp 'restart.json')
         Offline=(Join-Path $temp 'offline.json');Provider=(Join-Path $temp 'provider.json')
     }
@@ -26,6 +26,7 @@ try {
     }
     function Write-ValidReports {
         $now=[DateTime]::UtcNow.ToString('o')
+        [ordered]@{TestId='BOUND-OFFICE-EVIDENCE-SET-001';EvidenceSchema=2;TimestampUtc=$now;SourceCommit=$source;InstallerSha256=$installerHash;CoreSha256=$core;PayloadIdentitySha256=$identity;InstalledPayloadValidated=$true;RequiredReportCount=4;ValidatedReportCount=4;FailureCount=0;OverallPass=$true}|ConvertTo-Json -Depth 8|Set-Content $paths.Bound -Encoding UTF8
         [ordered]@{TestId='OFFICE-E2E-REAL-001';EvidenceSchema=5;TimestampUtc=$now;OverallPass=$true;Installer=[ordered]@{Sha256=$installerHash;HashMatchedExpected=$true};EvidenceBinding=(Binding)}|ConvertTo-Json -Depth 8|Set-Content $paths.Office -Encoding UTF8
         foreach($name in @('Persistence','Ui','Restart','Offline','Provider')){[ordered]@{TestId=('SYNTHETIC-'+$name);TimestampUtc=$now;OverallPass=$true;EvidenceBinding=(Binding)}|ConvertTo-Json -Depth 8|Set-Content $paths[$name] -Encoding UTF8}
         [ordered]@{TestId='LIFECYCLE-REAL-002';EvidenceSchema=4;TimestampUtc=$now;InstallerSha256=$installerHash;OverallPass=$true;PayloadIdentityPreservedAcrossRepair=$true;PrimaryAssembliesValidatedBeforeAndAfterRepair=$true;EvidenceBinding=(Binding)}|ConvertTo-Json -Depth 8|Set-Content $paths.Lifecycle -Encoding UTF8
@@ -33,7 +34,7 @@ try {
     }
     function Invoke-Guard {
         try {
-            & $guard -InstallerPath $installer -OfficeE2EReport $paths.Office -LifecycleReport $paths.Lifecycle -ConsumerSecurityReport $paths.Security -OfficePersistenceReport $paths.Persistence -OfficeUiReport $paths.Ui -OfficeRestartReport $paths.Restart -LocalOfflineReport $paths.Offline -ProviderReport $paths.Provider -ExpectedSourceCommit $source | Out-Null
+            & $guard -InstallerPath $installer -BoundOfficeEvidenceReport $paths.Bound -OfficeE2EReport $paths.Office -LifecycleReport $paths.Lifecycle -ConsumerSecurityReport $paths.Security -OfficePersistenceReport $paths.Persistence -OfficeUiReport $paths.Ui -OfficeRestartReport $paths.Restart -LocalOfflineReport $paths.Offline -ProviderReport $paths.Provider -ExpectedSourceCommit $source | Out-Null
             return [pscustomobject]@{Accepted=$true;Error=$null}
         } catch { return [pscustomobject]@{Accepted=$false;Error=[string]$_.Exception.Message} }
     }
@@ -44,6 +45,14 @@ try {
         if(-not $pass){$script:CaseFailures += "$name expected pass=$shouldPass accepted=$($r.Accepted) error=$($r.Error)"}
     }
     Run-Case 'ValidExactBinding' {} $true
+    Run-Case 'MissingBoundOfficeEvidenceSet' {Remove-Item -LiteralPath $paths.Bound -Force} $false
+    Run-Case 'WrongBoundOfficeCore' {$r=Get-Content $paths.Bound -Raw|ConvertFrom-Json;$r.CoreSha256=('c'*64);$r|ConvertTo-Json -Depth 8|Set-Content $paths.Bound -Encoding UTF8} $false
+    Run-Case 'WrongBoundOfficeIdentity' {$r=Get-Content $paths.Bound -Raw|ConvertFrom-Json;$r.PayloadIdentitySha256=('1'*64);$r|ConvertTo-Json -Depth 8|Set-Content $paths.Bound -Encoding UTF8} $false
+    Run-Case 'WrongBoundOfficeInstaller' {$r=Get-Content $paths.Bound -Raw|ConvertFrom-Json;$r.InstallerSha256=('e'*64);$r|ConvertTo-Json -Depth 8|Set-Content $paths.Bound -Encoding UTF8} $false
+    Run-Case 'WrongBoundOfficeSource' {$r=Get-Content $paths.Bound -Raw|ConvertFrom-Json;$r.SourceCommit=('d'*40);$r|ConvertTo-Json -Depth 8|Set-Content $paths.Bound -Encoding UTF8} $false
+    Run-Case 'StaleBoundOfficeEvidenceSet' {$r=Get-Content $paths.Bound -Raw|ConvertFrom-Json;$r.TimestampUtc=[DateTime]::UtcNow.AddHours(-180).ToString('o');$r|ConvertTo-Json -Depth 8|Set-Content $paths.Bound -Encoding UTF8} $false
+    Run-Case 'BoundOfficePayloadNotValidated' {$r=Get-Content $paths.Bound -Raw|ConvertFrom-Json;$r.InstalledPayloadValidated=$false;$r|ConvertTo-Json -Depth 8|Set-Content $paths.Bound -Encoding UTF8} $false
+    Run-Case 'BoundOfficeRecordedFailure' {$r=Get-Content $paths.Bound -Raw|ConvertFrom-Json;$r.FailureCount=1;$r.OverallPass=$false;$r|ConvertTo-Json -Depth 8|Set-Content $paths.Bound -Encoding UTF8} $false
     Run-Case 'MissingProviderBinding' {$r=Get-Content $paths.Provider -Raw|ConvertFrom-Json;$r.PSObject.Properties.Remove('EvidenceBinding');$r|ConvertTo-Json -Depth 8|Set-Content $paths.Provider -Encoding UTF8} $false
     Run-Case 'WrongProviderCore' {$r=Get-Content $paths.Provider -Raw|ConvertFrom-Json;$r.EvidenceBinding.CoreSha256=('c'*64);$r|ConvertTo-Json -Depth 8|Set-Content $paths.Provider -Encoding UTF8} $false
     Run-Case 'WrongProviderIdentity' {$r=Get-Content $paths.Provider -Raw|ConvertFrom-Json;$r.EvidenceBinding.PayloadIdentitySha256=('1'*64);$r|ConvertTo-Json -Depth 8|Set-Content $paths.Provider -Encoding UTF8} $false
@@ -60,13 +69,13 @@ try {
 
     Write-ValidReports
     $sentinel=Join-Path $temp 'caller-continued.txt';$caller=Join-Path $temp 'caller.ps1'
-    $callerText="`$ErrorActionPreference='Stop'`n& '$guard' -InstallerPath '$installer' -OfficeE2EReport '$($paths.Office)' -LifecycleReport '$($paths.Lifecycle)' -ConsumerSecurityReport '$($paths.Security)' -OfficePersistenceReport '$($paths.Persistence)' -OfficeUiReport '$($paths.Ui)' -OfficeRestartReport '$($paths.Restart)' -LocalOfflineReport '$($paths.Offline)' -ProviderReport '$($paths.Provider)' -ExpectedSourceCommit '$source'`nSet-Content -LiteralPath '$sentinel' -Value 'CONTINUED' -NoNewline"
+    $callerText="`$ErrorActionPreference='Stop'`n& '$guard' -InstallerPath '$installer' -BoundOfficeEvidenceReport '$($paths.Bound)' -OfficeE2EReport '$($paths.Office)' -LifecycleReport '$($paths.Lifecycle)' -ConsumerSecurityReport '$($paths.Security)' -OfficePersistenceReport '$($paths.Persistence)' -OfficeUiReport '$($paths.Ui)' -OfficeRestartReport '$($paths.Restart)' -LocalOfflineReport '$($paths.Offline)' -ProviderReport '$($paths.Provider)' -ExpectedSourceCommit '$source'`nSet-Content -LiteralPath '$sentinel' -Value 'CONTINUED' -NoNewline"
     Set-Content -LiteralPath $caller -Value $callerText -Encoding UTF8
     $cp=Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-File',$caller) -Wait -PassThru -WindowStyle Hidden
     $continued=($cp.ExitCode -eq 0 -and (Test-Path $sentinel) -and (Get-Content $sentinel -Raw) -eq 'CONTINUED')
     $script:CaseResults += [pscustomobject]@{Name='CallerContinuation';ExpectedPass=$true;Accepted=$continued;Error=$null;Pass=$continued}
     if(-not $continued){$script:CaseFailures += 'Valid guard did not return control to its caller.'}
-    $out=[ordered]@{TestId='FINAL-EVIDENCE-BINDING-GUARD-RUNTIME-001';EvidenceSchema=3;GeneratedUtc=[DateTime]::UtcNow.ToString('o');CaseCount=$script:CaseResults.Count;CallerContinuationProven=$continued;FailureCount=$script:CaseFailures.Count;Failures=$script:CaseFailures;Results=$script:CaseResults;OverallPass=($script:CaseFailures.Count -eq 0)}
+    $out=[ordered]@{TestId='FINAL-EVIDENCE-BINDING-GUARD-RUNTIME-001';EvidenceSchema=4;GeneratedUtc=[DateTime]::UtcNow.ToString('o');CaseCount=$script:CaseResults.Count;BoundOfficeEvidenceSetRequired=$true;CallerContinuationProven=$continued;FailureCount=$script:CaseFailures.Count;Failures=$script:CaseFailures;Results=$script:CaseResults;OverallPass=($script:CaseFailures.Count -eq 0)}
     $outDir=Split-Path -Parent $OutputPath;if($outDir){New-Item -ItemType Directory -Force $outDir|Out-Null};$out|ConvertTo-Json -Depth 8|Set-Content $OutputPath -Encoding UTF8;$out|ConvertTo-Json -Depth 8
     if(-not $out.OverallPass){exit 1};exit 0
 } finally { if(Test-Path $temp){Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue} }

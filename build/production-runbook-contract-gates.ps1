@@ -64,6 +64,12 @@ foreach ($needle in @(
     '-Kind LocalOffline',
     '-Kind RestartBefore',
     '-Kind RestartAfter',
+    'validate-bound-office-evidence.ps1',
+    'bound-office-evidence-validation.json',
+    'BOUND-OFFICE-EVIDENCE-SET-001',
+    'InstalledPayloadValidated',
+    'while OMNIX is still installed',
+    'BoundOfficeEvidenceReport',
     'INTERACTIVE-OFFICE-RUNNER.md',
     'omnix-office-interactive',
     'preflight',
@@ -95,6 +101,8 @@ foreach ($needle in @(
     'mode: full-office-e2e',
     'real-machine-preflight.ps1',
     'bound-real-acceptance.ps1',
+    'validate-bound-office-evidence.ps1',
+    'BOUND-OFFICE-EVIDENCE-SET-001',
     'PrimaryAssembliesValidated=true',
     'does not automate',
     'OMNIX-FINAL-PRODUCTION-GATE-002'
@@ -108,6 +116,9 @@ if ($runbook.IndexOf('sign the final installer before producing exact-installer 
 if ($runbook.IndexOf('AfterUninstall cannot hash an application payload that should no longer exist',[StringComparison]::OrdinalIgnoreCase) -lt 0) {
     throw 'PRODUCTION_RUNBOOK_CONTRACT: runbook must explain how lifecycle identity survives uninstall.'
 }
+if ($runbook.IndexOf('before repair/uninstall lifecycle phases',[StringComparison]::OrdinalIgnoreCase) -lt 0) {
+    throw 'PRODUCTION_RUNBOOK_CONTRACT: coherent Office evidence must be frozen while the payload is still installed.'
+}
 if ($interactiveRunner.IndexOf('Do not install/run it as a background Windows service',[StringComparison]::OrdinalIgnoreCase) -lt 0) {
     throw 'PRODUCTION_RUNBOOK_CONTRACT: interactive runner guide must forbid background Windows service execution.'
 }
@@ -115,5 +126,5 @@ if ($interactiveRunner.IndexOf('Do not continue to Full Office E2E if preflight 
     throw 'PRODUCTION_RUNBOOK_CONTRACT: interactive runner guide must fail closed after preflight failure.'
 }
 
-Write-Host 'PRODUCTION-RUNBOOK-CONTRACT-003: PASS'
-Write-Host 'Canonical bound evidence, interactive Office runner safety, payload-bound lifecycle and final production gate documentation are aligned.'
+Write-Host 'PRODUCTION-RUNBOOK-CONTRACT-004: PASS'
+Write-Host 'Canonical bound evidence, coherent installed-payload Office evidence, interactive runner safety, lifecycle and final gate documentation are aligned.'

@@ -26,6 +26,8 @@ The bound runner validates the installed `OMNIX-build-identity.json` before it a
 
 The binding also records the SHA-256 of `OMNIX-build-identity.json`. The final production guard requires all bound reports to agree on that payload identity, source commit and Core hash and rejects stale evidence.
 
+For the Office evidence set there is one additional mandatory boundary: `tools/validate-bound-office-evidence.ps1` must run **while OMNIX is still installed**, after the bound Full Office E2E phase and before lifecycle uninstall. It independently re-reads the installed build identity and re-hashes all four primary assemblies, then writes `bound-office-evidence-validation.json` with `TestId=BOUND-OFFICE-EVIDENCE-SET-001`. The final production gate requires this aggregate and uses its on-disk Core/payload hashes as the baseline for the rest of the bound evidence.
+
 Lifecycle evidence uses the same verified installed build identity. Its Baseline and AfterRepair phases validate all four primary assemblies and require the same `SourceCommit`, `CoreSha256` and `PayloadIdentitySha256`; the final AfterUninstall report carries that verified binding after the application payload has intentionally been removed.
 
 The lower-level scripts such as `real-office-acceptance.ps1`, `full-office-e2e.ps1`, `provider-acceptance.ps1`, `local-offline-acceptance.ps1`, and `reboot-persistence-acceptance.ps1` are implementation harnesses. A raw PASS from one of them is not production evidence by itself.
@@ -37,6 +39,8 @@ The repository includes a manual `real-office-interactive` GitHub Actions workfl
 Before using it, follow [`INTERACTIVE-OFFICE-RUNNER.md`](./INTERACTIVE-OFFICE-RUNNER.md). The runner must execute interactively under the same Windows user that runs Office, with Explorer in the same session and the custom label `omnix-office-interactive`. Do not run real Office/UI acceptance as a Windows service, LocalSystem, or Session 0 process.
 
 Always dispatch the workflow in `preflight` mode first. `tools/real-machine-preflight.ps1` is read-only and fails closed if the session is non-interactive, required Office hosts are missing, Office is already running, or the exact installer hash is wrong. Only after that preflight passes should the same exact installer/hash be used with `full-office-e2e` mode.
+
+The `full-office-e2e` workflow mode performs the coherent Office evidence-set validation before upload and emits `BOUND-OFFICE-EVIDENCE-SET-001`. When the workflow is not used, the manual command in step 4b below is mandatory.
 
 The workflow deliberately does not restart Windows, disconnect networking, weaken Defender/SmartScreen/firewall/Trust Center, perform lifecycle repair/uninstall, or produce final production approval. Those remain separate phases below.
 
@@ -96,6 +100,34 @@ This canonical invocation produces/binds the real Office E2E report and the subo
 
 A successful bound report must carry binding schema 2 or newer, the exact source commit, the installed Core hash, the installed payload identity hash, and `PrimaryAssembliesValidated=true`.
 
+## 4b. Freeze the coherent Office evidence set while OMNIX is installed
+
+Do this **before repair/uninstall lifecycle phases**. The validator must still be able to read the actual installed payload:
+
+```powershell
+.\tools\validate-bound-office-evidence.ps1 `
+  -LogRoot (Join-Path $env:LOCALAPPDATA 'OMNIX\logs') `
+  -InstallDir (Join-Path $env:LOCALAPPDATA 'Programs\OMNIX') `
+  -SourceCommit $sourceCommit `
+  -ExpectedInstallerSha256 $installerSha `
+  -OutputPath (Join-Path $env:LOCALAPPDATA 'OMNIX\logs\bound-office-evidence-validation.json')
+```
+
+Do not continue unless the output contains:
+
+```json
+{
+  "TestId": "BOUND-OFFICE-EVIDENCE-SET-001",
+  "InstalledPayloadValidated": true,
+  "FailureCount": 0,
+  "OverallPass": true
+}
+```
+
+This report is not a copy of the subordinate JSON claims. It independently re-reads `OMNIX-build-identity.json`, re-hashes Core + Excel + Word + PowerPoint from the installed directory, and requires all four canonical Office reports to match that exact source/Core/payload identity. Preserve `bound-office-evidence-validation.json` through lifecycle/uninstall. The final production gate requires it.
+
+If `real-office-interactive` was used in `full-office-e2e` mode, the workflow already runs this validator and uploads the sanitized aggregate; verify that the retained local report is present before continuing.
+
 ## 5. Run live provider evidence
 
 Use a real configured provider/account/model. Provider availability, quota and pricing are account/provider dependent.
@@ -144,7 +176,7 @@ After signing back into the same Windows user and before replacing/updating OMNI
 
 ## 8. Run payload-bound lifecycle evidence
 
-Lifecycle acceptance is a separate exact-installer-bound and installed-payload-bound three-phase test. Close all Office applications for every phase.
+Lifecycle acceptance is a separate exact-installer-bound and installed-payload-bound three-phase test. Close all Office applications for every phase. Confirm that the passing `bound-office-evidence-validation.json` from step 4b has already been preserved before any uninstall phase.
 
 First save real OMNIX settings so `settings.dat` exists, then capture the installed baseline:
 
@@ -175,7 +207,7 @@ Uninstall OMNIX through its normal uninstall path. Preserve evidence/logs until 
   -SourceCommit $sourceCommit
 ```
 
-AfterUninstall cannot hash an application payload that should no longer exist. Instead, it requires a previously passing Baseline + AfterRepair identity chain and carries the verified Baseline `EvidenceBinding` into the final lifecycle report. The final production guard cross-checks that binding against Office E2E, provider, offline and restart evidence.
+AfterUninstall cannot hash an application payload that should no longer exist. Instead, it requires a previously passing Baseline + AfterRepair identity chain and carries the verified Baseline `EvidenceBinding` into the final lifecycle report. The final production guard cross-checks that binding against the preserved `BOUND-OFFICE-EVIDENCE-SET-001`, Office E2E, provider, offline and restart evidence.
 
 The lifecycle result must therefore prove all of the following for the same release candidate:
 
@@ -212,14 +244,15 @@ Do not substitute UI-only privacy observations for the compiled Gateway test.
 
 ## 11. Run the final production gate
 
-Only after all evidence above belongs to the same intended production candidate:
+Only after all evidence above belongs to the same intended production candidate and the preserved coherent Office evidence-set report still exists:
 
 ```powershell
 .\tools\final-production-gate.ps1 `
-  -InstallerPath $installer
+  -InstallerPath $installer `
+  -BoundOfficeEvidenceReport (Join-Path $env:LOCALAPPDATA 'OMNIX\logs\bound-office-evidence-validation.json')
 ```
 
-The final gate is fail-closed. It checks exact installer binding, source/build/payload identity binding, freshness, Office task-pane evidence, payload-bound lifecycle repair evidence, consumer security, offline/local AI, live provider, privacy evidence, and trusted timestamped Authenticode requirements.
+The final gate is fail-closed. It checks the required `BOUND-OFFICE-EVIDENCE-SET-001` aggregate first and uses its independently captured installed Core/payload hashes as the cross-report baseline. It then checks exact installer binding, source/build/payload identity binding, freshness, Office task-pane evidence, payload-bound lifecycle repair evidence, consumer security, offline/local AI, live provider, privacy evidence, and trusted timestamped Authenticode requirements.
 
 The only production PASS is:
 
@@ -237,11 +270,14 @@ Anything else is not production approval.
 
 Current final binding policy rejects:
 
+- coherent `BOUND-OFFICE-EVIDENCE-SET-001` evidence older than 168 hours;
 - Office E2E/persistence/UI/restart evidence older than 168 hours;
 - lifecycle evidence older than 168 hours;
 - provider/offline evidence older than 72 hours;
 - consumer-security evidence older than 72 hours;
 - timestamps implausibly in the future;
+- a missing/failing aggregate or one that did not validate the installed payload;
+- an aggregate for a different source or installer;
 - missing/old binding schema;
 - mismatched source commit;
 - mismatched installed Core hash;
