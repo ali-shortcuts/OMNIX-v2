@@ -7,6 +7,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$InstallerPath,
+    [string]$BoundOfficeEvidenceReport = "$env:LOCALAPPDATA\OMNIX\logs\bound-office-evidence-validation.json",
     [string]$OfficeE2EReport = "$env:LOCALAPPDATA\OMNIX\logs\full-office-e2e.json",
     [string]$LifecycleReport = "$env:LOCALAPPDATA\OMNIX\logs\lifecycle-acceptance.json",
     [string]$ConsumerSecurityReport = "$env:LOCALAPPDATA\OMNIX\logs\consumer-security-acceptance.json",
@@ -48,6 +49,7 @@ if ($installer.Length -le 0) { throw 'Installer is empty.' }
 $installerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName).Hash.ToLowerInvariant()
 $source = Resolve-OmnixSourceCommit -ExplicitSourceCommit $ExpectedSourceCommit
 
+$boundOffice = Read-Json $BoundOfficeEvidenceReport 'Bound Office evidence set'
 $office = Read-Json $OfficeE2EReport 'Office E2E'
 $persistence = Read-Json $OfficePersistenceReport 'Office persistence'
 $ui = Read-Json $OfficeUiReport 'Office UI'
@@ -58,25 +60,42 @@ $lifecycle = Read-Json $LifecycleReport 'Lifecycle'
 $security = Read-Json $ConsumerSecurityReport 'Consumer security'
 $failures = New-Object System.Collections.Generic.List[string]
 
+# The coherent Office evidence-set validator is the final gate's trust anchor for the hashes that
+# were independently re-read from the installed payload before real-machine evidence upload.
+if ($boundOffice.TestId -ne 'BOUND-OFFICE-EVIDENCE-SET-001') { $failures.Add('Unexpected bound Office evidence-set TestId.') }
+if ([int]$boundOffice.EvidenceSchema -lt 2) { $failures.Add('Bound Office evidence-set schema is too old.') }
+if (-not [bool]$boundOffice.OverallPass) { $failures.Add('Bound Office evidence-set did not pass.') }
+if (-not [bool]$boundOffice.InstalledPayloadValidated) { $failures.Add('Bound Office evidence-set did not validate the installed payload.') }
+if ([int]$boundOffice.RequiredReportCount -ne 4 -or [int]$boundOffice.ValidatedReportCount -ne 4) { $failures.Add('Bound Office evidence-set did not validate all four canonical Office reports.') }
+if ([int]$boundOffice.FailureCount -ne 0) { $failures.Add('Bound Office evidence-set contains recorded validation failures.') }
+if (([string]$boundOffice.SourceCommit).Trim().ToLowerInvariant() -ne $source) { $failures.Add('Bound Office evidence-set is for a different source commit.') }
+if (([string]$boundOffice.InstallerSha256).Trim().ToLowerInvariant() -ne $installerHash) { $failures.Add('Bound Office evidence-set is for a different installer.') }
+Add-Errors $failures (Test-FreshTimestamp $boundOffice 168 'Bound Office evidence set')
+
+$expectedCore = ([string]$boundOffice.CoreSha256).Trim().ToLowerInvariant()
+$expectedIdentity = ([string]$boundOffice.PayloadIdentitySha256).Trim().ToLowerInvariant()
+if ($expectedCore -notmatch '^[0-9a-f]{64}$') { $failures.Add('Bound Office evidence-set CoreSha256 is invalid.') }
+if ($expectedIdentity -notmatch '^[0-9a-f]{64}$') { $failures.Add('Bound Office evidence-set PayloadIdentitySha256 is invalid.') }
+
 if ($office.TestId -ne 'OFFICE-E2E-REAL-001') { $failures.Add('Unexpected Office E2E TestId.') }
 if ([int]$office.EvidenceSchema -lt 5) { $failures.Add('Office E2E evidence schema is too old for build binding.') }
 if (-not [bool]$office.OverallPass) { $failures.Add('Office E2E did not pass.') }
 if ([string]$office.Installer.Sha256 -ne $installerHash) { $failures.Add('Office E2E installer SHA256 does not match the production candidate.') }
 if ($null -eq $office.Installer.HashMatchedExpected -or -not [bool]$office.Installer.HashMatchedExpected) { $failures.Add('Office E2E did not explicitly match the expected installer SHA256.') }
 
-$expectedCore = ''
-$expectedIdentity = ''
 if ($null -eq $office.EvidenceBinding) {
     $failures.Add('Office E2E EvidenceBinding is missing. Use bound-real-acceptance.ps1.')
 }
 else {
-    $expectedCore = ([string]$office.EvidenceBinding.CoreSha256).Trim().ToLowerInvariant()
-    $expectedIdentity = ([string]$office.EvidenceBinding.PayloadIdentitySha256).Trim().ToLowerInvariant()
+    $officeCore = ([string]$office.EvidenceBinding.CoreSha256).Trim().ToLowerInvariant()
+    $officeIdentity = ([string]$office.EvidenceBinding.PayloadIdentitySha256).Trim().ToLowerInvariant()
     if ([int]$office.EvidenceBinding.BindingSchema -lt 2) { $failures.Add('Office E2E binding schema is too old for installed payload identity.') }
-    if ($expectedCore -notmatch '^[0-9a-f]{64}$') { $failures.Add('Office E2E CoreSha256 is invalid.') }
-    if ($expectedIdentity -notmatch '^[0-9a-f]{64}$') { $failures.Add('Office E2E PayloadIdentitySha256 is invalid.') }
+    if ($officeCore -notmatch '^[0-9a-f]{64}$') { $failures.Add('Office E2E CoreSha256 is invalid.') }
+    if ($officeIdentity -notmatch '^[0-9a-f]{64}$') { $failures.Add('Office E2E PayloadIdentitySha256 is invalid.') }
     if ([string]$office.EvidenceBinding.BuildIdentityTestId -ne 'OMNIX-BUILD-IDENTITY-001') { $failures.Add('Office E2E build identity TestId is missing or invalid.') }
     if (-not [bool]$office.EvidenceBinding.PrimaryAssembliesValidated) { $failures.Add('Office E2E did not validate the primary installed assemblies.') }
+    if ($expectedCore -match '^[0-9a-f]{64}$' -and $officeCore -ne $expectedCore) { $failures.Add('Office E2E CoreSha256 does not match the bound installed-payload evidence set.') }
+    if ($expectedIdentity -match '^[0-9a-f]{64}$' -and $officeIdentity -ne $expectedIdentity) { $failures.Add('Office E2E PayloadIdentitySha256 does not match the bound installed-payload evidence set.') }
 }
 
 if ($lifecycle.TestId -ne 'LIFECYCLE-REAL-002') { $failures.Add('Unexpected lifecycle TestId.') }
@@ -112,6 +131,8 @@ if ($failures.Count -gt 0) { throw ('FINAL-EVIDENCE-BINDING-REJECTED: ' + ($fail
     InstallerSha256 = $installerHash
     CoreSha256 = $expectedCore
     PayloadIdentitySha256 = $expectedIdentity
+    BoundOfficeEvidenceSetTestId = [string]$boundOffice.TestId
+    BoundOfficeInstalledPayloadValidated = [bool]$boundOffice.InstalledPayloadValidated
     PrimaryAssembliesValidated = $true
     LifecyclePayloadIdentityBound = $true
     OfficeEvidenceMaxAgeHours = 168
