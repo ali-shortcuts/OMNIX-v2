@@ -50,9 +50,8 @@ if(-not(Test-Path -LiteralPath $impl -PathType Leaf)){throw "Final production im
 
 & $taskPaneGuard -OfficeE2EReport $OfficeE2EReport
 
-# BoundOfficeEvidenceReport is a fail-closed wrapper concern. The existing production core does not
-# consume it directly, so do not leak an unknown named parameter into that script.
-$coreParams=@{}+$PSBoundParameters
-[void]$coreParams.Remove('BoundOfficeEvidenceReport')
-& $impl @coreParams
+# BoundOfficeEvidenceReport is a wrapper-only guard input. Preserve the long-standing canonical
+# production-core invocation shape after removing that one wrapper-only named parameter.
+[void]$PSBoundParameters.Remove('BoundOfficeEvidenceReport')
+& $impl @PSBoundParameters
 exit $LASTEXITCODE
