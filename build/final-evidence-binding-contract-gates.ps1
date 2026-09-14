@@ -50,19 +50,22 @@ foreach($needle in @('EvidenceSchema=4','New-OmnixEvidenceBinding','Compare-Inst
 }
 
 $guard=Get-Content -LiteralPath $files.Guard -Raw
-foreach($needle in @('FINAL-EVIDENCE-BINDING-REJECTED','Test-OmnixEvidenceBinding','PayloadIdentitySha256','PrimaryAssembliesValidated','Office E2E','Office persistence','Office UI','Windows restart persistence','Offline local AI','Live provider matrix','Lifecycle','PayloadIdentityPreservedAcrossRepair','PrimaryAssembliesValidatedBeforeAndAfterRepair','LifecyclePayloadIdentityBound','Consumer security','168','72')){
+foreach($needle in @('FINAL-EVIDENCE-BINDING-REJECTED','BOUND-OFFICE-EVIDENCE-SET-001','BoundOfficeEvidenceReport','InstalledPayloadValidated','RequiredReportCount','ValidatedReportCount','Test-OmnixEvidenceBinding','PayloadIdentitySha256','PrimaryAssembliesValidated','Office E2E','Office persistence','Office UI','Windows restart persistence','Offline local AI','Live provider matrix','Lifecycle','PayloadIdentityPreservedAcrossRepair','PrimaryAssembliesValidatedBeforeAndAfterRepair','LifecyclePayloadIdentityBound','Consumer security','168','72')){
   if($guard.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: final binding guard missing '$needle'."}
 }
 if($guard -match '(?im)^\s*exit\b'){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: composable binding guard must not call exit.'}
 
 $final=Get-Content -LiteralPath $files.FinalGate -Raw
-$bindingIndex=$final.IndexOf('& $bindingGuard',[StringComparison]::Ordinal);$taskPaneIndex=$final.IndexOf('& $taskPaneGuard',[StringComparison]::Ordinal);$coreIndex=$final.IndexOf('& $impl @PSBoundParameters',[StringComparison]::Ordinal)
+foreach($needle in @('BoundOfficeEvidenceReport','& $bindingGuard','-BoundOfficeEvidenceReport $BoundOfficeEvidenceReport','& $taskPaneGuard','coreParams.Remove','& $impl @coreParams')){
+  if($final.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: canonical final gate missing '$needle'."}
+}
+$bindingIndex=$final.IndexOf('& $bindingGuard',[StringComparison]::Ordinal);$taskPaneIndex=$final.IndexOf('& $taskPaneGuard',[StringComparison]::Ordinal);$coreIndex=$final.IndexOf('& $impl @coreParams',[StringComparison]::Ordinal)
 if($bindingIndex -lt 0 -or $taskPaneIndex -lt 0 -or $coreIndex -lt 0){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: canonical final gate is missing binding/task-pane/core invocation.'}
 if(-not($bindingIndex -lt $taskPaneIndex -and $taskPaneIndex -lt $coreIndex)){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: final gate order must be binding guard -> task-pane guard -> production core.'}
 
 $acceptance=Get-Content -LiteralPath $files.Acceptance -Raw
-foreach($needle in @('FINAL-EVIDENCE-BINDING-GUARD-RUNTIME-001','ValidExactBinding','MissingProviderBinding','WrongProviderCore','WrongProviderIdentity','OldBindingSchema','WrongRestartSource','MissingLifecycleBinding','WrongLifecycleIdentity','LifecycleIdentityNotPreserved','OldLifecycleSchema','StaleProvider','FutureOfficeUi','StaleLifecycle','WrongOfficeInstaller','CallerContinuation')){
+foreach($needle in @('FINAL-EVIDENCE-BINDING-GUARD-RUNTIME-001','BoundOfficeEvidenceSetRequired','ValidExactBinding','MissingBoundOfficeEvidenceSet','WrongBoundOfficeCore','WrongBoundOfficeIdentity','WrongBoundOfficeInstaller','WrongBoundOfficeSource','StaleBoundOfficeEvidenceSet','BoundOfficePayloadNotValidated','BoundOfficeRecordedFailure','MissingProviderBinding','WrongProviderCore','WrongProviderIdentity','OldBindingSchema','WrongRestartSource','MissingLifecycleBinding','WrongLifecycleIdentity','LifecycleIdentityNotPreserved','OldLifecycleSchema','StaleProvider','FutureOfficeUi','StaleLifecycle','WrongOfficeInstaller','CallerContinuation')){
   if($acceptance.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: behavior acceptance missing '$needle'."}
 }
 
-Write-Host 'FINAL-EVIDENCE-BINDING-CONTRACT-003: PASS'
+Write-Host 'FINAL-EVIDENCE-BINDING-CONTRACT-004: PASS'
