@@ -126,6 +126,8 @@ tools/bound-real-acceptance.ps1 -Kind RestartAfter
 
 The bound runner executes the underlying real harness, requires a freshly generated report, validates the installed `OMNIX-build-identity.json`, validates Core + Excel + Word + PowerPoint assembly hashes, and only then adds `EvidenceBinding` with the exact source commit and installed payload identity.
 
+Lifecycle uses the same identity model: Baseline validates the installed source/payload and all four primary assemblies, AfterRepair must reproduce the same `SourceCommit`, `CoreSha256` and `PayloadIdentitySha256`, and AfterUninstall carries the verified binding into the final report after the application files are correctly removed.
+
 The lower-level scripts below are **implementation harnesses**. Their raw PASS files are not production evidence by themselves:
 
 - `tools/real-office-acceptance.ps1`
@@ -140,7 +142,7 @@ The lower-level scripts below are **implementation harnesses**. Their raw PASS f
 Other canonical release entrypoints are:
 
 - `tools/privacy-acceptance.ps1` — deterministic compiled Gateway privacy enforcement.
-- `tools/lifecycle-acceptance.ps1` — exact-installer Baseline → AfterRepair → AfterUninstall lifecycle evidence.
+- `tools/lifecycle-acceptance.ps1` — exact-installer + installed-payload-bound Baseline → AfterRepair → AfterUninstall lifecycle evidence.
 - `tools/consumer-security-acceptance.ps1` — real consumer Defender + SmartScreen evidence without disabling/bypassing protection.
 - `tools/release-readiness.ps1` — base fail-closed evidence aggregator.
 - `tools/final-production-gate.ps1` — final fail-closed production aggregator.
