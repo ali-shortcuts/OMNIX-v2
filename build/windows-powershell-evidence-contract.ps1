@@ -12,6 +12,7 @@ $relativeFiles = @(
     'tools\real-evidence-binding.ps1',
     'tools\bound-real-acceptance.ps1',
     'tools\payload-identity-binding-acceptance.ps1',
+    'tools\real-machine-preflight.ps1',
     'tools\lifecycle-acceptance.ps1',
     'tools\lifecycle-core-acceptance.ps1',
     'tools\final-production-evidence-binding-guard.ps1',
