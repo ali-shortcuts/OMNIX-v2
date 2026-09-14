@@ -20,6 +20,11 @@ namespace OMNIX.Core.Tools
     /// </summary>
     public sealed class ToolExecutor
     {
+        private const int SearchQueryMaxChars = 200;
+        private const int SearchResultMaxCount = 20;
+        private const int SearchResultDefaultCount = 8;
+        private const int SearchResultCharCap = 6000;
+
         /// <summary>UI wires this: returns true when the user confirmed the change.</summary>
         public Func<WritePreview, Task<bool>> WriteConfirmation { get; set; }
 
@@ -114,6 +119,24 @@ namespace OMNIX.Core.Tools
                     EnsureRequestScope(ct);
                     string text = adapter.ReadDocument(6000);
                     return ToolResult.Ok(UntrustedData.Wrap("READ_DOCUMENT RESULT", text));
+                }
+                case ToolNames.SearchDocument:
+                {
+                    var args = ToolArguments.Parse(call.ArgumentsJson);
+                    string query = (args.Get("query", "") ?? "").Trim();
+                    if (query.Length == 0)
+                        return ToolResult.Fail("search_document requires a non-empty query.");
+                    if (query.Length > SearchQueryMaxChars)
+                        return ToolResult.Fail("search_document query is too long (maximum 200 characters).");
+
+                    int maxResults;
+                    if (!int.TryParse(args.Get("max_results", SearchResultDefaultCount.ToString()), out maxResults))
+                        maxResults = SearchResultDefaultCount;
+                    maxResults = Math.Max(1, Math.Min(SearchResultMaxCount, maxResults));
+
+                    EnsureRequestScope(ct);
+                    string text = adapter.SearchDocument(query, maxResults, SearchResultCharCap);
+                    return ToolResult.Ok(UntrustedData.Wrap("SEARCH_DOCUMENT RESULT", text));
                 }
                 case ToolNames.CaptureChartAsImage:
                 {
