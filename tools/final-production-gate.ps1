@@ -2,7 +2,7 @@
 # The implementation is isolated in final-production-core.ps1. This wrapper intentionally exposes
 # no development-signature override and performs no install/restart/network/security actions.
 # Before delegating to the broader production core it fail-closes on:
-#   1) stale or cross-build real-machine evidence, and
+#   1) stale or cross-build real-machine/Core evidence, and
 #   2) Office E2E evidence missing the real per-window TASKPANE-LIFECYCLE-REAL-001 result.
 
 [CmdletBinding()]
@@ -43,7 +43,8 @@ if(-not(Test-Path -LiteralPath $impl -PathType Leaf)){throw "Final production im
     -OfficeUiReport $OfficeUiReport `
     -OfficeRestartReport $OfficeRestartReport `
     -LocalOfflineReport $LocalOfflineReport `
-    -ProviderReport $ProviderReport
+    -ProviderReport $ProviderReport `
+    -PrivacyReport $PrivacyReport
 
 & $taskPaneGuard -OfficeE2EReport $OfficeE2EReport
 & $impl @PSBoundParameters
