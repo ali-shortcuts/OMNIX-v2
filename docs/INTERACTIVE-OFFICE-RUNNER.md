@@ -141,7 +141,9 @@ Individual bound JSON files are not enough. Before the workflow can complete suc
 .\tools\validate-bound-office-evidence.ps1
 ```
 
-The validator treats these four reports as **one evidence set**:
+The validator does not trust any report as the source of the expected payload hashes. It independently re-reads the installed `OMNIX-build-identity.json`, verifies its exact source commit, and re-hashes all four installed primary assemblies. The resulting on-disk `CoreSha256` and `PayloadIdentitySha256` become the expected values for the report set.
+
+The validator then treats these four reports as **one evidence set**:
 
 ```text
 full-office-e2e.json
@@ -158,19 +160,19 @@ It fails closed unless all four reports:
 - have `BuildIdentityTestId=OMNIX-BUILD-IDENTITY-001`;
 - have `PrimaryAssembliesValidated=true`;
 - are fresh under the configured evidence-age policy;
-- carry the exact same `SourceCommit`;
-- carry the exact same `CoreSha256`;
-- carry the exact same `PayloadIdentitySha256`.
+- carry the exact checked-out `SourceCommit`;
+- carry the exact `CoreSha256` re-hashed from the installed payload;
+- carry the exact `PayloadIdentitySha256` re-hashed from the installed build-identity file.
 
 The Full Office E2E report must additionally prove that its installer SHA-256 equals the exact `expected_installer_sha256` supplied to the workflow and that `HashMatchedExpected=true`.
 
-A mismatch in even one subordinate report rejects the whole evidence set. The validator produces the sanitized aggregate report:
+A mismatch in even one subordinate report rejects the whole evidence set. A consistent edit to all four JSON reports also fails if it no longer matches the installed files on disk. The validator produces the sanitized aggregate report:
 
 ```text
 BOUND-OFFICE-EVIDENCE-SET-001
 ```
 
-This closes the gap where individually bound reports could otherwise be collected from inconsistent payload identities and only be rejected later by the final production gate.
+This closes both cross-report mixing and consistent-report tampering before the evidence is uploaded from the interactive runner.
 
 ## Uploaded evidence
 
