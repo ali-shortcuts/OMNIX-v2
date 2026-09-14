@@ -1,0 +1,123 @@
+name: real-office-interactive
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run read-only preflight only, or execute the canonical bound Full Office E2E after preflight.'
+        required: true
+        default: preflight
+        type: choice
+        options:
+          - preflight
+          - full-office-e2e
+      installer_path:
+        description: 'Absolute path to the exact installer already present on the interactive self-hosted Windows runner.'
+        required: true
+        type: string
+      expected_installer_sha256:
+        description: 'Expected SHA-256 of the exact installer (64 hexadecimal characters).'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  real-office:
+    name: Interactive real Office acceptance
+    runs-on: [self-hosted, Windows, X64, omnix-office-interactive]
+    timeout-minutes: 90
+    env:
+      OMNIX_INSTALLER_PATH: ${{ inputs.installer_path }}
+      OMNIX_EXPECTED_INSTALLER_SHA256: ${{ inputs.expected_installer_sha256 }}
+      OMNIX_MODE: ${{ inputs.mode }}
+    steps:
+      - name: Checkout exact requested source ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          clean: true
+
+      - name: Resolve exact source commit
+        id: source
+        shell: powershell
+        run: |
+          $source = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($source -notmatch '^[0-9a-f]{40}$') { throw 'Could not resolve exact source commit.' }
+          "sha=$source" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding ascii
+          Write-Host "OMNIX real-machine source commit: $source"
+
+      - name: Validate interactive Windows Office environment
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path .\build\artifact | Out-Null
+          .\tools\real-machine-preflight.ps1 `
+            -InstallerPath $env:OMNIX_INSTALLER_PATH `
+            -ExpectedInstallerSha256 $env:OMNIX_EXPECTED_INSTALLER_SHA256 `
+            -SourceCommit '${{ steps.source.outputs.sha }}' `
+            -OutputPath .\build\artifact\real-machine-preflight-before.json
+
+      - name: Execute canonical bound Full Office E2E
+        if: ${{ inputs.mode == 'full-office-e2e' }}
+        shell: powershell
+        run: |
+          .\tools\bound-real-acceptance.ps1 `
+            -Kind FullOfficeE2E `
+            -InstallerPath $env:OMNIX_INSTALLER_PATH `
+            -ExpectedInstallerSha256 $env:OMNIX_EXPECTED_INSTALLER_SHA256 `
+            -SourceCommit '${{ steps.source.outputs.sha }}'
+
+      - name: Validate installed payload identity after Full Office E2E
+        if: ${{ inputs.mode == 'full-office-e2e' }}
+        shell: powershell
+        run: |
+          .\tools\real-machine-preflight.ps1 `
+            -InstallerPath $env:OMNIX_INSTALLER_PATH `
+            -ExpectedInstallerSha256 $env:OMNIX_EXPECTED_INSTALLER_SHA256 `
+            -SourceCommit '${{ steps.source.outputs.sha }}' `
+            -RequireInstalledPayload `
+            -OutputPath .\build\artifact\real-machine-preflight-after.json
+
+      - name: Validate bound Office evidence
+        if: ${{ inputs.mode == 'full-office-e2e' }}
+        shell: powershell
+        run: |
+          $logRoot = Join-Path $env:LOCALAPPDATA 'OMNIX\logs'
+          $required = @(
+            'full-office-e2e.json',
+            'real-office-acceptance.json',
+            'real-office-ui-acceptance.json',
+            'taskpane-lifecycle-real-acceptance.json'
+          )
+          foreach ($name in $required) {
+            $path = Join-Path $logRoot $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required real Office evidence missing: $name" }
+            $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            if ($null -eq $report.EvidenceBinding) { throw "Bound EvidenceBinding missing from $name" }
+            if ([int]$report.EvidenceBinding.BindingSchema -lt 2) { throw "Old EvidenceBinding schema in $name" }
+            if ([string]$report.EvidenceBinding.SourceCommit -ne '${{ steps.source.outputs.sha }}') { throw "Source binding mismatch in $name" }
+            if (-not [bool]$report.EvidenceBinding.PrimaryAssembliesValidated) { throw "Primary assembly validation missing in $name" }
+          }
+          Write-Host 'Canonical bound real Office evidence is present for the exact source.'
+
+      - name: Upload sanitized real-machine evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: omnix-real-office-${{ inputs.mode }}-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/artifact/real-machine-preflight-before.json
+            build/artifact/real-machine-preflight-after.json
+            ${{ env.LOCALAPPDATA }}\OMNIX\logs\full-office-e2e.json
+            ${{ env.LOCALAPPDATA }}\OMNIX\logs\real-office-acceptance.json
+            ${{ env.LOCALAPPDATA }}\OMNIX\logs\real-office-ui-acceptance.json
+            ${{ env.LOCALAPPDATA }}\OMNIX\logs\taskpane-lifecycle-real-acceptance.json
+
+# Safety boundary:
+# - This workflow is manual only and requires an explicitly labelled interactive self-hosted runner.
+# - It never restarts Windows or changes network/firewall/Defender/SmartScreen/Office Trust Center state.
+# - Restart, offline-network observation, live-provider and lifecycle/consumer-security evidence remain
+#   separate operator-controlled phases documented in docs/PRODUCTION-EVIDENCE-RUNBOOK.md.
