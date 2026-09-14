@@ -89,6 +89,10 @@ jobs:
         shell: pwsh
         run: ./build/adaptive-provider-contract-gates.ps1
 
+      - name: Enforce conversation continuity contract
+        shell: pwsh
+        run: ./build/conversation-continuity-contract-gates.ps1
+
       - name: Enforce provider diagnostic privacy contract
         shell: pwsh
         run: ./build/diagnostic-redaction-contract-gates.ps1

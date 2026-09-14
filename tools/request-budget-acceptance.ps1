@@ -1,9 +1,9 @@
 # OMNIX provider request-budget runtime acceptance
 #
 # Deterministic, offline test of the compiled OMNIX.Core ChatRequestBudgeter. It proves that local
-# chat history may remain useful to the UI while provider-bound replay is hard-bounded and stale
-# image bytes are not resent forever. No Office application, provider, network, registry or file
-# outside the requested JSON output is touched.
+# chat history may remain useful to the UI while provider-bound replay is hard-bounded, stale
+# image bytes are not resent forever, and long conversations preserve useful continuity anchors.
+# No Office application, provider, network, registry or file outside the requested JSON output is touched.
 
 [CmdletBinding()]
 param(
@@ -20,9 +20,6 @@ $newtonsoft = Join-Path $coreDir 'Newtonsoft.Json.dll'
 if (Test-Path -LiteralPath $newtonsoft) { [void][Reflection.Assembly]::LoadFrom($newtonsoft) }
 [void][Reflection.Assembly]::LoadFrom($core)
 
-# Use a compiled C# harness rather than PowerShell generic-list reflection. This exercises the exact
-# public OMNIX.Core request types and avoids PowerShell type-resolution differences between local
-# Windows and GitHub-hosted Windows PowerShell.
 $source = @'
 using System;
 using System.Collections.Generic;
@@ -38,6 +35,10 @@ public sealed class RequestBudgetAcceptanceResult
     public string GeneratedUtc { get; set; }
     public bool HistoryTurnCapPass { get; set; }
     public bool HistoryCharCapPass { get; set; }
+    public bool InitialUserAnchorPreservedPass { get; set; }
+    public bool RelevantOlderTurnPreservedPass { get; set; }
+    public bool RecentTailPreservedPass { get; set; }
+    public bool ContinuityOrderPass { get; set; }
     public bool HistoricalImagesRemovedPass { get; set; }
     public bool HistoricalImageMarkerPass { get; set; }
     public bool CurrentImagePreservedPass { get; set; }
@@ -68,13 +69,24 @@ public static class RequestBudgetAcceptanceHarness
         };
     }
 
+    private static int FindMarker(List<ChatTurn> turns, string marker)
+    {
+        if (turns == null) return -1;
+        for (int i = 0; i < turns.Count; i++)
+        {
+            string text = turns[i] != null ? (turns[i].Text ?? string.Empty) : string.Empty;
+            if (text.IndexOf(marker, StringComparison.Ordinal) >= 0) return i;
+        }
+        return -1;
+    }
+
     public static RequestBudgetAcceptanceResult Run()
     {
         var failures = new List<string>();
         var result = new RequestBudgetAcceptanceResult
         {
             TestId = "REQUEST-BUDGET-RUNTIME-001",
-            EvidenceSchema = 1,
+            EvidenceSchema = 2,
             GeneratedUtc = DateTime.UtcNow.ToString("o"),
             Failures = failures,
             Privacy = "Aggregate booleans/counts only; no prompts, document content, API keys or image bytes are written."
@@ -93,13 +105,21 @@ public static class RequestBudgetAcceptanceHarness
             for (int i = 0; i < 150; i++)
             {
                 var role = (i % 2 == 0) ? ChatRole.User : ChatRole.Assistant;
-                var turn = Turn(role, "H" + i.ToString("D3") + ":" + new string('x', 2000));
+                string prefix = "H" + i.ToString("D3") + ":";
+                if (i == 0)
+                    prefix = "INITIAL-USER-ANCHOR quarterly dashboard revenue baseline: ";
+                else if (i == 60)
+                    prefix = "RELEVANT-OLDER-DECISION quarterly-margin decision keep gross margin formula stable: ";
+                else if (i == 149)
+                    prefix = "RECENT-TAIL-MARKER latest assistant context: ";
+
+                var turn = Turn(role, prefix + new string('x', 2000));
                 if (i == 149)
                     turn.Images = new List<ImageAttachment> { Image(32, "old-image.png") };
                 history.Add(turn);
             }
 
-            var current = Turn(ChatRole.User, "current request");
+            var current = Turn(ChatRole.User, "continue the quarterly-margin decision");
             current.Images = new List<ImageAttachment> { Image(1024, "current.png") };
 
             var request = new ChatRequest
@@ -117,6 +137,18 @@ public static class RequestBudgetAcceptanceHarness
             int historyChars = bounded.History == null ? 0 : bounded.History.Sum(t => (t != null && t.Text != null) ? t.Text.Length : 0);
             result.HistoryCharCapPass = historyChars <= (48 * 1024);
             if (!result.HistoryCharCapPass) failures.Add("History text exceeded the hard provider replay character cap.");
+
+            int anchorIndex = FindMarker(bounded.History, "INITIAL-USER-ANCHOR");
+            int relevantIndex = FindMarker(bounded.History, "RELEVANT-OLDER-DECISION");
+            int recentIndex = FindMarker(bounded.History, "RECENT-TAIL-MARKER");
+            result.InitialUserAnchorPreservedPass = anchorIndex >= 0;
+            result.RelevantOlderTurnPreservedPass = relevantIndex >= 0;
+            result.RecentTailPreservedPass = recentIndex >= 0;
+            result.ContinuityOrderPass = anchorIndex >= 0 && relevantIndex > anchorIndex && recentIndex > relevantIndex;
+            if (!result.InitialUserAnchorPreservedPass) failures.Add("The first meaningful user goal was lost from a long provider replay.");
+            if (!result.RelevantOlderTurnPreservedPass) failures.Add("A lexically relevant older decision was lost from a long provider replay.");
+            if (!result.RecentTailPreservedPass) failures.Add("The recent conversation tail was not preserved.");
+            if (!result.ContinuityOrderPass) failures.Add("Continuity-selected turns were not replayed in original chronological order.");
 
             bool historyHasBytes = false;
             bool markerFound = false;
@@ -143,6 +175,8 @@ public static class RequestBudgetAcceptanceHarness
             if (!result.SystemPromptCapPass) failures.Add("System prompt exceeded the hard request cap.");
 
             result.SourceRequestNotMutatedPass = request.History.Count == 150 &&
+                request.History[0].Text.IndexOf("INITIAL-USER-ANCHOR", StringComparison.Ordinal) >= 0 &&
+                request.History[60].Text.IndexOf("RELEVANT-OLDER-DECISION", StringComparison.Ordinal) >= 0 &&
                 request.History[149].Images != null && request.History[149].Images[0].PngBytes.Length == 32 &&
                 request.UserTurn.Images != null && request.UserTurn.Images[0].PngBytes.Length == 1024;
             if (!result.SourceRequestNotMutatedPass) failures.Add("Budgeting mutated source conversation/request objects.");
