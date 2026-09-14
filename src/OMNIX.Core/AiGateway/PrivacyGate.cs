@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -72,10 +73,18 @@ namespace OMNIX.Core.AiGateway
     public sealed class ProviderRouter
     {
         private readonly ProviderRegistry _registry;
+        private readonly ProviderHealthTracker _health;
 
         public ProviderRouter(ProviderRegistry registry)
+            : this(registry, null)
         {
+        }
+
+        public ProviderRouter(ProviderRegistry registry, ProviderHealthTracker health)
+        {
+            if (registry == null) throw new ArgumentNullException("registry");
             _registry = registry;
+            _health = health;
         }
 
         public async Task ProbeLocalProvidersAsync()
@@ -84,6 +93,7 @@ namespace OMNIX.Core.AiGateway
                 string.Equals(x.Info.Id, "ollama", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(x.Info.Id, "lmstudio", StringComparison.OrdinalIgnoreCase)))
             {
+                var sw = Stopwatch.StartNew();
                 try
                 {
                     var creds = BuildCredentials(p.Info.Id);
@@ -92,11 +102,22 @@ namespace OMNIX.Core.AiGateway
                     {
                         bool ok = await p.TestConnectionAsync(cts.Token).ConfigureAwait(false);
                         _registry.SetLocalAvailability(p.Info.Id, ok);
+                        if (_health != null)
+                        {
+                            if (ok) _health.RecordSuccess(p.Info.Id, sw.ElapsedMilliseconds);
+                            else _health.RecordFailure(p.Info.Id, ErrorCode.PROVIDER_ERROR);
+                        }
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    _registry.SetLocalAvailability(p.Info.Id, false);
+                    if (_health != null) _health.RecordFailure(p.Info.Id, ErrorCode.TIMEOUT);
                 }
                 catch
                 {
                     _registry.SetLocalAvailability(p.Info.Id, false);
+                    if (_health != null) _health.RecordFailure(p.Info.Id, ErrorCode.NETWORK_ERROR);
                 }
             }
         }
@@ -159,6 +180,9 @@ namespace OMNIX.Core.AiGateway
                 !(uri.IsLoopback || string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)))
                 return null;
 
+            if (_health != null && _health.IsCircuitOpen("custom"))
+                return null;
+
             var custom = _registry.Get("custom");
             if (custom == null) return null;
             custom.Configure(BuildCredentials("custom"));
@@ -175,22 +199,22 @@ namespace OMNIX.Core.AiGateway
 
         private IProviderAdapter ResolveAvailableLocal(string preferredId, bool needsVision)
         {
-            IProviderAdapter preferred = _registry.Get(preferredId);
-            if (IsCompatibleAvailableLocal(preferred, needsVision)) return preferred;
+            var candidates = _registry.All
+                .Where(x => x.Info.Kind == ProviderKind.Local)
+                .Where(x => IsCompatibleAvailableLocal(x, needsVision))
+                .OrderBy(x => string.Equals(x.Info.Id, preferredId, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .ThenBy(x => _health != null ? _health.GetRoutingPenalty(x.Info.Id) : 0)
+                .ThenBy(x => x.Info.DisplayName ?? x.Info.Id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
-            foreach (var candidate in _registry.All.Where(x => x.Info.Kind == ProviderKind.Local))
-            {
-                if (preferred != null && string.Equals(candidate.Info.Id, preferred.Info.Id, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                if (IsCompatibleAvailableLocal(candidate, needsVision)) return candidate;
-            }
-            return null;
+            return candidates.FirstOrDefault();
         }
 
         private bool IsCompatibleAvailableLocal(IProviderAdapter provider, bool needsVision)
         {
             if (provider == null || provider.Info.Kind != ProviderKind.Local) return false;
             if (!_registry.IsLocalAvailable(provider.Info.Id)) return false;
+            if (_health != null && _health.IsCircuitOpen(provider.Info.Id)) return false;
             if (!needsVision) return true;
 
             try

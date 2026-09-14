@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -18,33 +19,35 @@ namespace OMNIX.Core.AiGateway
 {
     /// <summary>
     /// Layer 5 — AI Gateway: the single entry point between UI and providers.
-    /// Responsibilities: privacy enforcement, provider routing, retry/failover suggestions,
+    /// Responsibilities: privacy enforcement, adaptive provider routing, retry/failover suggestions,
     /// whitelisted Office tool loop, Vision attachment routing and untrusted-data wrapping.
     /// The UI never talks to a provider directly.
     /// </summary>
     public sealed class AiGateway
     {
         private readonly ProviderRegistry _registry;
+        private readonly ProviderHealthTracker _health;
         private readonly ProviderRouter _router;
         private readonly PrivacyGate _privacy;
-        private readonly FailoverPolicy _failover;
 
         public AiGateway(ProviderRegistry registry)
         {
+            if (registry == null) throw new ArgumentNullException("registry");
             _registry = registry;
-            _router = new ProviderRouter(registry);
+            _health = new ProviderHealthTracker();
+            _router = new ProviderRouter(registry, _health);
             _privacy = new PrivacyGate();
-            _failover = new FailoverPolicy(3);
         }
 
         public ProviderRegistry Registry { get { return _registry; } }
         public ProviderRouter Router { get { return _router; } }
         public PrivacyGate Privacy { get { return _privacy; } }
+        public ProviderHealthTracker Health { get { return _health; } }
 
         /// <summary>
-        /// Raised after repeated provider failures when OMNIX can identify a genuinely usable
-        /// alternative. This is a suggestion only: OMNIX never silently moves Office data from
-        /// one cloud provider to another. The UI/user remains in control of the switch.
+        /// Raised when OMNIX can identify a genuinely usable alternative after a provider failure
+        /// or while the selected provider is in a short circuit-breaker cooldown. This is a suggestion only:
+        /// OMNIX never silently moves Office data from one cloud provider to another.
         /// </summary>
         public event Action<IProviderAdapter> SuggestFailover;
 
@@ -58,6 +61,7 @@ namespace OMNIX.Core.AiGateway
         /// are filtered at the Gateway boundary, so tool JSON never flashes into the chat pane.
         /// Runs the approved tool loop for at most three rounds. Office chart/slide/current-view
         /// PNGs are attached to the next tool-result turn so Vision-capable models can inspect them.
+        /// Provider health/latency is tracked in-memory without retaining prompts or Office data.
         /// </summary>
         public async Task<ChatResponse> ChatAsync(
             ChatRequest request,
@@ -88,33 +92,35 @@ namespace OMNIX.Core.AiGateway
                         "Provider=" + provider.Info.Id + "; model=" + (provider.Info.DefaultModel ?? "?") + "; request has images.",
                         "Use a Vision-capable provider/model or send text-only context.");
 
+                if (_health.IsCircuitOpen(provider.Info.Id))
+                {
+                    SuggestAlternative(provider, req.HasImages, "circuit_open");
+                    TimeSpan remaining = _health.GetRemainingCooldown(provider.Info.Id);
+                    throw OmnixException.Provider(
+                        "Provider=" + provider.Info.Id + "; category=circuit_open; retry_after_seconds=" +
+                        Math.Max(1, (int)Math.Ceiling(remaining.TotalSeconds)) +
+                        "; provider_response_body=REDACTED");
+                }
+
                 // This MUST remain before provider.SendAsync. Privacy acceptance locks this ordering.
                 await _privacy.EnsureAllowedAsync(provider).ConfigureAwait(true);
 
                 ChatResponse response;
                 var visibleDelta = new ToolProtocolDeltaFilter(onDelta);
+                var sw = Stopwatch.StartNew();
                 try
                 {
                     response = await RetryPolicy.ExecuteWithRetryAsync(
                         innerCt => provider.SendAsync(req, visibleDelta.OnDelta, innerCt), ct).ConfigureAwait(true);
-                    _failover.RecordSuccess();
+                    sw.Stop();
+                    _health.RecordSuccess(provider.Info.Id, sw.ElapsedMilliseconds);
                 }
-                catch (OmnixException)
+                catch (OmnixException ex)
                 {
-                    _failover.RecordFailure();
-                    if (_failover.ShouldSuggestFailover)
-                    {
-                        var handler = SuggestFailover;
-                        var next = FindBestFailoverCandidate(provider, req.HasImages);
-                        if (handler != null && next != null)
-                        {
-                            Logger.Gateway("Failover suggestion: current=" + provider.Info.Id +
-                                           " candidate=" + next.Info.Id +
-                                           " privacy=" + SettingsManager.Instance.Settings.Privacy +
-                                           " needsVision=" + req.HasImages);
-                            handler(next);
-                        }
-                    }
+                    sw.Stop();
+                    _health.RecordFailure(provider.Info.Id, ex);
+                    if (ShouldSuggestAlternative(ex))
+                        SuggestAlternative(provider, req.HasImages, "request_failure_" + ex.Code);
                     throw;
                 }
 
@@ -187,12 +193,36 @@ namespace OMNIX.Core.AiGateway
             return final;
         }
 
+        private bool ShouldSuggestAlternative(OmnixException ex)
+        {
+            if (ex == null) return false;
+            if (ProviderHealthTracker.IsAvailabilityFailure(ex.Code)) return true;
+            return ex.Code == ErrorCode.AUTH_ERROR || ex.Code == ErrorCode.MODEL_ERROR;
+        }
+
+        private void SuggestAlternative(IProviderAdapter current, bool needsVision, string reason)
+        {
+            var handler = SuggestFailover;
+            if (handler == null) return;
+
+            var next = FindBestFailoverCandidate(current, needsVision);
+            if (next == null) return;
+
+            Logger.Gateway("Adaptive failover suggestion: current=" + (current != null ? current.Info.Id : "none") +
+                           " candidate=" + next.Info.Id +
+                           " reason=" + reason +
+                           " privacy=" + SettingsManager.Instance.Settings.Privacy +
+                           " needsVision=" + needsVision +
+                           " candidatePenalty=" + _health.GetRoutingPenalty(next.Info.Id));
+            handler(next);
+        }
+
         /// <summary>
-        /// Chooses a failover SUGGESTION, not an automatic destination. Priority is:
+        /// Chooses a failover SUGGESTION, not an automatic cloud destination. Priority is:
         /// compatible local AI first, then configured cloud providers whose current access profile
         /// includes a free tier/model/credit allowance, then other configured cloud providers.
-        /// LocalOnly privacy mode never suggests a cloud provider. Providers that require an API
-        /// key are excluded when no key is stored. Vision-incompatible candidates are excluded.
+        /// Within the same class, recently healthy/lower-latency providers rank ahead of degraded
+        /// providers. Open circuits are excluded. LocalOnly never suggests a cloud provider.
         /// </summary>
         private IProviderAdapter FindBestFailoverCandidate(IProviderAdapter current, bool needsVision)
         {
@@ -211,12 +241,15 @@ namespace OMNIX.Core.AiGateway
 
             return candidates
                 .OrderBy(p => FailoverRank(p.Info))
+                .ThenBy(p => _health.GetRoutingPenalty(p.Info.Id))
                 .ThenBy(p => p.Info.DisplayName ?? p.Info.Id, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault();
         }
 
         private bool IsFailoverCandidateUsable(IProviderAdapter provider, bool needsVision, PrivacyMode privacyMode)
         {
+            if (_health.IsCircuitOpen(provider.Info.Id)) return false;
+
             if (provider.Info.Kind == ProviderKind.Local)
             {
                 if (string.Equals(provider.Info.Id, "ollama", StringComparison.OrdinalIgnoreCase) ||
