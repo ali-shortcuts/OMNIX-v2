@@ -22,6 +22,13 @@ namespace OMNIX.Core.Context
         /// <summary>Whole document/workbook/presentation text, capped (read tool).</summary>
         string ReadDocument(int maxChars);
 
+        /// <summary>
+        /// Targeted read-only lookup across the active workbook/document/presentation. Implementations
+        /// must use bounded/native host search where available and return at most maxResults inside
+        /// maxChars; they must not materialize the entire Office file merely to search it.
+        /// </summary>
+        string SearchDocument(string query, int maxResults, int maxChars);
+
         /// <summary>Excel only: PNG bytes of a chart (by name, or the active chart).</summary>
         byte[] CaptureChartAsImage(string chartName);
 
