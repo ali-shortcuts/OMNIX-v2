@@ -7,9 +7,9 @@ $root=Split-Path -Parent $PSScriptRoot
 $failures=New-Object System.Collections.Generic.List[string]
 
 function Read-Repo([string]$r){$p=Join-Path $root $r;if(-not(Test-Path -LiteralPath $p -PathType Leaf)){$failures.Add("Missing: $r");return ''};return Get-Content -LiteralPath $p -Raw}
-function Need([string]$r,[string]$n,[string]$why){$t=Read-Repo $r;if(-not$t.Contains($n)){$failures.Add("${r}: missing '$n' — $why")}}
-function Forbid([string]$r,[string]$n,[string]$why){$t=Read-Repo $r;if($t.Contains($n)){$failures.Add("${r}: forbidden '$n' — $why")}}
-function Parse-Ps([string]$r){$p=Join-Path $root $r;if(-not(Test-Path -LiteralPath $p -PathType Leaf)){$failures.Add("Missing: $r");return};$tok=$null;$err=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err);foreach($e in @($err)){$failures.Add("${r}: parser error — $($e.Message)")}}
+function Need([string]$r,[string]$n,[string]$why){$t=Read-Repo $r;if(-not$t.Contains($n)){$failures.Add("${r}: missing '$n' - $why")}}
+function Forbid([string]$r,[string]$n,[string]$why){$t=Read-Repo $r;if($t.Contains($n)){$failures.Add("${r}: forbidden '$n' - $why")}}
+function Parse-Ps([string]$r){$p=Join-Path $root $r;if(-not(Test-Path -LiteralPath $p -PathType Leaf)){$failures.Add("Missing: $r");return};$tok=$null;$err=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err);foreach($e in @($err)){$failures.Add("${r}: parser error - $($e.Message)")}}
 
 # Deterministic rendered workspace evidence.
 Need 'src/OMNIX.Core/Ui/ChatBubble.cs' 'OMNIX.AssistantMessageBody' 'real AI output must be observable in rendered WPF UI.'
@@ -72,14 +72,20 @@ Need 'tools/office-write-boundary-acceptance.ps1' 'AllBoundaryChecksPass' 'all i
 Forbid 'tools/full-office-e2e.ps1' 'Restart-Computer' 'full E2E must never restart Windows.'
 Forbid 'tools/full-office-e2e.ps1' 'Disable-NetAdapter' 'full E2E must never alter networking.'
 
-# Stable lifecycle wrapper + precise core, including background maintenance cleanup.
+# Stable lifecycle wrapper + precise payload-bound core, including background maintenance cleanup.
 Parse-Ps 'tools/lifecycle-acceptance.ps1'
 Need 'tools/lifecycle-acceptance.ps1' 'lifecycle-core-acceptance.ps1' 'canonical entrypoint must delegate to the precise engine.'
+Need 'tools/lifecycle-acceptance.ps1' 'SourceCommit' 'canonical lifecycle entrypoint must allow exact source binding.'
 Parse-Ps 'tools/lifecycle-core-acceptance.ps1'
 Need 'tools/lifecycle-core-acceptance.ps1' 'LIFECYCLE-REAL-002' 'precise lifecycle TestId required.'
-Need 'tools/lifecycle-core-acceptance.ps1' 'EvidenceSchema=3' 'maintenance-task lifecycle evidence schema is required.'
+Need 'tools/lifecycle-core-acceptance.ps1' 'EvidenceSchema=4' 'payload-bound lifecycle evidence schema is required.'
 Need 'tools/lifecycle-core-acceptance.ps1' "ValidateSet('Baseline','AfterRepair','AfterUninstall')" 'three explicit lifecycle phases required.'
 Need 'tools/lifecycle-core-acceptance.ps1' 'InstallerSha256' 'lifecycle must be bound to exact repair candidate.'
+Need 'tools/lifecycle-core-acceptance.ps1' 'New-OmnixEvidenceBinding' 'baseline and repair must validate installed build identity.'
+Need 'tools/lifecycle-core-acceptance.ps1' 'Compare-InstalledBinding' 'same-build repair must compare exact installed payload identity.'
+Need 'tools/lifecycle-core-acceptance.ps1' 'PayloadIdentitySha256' 'lifecycle state must carry installed payload identity.'
+Need 'tools/lifecycle-core-acceptance.ps1' 'PayloadIdentityPreservedAcrossRepair' 'repair must prove payload identity preservation.'
+Need 'tools/lifecycle-core-acceptance.ps1' 'PrimaryAssembliesValidatedBeforeAndAfterRepair' 'lifecycle must prove Core/Excel/Word/PowerPoint validation before and after repair.'
 Need 'tools/lifecycle-core-acceptance.ps1' 'CoreSha256' 'same-build repair must preserve installed Core hash.'
 Need 'tools/lifecycle-core-acceptance.ps1' 'DisabledItems' 'shared DisabledItems recovery state must be preserved.'
 Need 'tools/lifecycle-core-acceptance.ps1' 'CrashingAddinList' 'shared crashing-addin state must be preserved.'
@@ -93,9 +99,10 @@ Forbid 'tools/lifecycle-core-acceptance.ps1' 'RegDelete' 'lifecycle evidence eng
 Forbid 'tools/lifecycle-core-acceptance.ps1' 'Restart-Computer' 'lifecycle engine must never restart Windows.'
 Forbid 'tools/lifecycle-core-acceptance.ps1' 'Disable-NetAdapter' 'lifecycle engine must never change network state.'
 
-# Stable final gate wrapper + production core.
+# Stable final gate wrapper + production core. Strong lifecycle identity checks execute in the binding guard before the core.
 Parse-Ps 'tools/final-production-gate.ps1'
 Need 'tools/final-production-gate.ps1' 'final-production-core.ps1' 'canonical final gate must delegate to the production core.'
+Need 'tools/final-production-gate.ps1' 'final-production-evidence-binding-guard.ps1' 'canonical final gate must execute exact-build evidence binding before production core.'
 Forbid 'tools/final-production-gate.ps1' 'AllowDevelopmentSignature' 'canonical production entrypoint must expose no dev-signature escape.'
 Parse-Ps 'tools/final-production-core.ps1'
 Need 'tools/final-production-core.ps1' 'OMNIX-FINAL-PRODUCTION-GATE-002' 'canonical final TestId required.'
@@ -132,5 +139,5 @@ Forbid 'build/sign-production.ps1' 'ConvertTo-SecureString' 'PFX passwords are n
 
 if($failures.Count -gt 0){Write-Host 'OMNIX FINAL-EVIDENCE CONTRACT: FAIL' -ForegroundColor Red;foreach($f in $failures){Write-Host " - $f" -ForegroundColor Red};exit 1}
 Write-Host 'OMNIX FINAL-EVIDENCE CONTRACT: PASS'
-Write-Host 'Structures are intact; real Office/provider/reboot/lifecycle/consumer-security execution and trusted production signing remain runtime requirements.'
+Write-Host 'Structures are intact; real Office/provider/reboot/payload-bound lifecycle/consumer-security execution and trusted production signing remain runtime requirements.'
 exit 0

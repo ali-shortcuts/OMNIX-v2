@@ -79,6 +79,13 @@ else {
     if (-not [bool]$office.EvidenceBinding.PrimaryAssembliesValidated) { $failures.Add('Office E2E did not validate the primary installed assemblies.') }
 }
 
+if ($lifecycle.TestId -ne 'LIFECYCLE-REAL-002') { $failures.Add('Unexpected lifecycle TestId.') }
+if ([int]$lifecycle.EvidenceSchema -lt 4) { $failures.Add('Lifecycle evidence schema is too old for installed payload identity.') }
+if (-not [bool]$lifecycle.OverallPass) { $failures.Add('Lifecycle evidence did not pass.') }
+if ([string]$lifecycle.InstallerSha256 -ne $installerHash) { $failures.Add('Lifecycle evidence is for a different installer.') }
+if (-not [bool]$lifecycle.PayloadIdentityPreservedAcrossRepair) { $failures.Add('Lifecycle evidence did not preserve installed payload identity across repair.') }
+if (-not [bool]$lifecycle.PrimaryAssembliesValidatedBeforeAndAfterRepair) { $failures.Add('Lifecycle evidence did not validate all primary assemblies before and after repair.') }
+
 if ($expectedCore -match '^[0-9a-f]{64}$' -and $expectedIdentity -match '^[0-9a-f]{64}$') {
     foreach ($row in @(
         @{Report=$office;Age=168;Label='Office E2E'},
@@ -86,15 +93,13 @@ if ($expectedCore -match '^[0-9a-f]{64}$' -and $expectedIdentity -match '^[0-9a-
         @{Report=$ui;Age=168;Label='Office UI'},
         @{Report=$restart;Age=168;Label='Windows restart persistence'},
         @{Report=$offline;Age=72;Label='Offline local AI'},
-        @{Report=$provider;Age=72;Label='Live provider matrix'}
+        @{Report=$provider;Age=72;Label='Live provider matrix'},
+        @{Report=$lifecycle;Age=168;Label='Lifecycle'}
     )) {
         Add-Errors $failures (Test-OmnixEvidenceBinding -Report $row.Report -ExpectedSourceCommit $source -ExpectedCoreSha256 $expectedCore -ExpectedPayloadIdentitySha256 $expectedIdentity -MaxAgeHours $row.Age -Label $row.Label)
     }
 }
 
-if ($lifecycle.TestId -ne 'LIFECYCLE-REAL-002') { $failures.Add('Unexpected lifecycle TestId.') }
-if ([string]$lifecycle.InstallerSha256 -ne $installerHash) { $failures.Add('Lifecycle evidence is for a different installer.') }
-Add-Errors $failures (Test-FreshTimestamp $lifecycle 168 'Lifecycle')
 if ($security.TestId -ne 'CONSUMER-SECURITY-REAL-001') { $failures.Add('Unexpected consumer-security TestId.') }
 if ([string]$security.Installer.Sha256 -ne $installerHash) { $failures.Add('Consumer-security evidence is for a different installer.') }
 Add-Errors $failures (Test-FreshTimestamp $security 72 'Consumer security')
@@ -108,7 +113,9 @@ if ($failures.Count -gt 0) { throw ('FINAL-EVIDENCE-BINDING-REJECTED: ' + ($fail
     CoreSha256 = $expectedCore
     PayloadIdentitySha256 = $expectedIdentity
     PrimaryAssembliesValidated = $true
+    LifecyclePayloadIdentityBound = $true
     OfficeEvidenceMaxAgeHours = 168
+    LifecycleEvidenceMaxAgeHours = 168
     ProviderAndOfflineMaxAgeHours = 72
     ConsumerSecurityMaxAgeHours = 72
     OverallPass = $true

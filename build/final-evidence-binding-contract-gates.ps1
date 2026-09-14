@@ -10,6 +10,8 @@ $files=@{
   Acceptance=Join-Path $root 'tools\final-evidence-binding-guard-acceptance.ps1'
   FinalGate=Join-Path $root 'tools\final-production-gate.ps1'
   Package=Join-Path $root 'build\package.ps1'
+  Lifecycle=Join-Path $root 'tools\lifecycle-acceptance.ps1'
+  LifecycleCore=Join-Path $root 'tools\lifecycle-core-acceptance.ps1'
 }
 foreach($kv in $files.GetEnumerator()){
   if(-not(Test-Path -LiteralPath $kv.Value -PathType Leaf)){throw "FINAL_EVIDENCE_BINDING_CONTRACT: missing $($kv.Key): $($kv.Value)"}
@@ -37,8 +39,18 @@ $runnerAst=[System.Management.Automation.Language.Parser]::ParseFile($files.Runn
 $startProcessCommands=@($runnerAst.FindAll({param($node) $node -is [System.Management.Automation.Language.CommandAst] -and [string]::Equals($node.GetCommandName(),'Start-Process',[StringComparison]::OrdinalIgnoreCase)},$true))
 if($startProcessCommands.Count -gt 0){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: bound real acceptance runner must preserve child argument boundaries and must not execute Start-Process.'}
 
+$lifecycle=Get-Content -LiteralPath $files.Lifecycle -Raw
+foreach($needle in @('Baseline','AfterRepair','AfterUninstall','SourceCommit','lifecycle-core-acceptance.ps1')){
+  if($lifecycle.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: lifecycle entrypoint missing '$needle'."}
+}
+
+$lifecycleCore=Get-Content -LiteralPath $files.LifecycleCore -Raw
+foreach($needle in @('EvidenceSchema=4','New-OmnixEvidenceBinding','Compare-InstalledBinding','OMNIX-build-identity.json','PayloadIdentityPreserved','PayloadIdentityPreservedAcrossRepair','PrimaryAssembliesValidatedBeforeAndAfterRepair','EvidenceBinding=$state.EvidenceBinding','OMNIX-BUILD-IDENTITY-001')){
+  if($lifecycleCore.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: lifecycle core missing '$needle'."}
+}
+
 $guard=Get-Content -LiteralPath $files.Guard -Raw
-foreach($needle in @('FINAL-EVIDENCE-BINDING-REJECTED','Test-OmnixEvidenceBinding','PayloadIdentitySha256','PrimaryAssembliesValidated','Office E2E','Office persistence','Office UI','Windows restart persistence','Offline local AI','Live provider matrix','Lifecycle','Consumer security','168','72')){
+foreach($needle in @('FINAL-EVIDENCE-BINDING-REJECTED','Test-OmnixEvidenceBinding','PayloadIdentitySha256','PrimaryAssembliesValidated','Office E2E','Office persistence','Office UI','Windows restart persistence','Offline local AI','Live provider matrix','Lifecycle','PayloadIdentityPreservedAcrossRepair','PrimaryAssembliesValidatedBeforeAndAfterRepair','LifecyclePayloadIdentityBound','Consumer security','168','72')){
   if($guard.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: final binding guard missing '$needle'."}
 }
 if($guard -match '(?im)^\s*exit\b'){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: composable binding guard must not call exit.'}
@@ -49,8 +61,8 @@ if($bindingIndex -lt 0 -or $taskPaneIndex -lt 0 -or $coreIndex -lt 0){throw 'FIN
 if(-not($bindingIndex -lt $taskPaneIndex -and $taskPaneIndex -lt $coreIndex)){throw 'FINAL_EVIDENCE_BINDING_CONTRACT: final gate order must be binding guard -> task-pane guard -> production core.'}
 
 $acceptance=Get-Content -LiteralPath $files.Acceptance -Raw
-foreach($needle in @('FINAL-EVIDENCE-BINDING-GUARD-RUNTIME-001','ValidExactBinding','MissingProviderBinding','WrongProviderCore','WrongProviderIdentity','OldBindingSchema','WrongRestartSource','StaleProvider','FutureOfficeUi','StaleLifecycle','WrongOfficeInstaller','CallerContinuation')){
+foreach($needle in @('FINAL-EVIDENCE-BINDING-GUARD-RUNTIME-001','ValidExactBinding','MissingProviderBinding','WrongProviderCore','WrongProviderIdentity','OldBindingSchema','WrongRestartSource','MissingLifecycleBinding','WrongLifecycleIdentity','LifecycleIdentityNotPreserved','OldLifecycleSchema','StaleProvider','FutureOfficeUi','StaleLifecycle','WrongOfficeInstaller','CallerContinuation')){
   if($acceptance.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "FINAL_EVIDENCE_BINDING_CONTRACT: behavior acceptance missing '$needle'."}
 }
 
-Write-Host 'FINAL-EVIDENCE-BINDING-CONTRACT-002: PASS'
+Write-Host 'FINAL-EVIDENCE-BINDING-CONTRACT-003: PASS'

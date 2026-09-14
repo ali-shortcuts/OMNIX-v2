@@ -28,7 +28,7 @@ try {
         $now=[DateTime]::UtcNow.ToString('o')
         [ordered]@{TestId='OFFICE-E2E-REAL-001';EvidenceSchema=5;TimestampUtc=$now;OverallPass=$true;Installer=[ordered]@{Sha256=$installerHash;HashMatchedExpected=$true};EvidenceBinding=(Binding)}|ConvertTo-Json -Depth 8|Set-Content $paths.Office -Encoding UTF8
         foreach($name in @('Persistence','Ui','Restart','Offline','Provider')){[ordered]@{TestId=('SYNTHETIC-'+$name);TimestampUtc=$now;OverallPass=$true;EvidenceBinding=(Binding)}|ConvertTo-Json -Depth 8|Set-Content $paths[$name] -Encoding UTF8}
-        [ordered]@{TestId='LIFECYCLE-REAL-002';TimestampUtc=$now;InstallerSha256=$installerHash;OverallPass=$true}|ConvertTo-Json -Depth 6|Set-Content $paths.Lifecycle -Encoding UTF8
+        [ordered]@{TestId='LIFECYCLE-REAL-002';EvidenceSchema=4;TimestampUtc=$now;InstallerSha256=$installerHash;OverallPass=$true;PayloadIdentityPreservedAcrossRepair=$true;PrimaryAssembliesValidatedBeforeAndAfterRepair=$true;EvidenceBinding=(Binding)}|ConvertTo-Json -Depth 8|Set-Content $paths.Lifecycle -Encoding UTF8
         [ordered]@{TestId='CONSUMER-SECURITY-REAL-001';TimestampUtc=$now;Installer=[ordered]@{Sha256=$installerHash};OverallPass=$true}|ConvertTo-Json -Depth 6|Set-Content $paths.Security -Encoding UTF8
     }
     function Invoke-Guard {
@@ -49,6 +49,10 @@ try {
     Run-Case 'WrongProviderIdentity' {$r=Get-Content $paths.Provider -Raw|ConvertFrom-Json;$r.EvidenceBinding.PayloadIdentitySha256=('1'*64);$r|ConvertTo-Json -Depth 8|Set-Content $paths.Provider -Encoding UTF8} $false
     Run-Case 'OldBindingSchema' {$r=Get-Content $paths.Provider -Raw|ConvertFrom-Json;$r.EvidenceBinding.BindingSchema=1;$r|ConvertTo-Json -Depth 8|Set-Content $paths.Provider -Encoding UTF8} $false
     Run-Case 'WrongRestartSource' {$r=Get-Content $paths.Restart -Raw|ConvertFrom-Json;$r.EvidenceBinding.SourceCommit=('d'*40);$r|ConvertTo-Json -Depth 8|Set-Content $paths.Restart -Encoding UTF8} $false
+    Run-Case 'MissingLifecycleBinding' {$r=Get-Content $paths.Lifecycle -Raw|ConvertFrom-Json;$r.PSObject.Properties.Remove('EvidenceBinding');$r|ConvertTo-Json -Depth 8|Set-Content $paths.Lifecycle -Encoding UTF8} $false
+    Run-Case 'WrongLifecycleIdentity' {$r=Get-Content $paths.Lifecycle -Raw|ConvertFrom-Json;$r.EvidenceBinding.PayloadIdentitySha256=('2'*64);$r|ConvertTo-Json -Depth 8|Set-Content $paths.Lifecycle -Encoding UTF8} $false
+    Run-Case 'LifecycleIdentityNotPreserved' {$r=Get-Content $paths.Lifecycle -Raw|ConvertFrom-Json;$r.PayloadIdentityPreservedAcrossRepair=$false;$r|ConvertTo-Json -Depth 8|Set-Content $paths.Lifecycle -Encoding UTF8} $false
+    Run-Case 'OldLifecycleSchema' {$r=Get-Content $paths.Lifecycle -Raw|ConvertFrom-Json;$r.EvidenceSchema=3;$r|ConvertTo-Json -Depth 8|Set-Content $paths.Lifecycle -Encoding UTF8} $false
     Run-Case 'StaleProvider' {$r=Get-Content $paths.Provider -Raw|ConvertFrom-Json;$r.TimestampUtc=[DateTime]::UtcNow.AddHours(-80).ToString('o');$r|ConvertTo-Json -Depth 8|Set-Content $paths.Provider -Encoding UTF8} $false
     Run-Case 'FutureOfficeUi' {$r=Get-Content $paths.Ui -Raw|ConvertFrom-Json;$r.TimestampUtc=[DateTime]::UtcNow.AddHours(1).ToString('o');$r|ConvertTo-Json -Depth 8|Set-Content $paths.Ui -Encoding UTF8} $false
     Run-Case 'StaleLifecycle' {$r=Get-Content $paths.Lifecycle -Raw|ConvertFrom-Json;$r.TimestampUtc=[DateTime]::UtcNow.AddHours(-180).ToString('o');$r|ConvertTo-Json -Depth 8|Set-Content $paths.Lifecycle -Encoding UTF8} $false
@@ -62,7 +66,7 @@ try {
     $continued=($cp.ExitCode -eq 0 -and (Test-Path $sentinel) -and (Get-Content $sentinel -Raw) -eq 'CONTINUED')
     $script:CaseResults += [pscustomobject]@{Name='CallerContinuation';ExpectedPass=$true;Accepted=$continued;Error=$null;Pass=$continued}
     if(-not $continued){$script:CaseFailures += 'Valid guard did not return control to its caller.'}
-    $out=[ordered]@{TestId='FINAL-EVIDENCE-BINDING-GUARD-RUNTIME-001';EvidenceSchema=2;GeneratedUtc=[DateTime]::UtcNow.ToString('o');CaseCount=$script:CaseResults.Count;CallerContinuationProven=$continued;FailureCount=$script:CaseFailures.Count;Failures=$script:CaseFailures;Results=$script:CaseResults;OverallPass=($script:CaseFailures.Count -eq 0)}
+    $out=[ordered]@{TestId='FINAL-EVIDENCE-BINDING-GUARD-RUNTIME-001';EvidenceSchema=3;GeneratedUtc=[DateTime]::UtcNow.ToString('o');CaseCount=$script:CaseResults.Count;CallerContinuationProven=$continued;FailureCount=$script:CaseFailures.Count;Failures=$script:CaseFailures;Results=$script:CaseResults;OverallPass=($script:CaseFailures.Count -eq 0)}
     $outDir=Split-Path -Parent $OutputPath;if($outDir){New-Item -ItemType Directory -Force $outDir|Out-Null};$out|ConvertTo-Json -Depth 8|Set-Content $OutputPath -Encoding UTF8;$out|ConvertTo-Json -Depth 8
     if(-not $out.OverallPass){exit 1};exit 0
 } finally { if(Test-Path $temp){Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue} }

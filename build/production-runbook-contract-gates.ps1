@@ -63,8 +63,13 @@ foreach ($needle in @(
     '-Kind RestartBefore',
     '-Kind RestartAfter',
     'sign-production.ps1',
-    'AfterRepair',
-    'AfterUninstall',
+    'payload-bound lifecycle evidence',
+    '-Phase Baseline',
+    '-Phase AfterRepair',
+    '-Phase AfterUninstall',
+    'PayloadIdentitySha256',
+    'PayloadIdentityPreservedAcrossRepair=true',
+    'all four primary assemblies',
     'consumer-security-acceptance.ps1',
     'final-production-gate.ps1',
     'OMNIX-FINAL-PRODUCTION-GATE-002',
@@ -76,6 +81,9 @@ foreach ($needle in @(
 if ($runbook.IndexOf('sign the final installer before producing exact-installer real-machine evidence',[StringComparison]::OrdinalIgnoreCase) -lt 0) {
     throw 'PRODUCTION_RUNBOOK_CONTRACT: runbook must require production signing before exact-installer evidence.'
 }
+if ($runbook.IndexOf('AfterUninstall cannot hash an application payload that should no longer exist',[StringComparison]::OrdinalIgnoreCase) -lt 0) {
+    throw 'PRODUCTION_RUNBOOK_CONTRACT: runbook must explain how lifecycle identity survives uninstall.'
+}
 
-Write-Host 'PRODUCTION-RUNBOOK-CONTRACT-001: PASS'
-Write-Host 'Canonical bound real-machine evidence and final production gate documentation are aligned.'
+Write-Host 'PRODUCTION-RUNBOOK-CONTRACT-002: PASS'
+Write-Host 'Canonical bound real-machine evidence, payload-bound lifecycle and final production gate documentation are aligned.'

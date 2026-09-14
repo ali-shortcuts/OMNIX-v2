@@ -26,6 +26,8 @@ The bound runner validates the installed `OMNIX-build-identity.json` before it a
 
 The binding also records the SHA-256 of `OMNIX-build-identity.json`. The final production guard requires all bound reports to agree on that payload identity, source commit and Core hash and rejects stale evidence.
 
+Lifecycle evidence uses the same verified installed build identity. Its Baseline and AfterRepair phases validate all four primary assemblies and require the same `SourceCommit`, `CoreSha256` and `PayloadIdentitySha256`; the final AfterUninstall report carries that verified binding after the application payload has intentionally been removed.
+
 The lower-level scripts such as `real-office-acceptance.ps1`, `full-office-e2e.ps1`, `provider-acceptance.ps1`, `local-offline-acceptance.ps1`, and `reboot-persistence-acceptance.ps1` are implementation harnesses. A raw PASS from one of them is not production evidence by itself.
 
 ## 1. Freeze the release candidate
@@ -130,31 +132,51 @@ After signing back into the same Windows user and before replacing/updating OMNI
 
 `RestartAfter` rejects a changed source commit, changed installed Core, changed installed payload identity, or unchanged Windows boot session.
 
-## 8. Run lifecycle evidence
+## 8. Run payload-bound lifecycle evidence
 
-Lifecycle acceptance is a separate exact-installer-bound three-phase test. Close all Office applications for every phase.
+Lifecycle acceptance is a separate exact-installer-bound and installed-payload-bound three-phase test. Close all Office applications for every phase.
 
 First save real OMNIX settings so `settings.dat` exists, then capture the installed baseline:
 
 ```powershell
 .\tools\lifecycle-acceptance.ps1 `
   -Phase Baseline `
-  -InstallerPath $installer
+  -InstallerPath $installer `
+  -SourceCommit $sourceCommit
 ```
+
+Baseline validates `OMNIX-build-identity.json` against the exact source checkout and hashes the installed Core, Excel, Word and PowerPoint assemblies before it saves lifecycle state. It stores an `EvidenceBinding` with binding schema 2 or newer.
 
 Run the exact same installer normally as a repair. Then:
 
 ```powershell
-.\tools\lifecycle-acceptance.ps1 -Phase AfterRepair
+.\tools\lifecycle-acceptance.ps1 `
+  -Phase AfterRepair `
+  -SourceCommit $sourceCommit
 ```
+
+AfterRepair revalidates the installed build identity and all four primary assemblies. It fails if the source commit, Core hash or `PayloadIdentitySha256` changed, even if the outer installer filename is unchanged. The repair phase must record `PayloadIdentityPreservedAcrossRepair=true` and prove primary-assembly validation after repair.
 
 Uninstall OMNIX through its normal uninstall path. Preserve evidence/logs until the test is complete. Then:
 
 ```powershell
-.\tools\lifecycle-acceptance.ps1 -Phase AfterUninstall
+.\tools\lifecycle-acceptance.ps1 `
+  -Phase AfterUninstall `
+  -SourceCommit $sourceCommit
 ```
 
-The lifecycle result must prove same-build repair, exact settings preservation across repair, no modification of the shared Office recovery subtrees OMNIX promises not to alter, correct maintenance-task behavior, and complete OMNIX-owned cleanup after uninstall.
+AfterUninstall cannot hash an application payload that should no longer exist. Instead, it requires a previously passing Baseline + AfterRepair identity chain and carries the verified Baseline `EvidenceBinding` into the final lifecycle report. The final production guard cross-checks that binding against Office E2E, provider, offline and restart evidence.
+
+The lifecycle result must therefore prove all of the following for the same release candidate:
+
+- exact installer SHA-256 binding;
+- exact source commit binding;
+- the same installed `OMNIX-build-identity.json` before and after repair;
+- validation of Core + Excel + Word + PowerPoint primary assemblies before and after repair;
+- exact settings preservation across repair;
+- no modification of the shared Office recovery subtrees OMNIX promises not to alter;
+- healthy registration and maintenance-task behavior after repair;
+- complete OMNIX-owned cleanup after uninstall while preserving user data when requested.
 
 ## 9. Run consumer security evidence
 
@@ -187,7 +209,7 @@ Only after all evidence above belongs to the same intended production candidate:
   -InstallerPath $installer
 ```
 
-The final gate is fail-closed. It checks exact installer binding, source/build/payload identity binding, freshness, Office task-pane evidence, lifecycle, consumer security, offline/local AI, live provider, privacy evidence, and trusted timestamped Authenticode requirements.
+The final gate is fail-closed. It checks exact installer binding, source/build/payload identity binding, freshness, Office task-pane evidence, payload-bound lifecycle repair evidence, consumer security, offline/local AI, live provider, privacy evidence, and trusted timestamped Authenticode requirements.
 
 The only production PASS is:
 
@@ -214,6 +236,8 @@ Current final binding policy rejects:
 - mismatched source commit;
 - mismatched installed Core hash;
 - mismatched installed payload identity hash;
+- lifecycle evidence that did not preserve payload identity across same-build repair;
+- lifecycle evidence that did not validate all four primary assemblies before and after repair;
 - different installer hashes for installer-bound reports.
 
 Regenerate evidence after any source change, rebuild, re-signing, installer change, installed primary-assembly change, or payload identity change.
