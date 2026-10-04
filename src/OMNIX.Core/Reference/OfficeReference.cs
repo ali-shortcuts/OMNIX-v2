@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
+using OMNIX.Core.Context;
 
 namespace OMNIX.Core.Reference
 {
@@ -18,6 +19,35 @@ namespace OMNIX.Core.Reference
             });
 
         public static string Search(string host, string query, int offset = 0, string language = "en")
+        {
+            HostType type;
+            if (!Enum.TryParse(host, true, out type) || (type != HostType.Excel && type != HostType.Word && type != HostType.PowerPoint))
+                return "Choose Excel, Word or PowerPoint.";
+            string catalog = OfficeCapabilityRegistry.Search(type, query, offset);
+            string label = language == "fa" ? "ابزارهای پیاده‌سازی‌شده در OMNIX (با توجه به اجازه و نسخهٔ Office):" : "Implemented OMNIX tools (subject to Office permissions/version):";
+            string recipes = type == HostType.Excel ? FormulaGuidance(query) : "";
+            return SearchReference(host, query, offset, language) + recipes + "\n\n" + label + "\n" + catalog;
+        }
+
+        private static string FormulaGuidance(string query)
+        {
+            var recipes = new Dictionary<string,string> {
+                {"SUM", "جمع | =SUM(G5:G14) | Sum only data rows; keep the total outside the summed range to avoid a circular reference."},
+                {"MAX", "بیشترین | =MAX(D5:D14) | Check that amounts are numeric, not text."},
+                {"AVERAGE", "میانگین | =AVERAGE(D5:D14) | Decide whether missing values mean zero or unknown before calculating."},
+                {"SUMIFS", "جمع شرطی | =SUMIFS(G5:G14,C5:C14,\"Paid\") | Sum and criteria ranges must align row for row; use the document's actual status labels."},
+                {"COUNTIFS", "شمارش شرطی | =COUNTIFS(C5:C14,\"Paid\") | Counts matching rows, not units sold; use SUMIFS for quantities."},
+                {"DSUM", "جمع دیتابیس | =DSUM(A4:G14,\"Amount\",J1:J2) | Database includes its header; criteria header must exactly match a database column; criteria stay outside the data table."},
+                {"IFERROR", "خطای فرمول | =IFERROR(D5/E5,\"\") | Do not hide an unexplained calculation error. Decide what zero/blank denominators mean first."},
+                {"INDEX", "جستجو | =INDEX(B5:B14,MATCH(J5,A5:A14,0)) | MATCH with 0 requests an exact key; verify key uniqueness and report missing IDs."},
+                {"ROUND", "گرد کردن | =ROUND(D5*F5,2) | Confirm the currency's rounding rule; numeric display formatting alone does not round stored values."}
+            };
+            string q=(query??" ").Trim();
+            var matches=recipes.Where(p => q.Length==0 || p.Key.IndexOf(q,StringComparison.OrdinalIgnoreCase)>=0 || p.Value.IndexOf(q,StringComparison.OrdinalIgnoreCase)>=0).Take(9);
+            return "\n\nFormula task guidance (adapt ranges to the actual sheet):\n" + string.Join("\n",matches.Select(p=>p.Key+" — "+p.Value));
+        }
+
+        private static string SearchReference(string host, string query, int offset, string language)
         {
             query = (query ?? "").Trim();
             bool fa = string.Equals(language, "fa", StringComparison.OrdinalIgnoreCase);
@@ -37,7 +67,7 @@ namespace OMNIX.Core.Reference
                        "ABS, AND, AVERAGE, COUNT, DEFINED, FALSE, IF, INT, MAX, MIN, MOD, NOT, OR, PRODUCT, ROUND, SIGN, SUM, TRUE. " +
                        "Example: =SUM(ABOVE). Update fields after editing data. Supported functions and examples: " +
                        "https://support.microsoft.com/en-us/word/use-a-formula-in-a-word-table\n" +
-                       "OMNIX currently edits selected text; this reference does not enable every Word command.";
+                       "Use the implemented capability catalog below for Word editing, tables, layout and fields. Reference entries are not additional execution permissions.";
             }
 
             if (string.Equals(host, "PowerPoint", StringComparison.OrdinalIgnoreCase))
@@ -49,7 +79,7 @@ namespace OMNIX.Core.Reference
                            "این صفحهٔ راهنما به‌تنهایی دسترسی به همه فرمان‌های Ribbon نمی‌دهد.";
 
                 return "PowerPoint: slides, shapes, notes and visual layout. There is no Excel-style worksheet function catalog for slide text. " +
-                       "OMNIX currently inserts slides and writes speaker notes; chart data and arbitrary ribbon commands are not covered.";
+                       "Use the implemented capability catalog below for slides, shapes, tables, notes and layout. Only listed operations can be executed.";
             }
 
             var matches = Excel.Value

@@ -172,6 +172,14 @@ namespace OMNIX.Core.AiGateway
             ProviderCredentials credentials,
             CancellationToken ct)
         {
+            var result = await TestSelectedModelCoreAsync(providerId, credentials, ct).ConfigureAwait(false);
+            ModelCapabilityEvidence.Record(providerId, credentials, result);
+            return result;
+        }
+
+        private static async Task<ModelVerificationResult> TestSelectedModelCoreAsync(
+            string providerId, ProviderCredentials credentials, CancellationToken ct)
+        {
             string model = credentials != null ? credentials.Model : null;
             if (string.IsNullOrWhiteSpace(model))
                 throw OmnixException.Model("Select or enter an exact model ID before using Test model.");
@@ -251,10 +259,20 @@ namespace OMNIX.Core.AiGateway
             IProviderAdapter adapter,
             CancellationToken ct)
         {
+            var native = await ProbeOmnixToolCallingOnceAsync(adapter, true, ct).ConfigureAwait(false);
+            if (native.Verified || !native.ReturnedText) return native;
+            // One document-free fallback, within the existing caller's timeout/cancellation budget.
+            var fallback = await ProbeOmnixToolCallingOnceAsync(adapter, false, ct).ConfigureAwait(false);
+            return fallback.Verified ? fallback : native;
+        }
+
+        private static async Task<ToolProbeResult> ProbeOmnixToolCallingOnceAsync(
+            IProviderAdapter adapter, bool useNativeTools, CancellationToken ct)
+        {
             ct.ThrowIfCancellationRequested();
             var response = await adapter.SendAsync(new ChatRequest
             {
-                UseNativeTools = true,
+                UseNativeTools = useNativeTools,
                 SystemPrompt =
                     "OMNIX PROVIDER CAPABILITY TEST. Do not use Office document data. " +
                     "Call exactly one OMNIX tool: read_office_access with an empty JSON object for args. " +

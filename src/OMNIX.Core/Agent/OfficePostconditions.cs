@@ -78,11 +78,12 @@ namespace OMNIX.Core.Agent
                     if(table.Range.Address[false,false]==range.Address[false,false]) return null;
                 return "No native table matches the planned range.";
             }
-            foreach(Excel.Range cell in range.Cells)
-            {
-                if(Convert.ToBoolean(app.WorksheetFunction.IsError(cell))) return "Excel error at "+cell.Address[false,false];
-            }
-            return null;
+            // One bounded calculation instead of hundreds of cross-COM calls on the UI thread.
+            // The expression is fixed; only Office's normalized A1 address is interpolated.
+            string address = range.Address[true, true, Excel.XlReferenceStyle.xlA1];
+            object errors = sheet.Evaluate("SUMPRODUCT(--ISERROR(" + address + "))");
+            if (!(errors is double || errors is int)) return "Excel error scan could not be evaluated.";
+            return Convert.ToDouble(errors, CultureInfo.InvariantCulture) == 0 ? null : "Excel errors exist in the checked range.";
         }
         public static string WordCheck(Word.Application app,JObject c)
         {
