@@ -40,3 +40,5 @@ Partial: capability evidence is process-local, expires after two hours, and is n
 Missing/needs real-machine verification: broad Office version/bitness matrix; definitive reproduction and elimination of the user's freeze/restart; full visual quality evaluation; every Ribbon command; hundreds of templates; model training/fine-tuning. No API credential changes a model's weights. Playbooks/reference retrieval and execution checks are inference-time behavior, not training.
 
 There is no current user-supplied log from the latest failure. The older screenshot demonstrates TextOnly and failed acceptance, but cannot identify the exact native exception. Do not claim all historical bugs are resolved from CI alone.
+
+The model probe now makes at most one extra document-free text-protocol attempt when the native probe returns only prose. A verified fallback transport is reused for the same credential tuple; it is not discarded when actual chat begins. Existing timeout/cancellation budgets still apply. Superseded preview 64 is removed only after verified replacement publication, following the user's existing cleanup instruction.

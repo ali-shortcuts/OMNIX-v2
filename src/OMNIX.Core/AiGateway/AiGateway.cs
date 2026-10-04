@@ -189,7 +189,7 @@ namespace OMNIX.Core.AiGateway
                     RuntimeDiagnosticJournal.CompleteRequest("model_tools_not_verified", 0, 0, false);
                     return new ChatResponse { Text = ModelCapabilityEvidence.Explain(ContainsPersian(request.UserTurn == null ? null : request.UserTurn.Text)) };
                 }
-                if (toolsBlocked) req.UseNativeTools = false;
+                if (toolsBlocked || ModelCapabilityEvidence.PrefersTextProtocol(provider.Info.Id, providerCredentials)) req.UseNativeTools = false;
                 RuntimeDiagnosticJournal.SetProvider(provider.Info.Id, providerCredentials != null ? providerCredentials.Model : null);
                 RuntimeDiagnosticJournal.Event("provider_round", null, "resolved", null, null,
                     "round=" + (round + 1) + "; nativeTools=" + req.UseNativeTools + "; images=" + req.HasImages);

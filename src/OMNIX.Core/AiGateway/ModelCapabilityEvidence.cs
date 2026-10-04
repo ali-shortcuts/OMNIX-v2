@@ -9,7 +9,7 @@ namespace OMNIX.Core.AiGateway
     // No credentials or fingerprints are persisted or logged. Unknown is not a failed probe.
     public static class ModelCapabilityEvidence
     {
-        private sealed class Entry { public ModelVerificationState State; public DateTime Expires; }
+        private sealed class Entry { public ModelVerificationState State; public DateTime Expires; public bool TextProtocol; }
         private static readonly object Gate = new object();
         private static readonly Dictionary<string,Entry> Entries = new Dictionary<string,Entry>(StringComparer.Ordinal);
         private static string Key(string provider, ProviderCredentials c)
@@ -27,7 +27,7 @@ namespace OMNIX.Core.AiGateway
                 if(result.State!=ModelVerificationState.TextOnly && result.State!=ModelVerificationState.Incompatible && !result.Working)
                 { Entries.Remove(key); return; } // Transient/auth/quota failures do not prove tool incompatibility.
                 if(Entries.Count>=1000) Entries.Clear();
-                Entries[key]=new Entry { State=result.State,Expires=DateTime.UtcNow.AddHours(2) };
+                Entries[key]=new Entry { State=result.State,Expires=DateTime.UtcNow.AddHours(2),TextProtocol=result.Working && result.ToolTransport=="text-fallback" };
             }
         }
         public static bool BlocksOfficeActions(string provider,ProviderCredentials credentials)
@@ -39,6 +39,15 @@ namespace OMNIX.Core.AiGateway
                 if(!Entries.TryGetValue(key,out entry)) return false;
                 if(entry.Expires<=DateTime.UtcNow) { Entries.Remove(key); return false; }
                 return entry.State==ModelVerificationState.TextOnly || entry.State==ModelVerificationState.Incompatible;
+            }
+        }
+        public static bool PrefersTextProtocol(string provider,ProviderCredentials credentials)
+        {
+            string key=Key(provider,credentials); if(key==null) return false;
+            lock(Gate)
+            {
+                Entry entry;
+                return Entries.TryGetValue(key,out entry) && entry.Expires>DateTime.UtcNow && entry.TextProtocol;
             }
         }
         public static string Explain(bool persian)

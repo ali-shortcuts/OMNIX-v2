@@ -299,7 +299,26 @@ class WorkspaceStartupRegression {
         } finally { settings.SelectedProviderId=oldProvider;settings.Privacy=oldPrivacy;settings.PreferLocalWhenAvailable=oldLocal; }
     }
 
+    sealed class TextProtocolProvider : IProviderAdapter {
+        public int Calls;
+        public ProviderInfo Info { get { return new ProviderInfo {Id="custom",Kind=ProviderKind.Cloud,Vision=VisionSupport.No}; } }
+        public void Configure(ProviderCredentials c) {}
+        public bool SupportsVisionNow() { return false; }
+        public Task<IReadOnlyList<string>> ListModelsAsync(CancellationToken ct) { return Task.FromResult<IReadOnlyList<string>>(new string[0]); }
+        public Task<bool> TestConnectionAsync(CancellationToken ct) { return Task.FromResult(true); }
+        public Task<ChatResponse> SendAsync(ChatRequest r,Action<string> delta,CancellationToken ct) {
+            Calls++;
+            return Task.FromResult(new ChatResponse {Text=r.UseNativeTools ? "I cannot call native tools." : "<tool_call>omnix_tool {\"tool\":\"read_office_access\",\"args\":{}}</tool_call>"});
+        }
+    }
+
     static void ModelEvidenceRegression() {
+        var probeProvider = new TextProtocolProvider();
+        var probeMethod = typeof(ProviderDiagnostics).GetMethod("ProbeOmnixToolCallingAsync",BindingFlags.Static|BindingFlags.NonPublic);
+        var probeTask = (Task)probeMethod.Invoke(null,new object[]{probeProvider,CancellationToken.None});
+        probeTask.GetAwaiter().GetResult();
+        var probe = probeTask.GetType().GetProperty("Result").GetValue(probeTask,null);
+        Check(probeProvider.Calls==2 && (bool)probe.GetType().GetField("Verified").GetValue(probe),"Bounded text-protocol fallback was not verified");
         var c=new ProviderCredentials { Model="CaseModel",BaseUrl="https://example.invalid/v1",ApiType="OpenAI",ApiKey="fixture-key" };
         var failed=new ModelVerificationResult { ModelId=c.Model,State=ModelVerificationState.TextOnly };
         ModelCapabilityEvidence.Record("custom",c,failed);
@@ -313,6 +332,8 @@ class WorkspaceStartupRegression {
         Check(!ModelCapabilityEvidence.BlocksOfficeActions("other",c),"Evidence leaked between providers");
         ModelCapabilityEvidence.Record("custom",c,new ModelVerificationResult {ModelId=c.Model,State=ModelVerificationState.Working,ToolCallingVerified=true});
         Check(!ModelCapabilityEvidence.BlocksOfficeActions("custom",c),"Successful retest failed to clear negative evidence");
+        ModelCapabilityEvidence.Record("custom",c,new ModelVerificationResult {ModelId=c.Model,State=ModelVerificationState.Working,ToolCallingVerified=true,ToolTransport="text-fallback"});
+        Check(ModelCapabilityEvidence.PrefersTextProtocol("custom",c),"Verified fallback transport was discarded");
         var settings=SettingsManager.Instance.Settings;
         var oldProvider=settings.SelectedProviderId; var oldPrivacy=settings.Privacy; bool oldLocal=settings.PreferLocalWhenAvailable;
         try {
