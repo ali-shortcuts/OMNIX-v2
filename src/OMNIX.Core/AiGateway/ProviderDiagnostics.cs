@@ -172,6 +172,14 @@ namespace OMNIX.Core.AiGateway
             ProviderCredentials credentials,
             CancellationToken ct)
         {
+            var result = await TestSelectedModelCoreAsync(providerId, credentials, ct).ConfigureAwait(false);
+            ModelCapabilityEvidence.Record(providerId, credentials, result);
+            return result;
+        }
+
+        private static async Task<ModelVerificationResult> TestSelectedModelCoreAsync(
+            string providerId, ProviderCredentials credentials, CancellationToken ct)
+        {
             string model = credentials != null ? credentials.Model : null;
             if (string.IsNullOrWhiteSpace(model))
                 throw OmnixException.Model("Select or enter an exact model ID before using Test model.");

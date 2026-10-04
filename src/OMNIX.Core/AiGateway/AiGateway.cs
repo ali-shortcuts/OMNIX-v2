@@ -183,6 +183,13 @@ namespace OMNIX.Core.AiGateway
                 IProviderAdapter provider = _router.Resolve(SettingsManager.Instance.Settings.SelectedProviderId, req.HasImages);
                 ProviderCredentials providerCredentials = _router.BuildCredentials(provider.Info.Id);
                 provider.Configure(providerCredentials);
+                bool toolsBlocked = ModelCapabilityEvidence.BlocksOfficeActions(provider.Info.Id, providerCredentials);
+                if (toolsBlocked && mutationRequested && !writeSucceeded)
+                {
+                    RuntimeDiagnosticJournal.CompleteRequest("model_tools_not_verified", 0, 0, false);
+                    return new ChatResponse { Text = ModelCapabilityEvidence.Explain(ContainsPersian(request.UserTurn == null ? null : request.UserTurn.Text)) };
+                }
+                if (toolsBlocked) req.UseNativeTools = false;
                 RuntimeDiagnosticJournal.SetProvider(provider.Info.Id, providerCredentials != null ? providerCredentials.Model : null);
                 RuntimeDiagnosticJournal.Event("provider_round", null, "resolved", null, null,
                     "round=" + (round + 1) + "; nativeTools=" + req.UseNativeTools + "; images=" + req.HasImages);
@@ -457,8 +464,9 @@ namespace OMNIX.Core.AiGateway
 
                     if (writeSucceeded && toolExecutor.Execution.Required)
                     {
-                        await toolExecutor.ExecuteAsync(new ToolCall { Name = ToolNames.VerifyExecutionPlan, ArgumentsJson = "{}" }, hostAdapter, ct).ConfigureAwait(true);
-                        lastWriteVerified = toolExecutor.Execution.Complete;
+                        var verification = await toolExecutor.ExecuteAsync(new ToolCall { Name = ToolNames.VerifyExecutionPlan, ArgumentsJson = "{}" }, hostAdapter, ct).ConfigureAwait(true);
+                        lastWriteVerified = verification.Success && toolExecutor.Execution.Complete;
+                        if (!lastWriteVerified) lastWriteFailure = SafeRuntimeSummary(verification.ContentForModel, 1600);
                     }
 
                     if (writeSucceeded && !lastWriteVerified)
@@ -488,7 +496,8 @@ namespace OMNIX.Core.AiGateway
 
                         return MutationRuntimeFailure(
                             "OMNIX applied at least one Office write, but the latest change could not be verified by a subsequent Office read. " +
-                            "Treat the task as incomplete and inspect the active document before relying on it.");
+                            "Treat the task as incomplete and inspect the active document before relying on it. " +
+                            (toolExecutor.Execution.Required ? "Acceptance details: " + (lastWriteFailure ?? toolExecutor.Execution.Summary()) : ""), successfulWrites, failedWrites);
                     }
 
                     Logger.Gateway("Provider returned final text; writeAttempted=" + writeAttempted +
@@ -536,6 +545,9 @@ namespace OMNIX.Core.AiGateway
                 }
 
                 bool isWrite = ToolNames.IsWriteTool(call.Name);
+                if (isWrite && toolsBlocked)
+                    return writeSucceeded ? MutationRuntimeFailure("The current model did not pass the Office tool test. Earlier applied changes remain; further writes were stopped.", successfulWrites, failedWrites) :
+                        new ChatResponse { Text = ModelCapabilityEvidence.Explain(ContainsPersian(request.UserTurn == null ? null : request.UserTurn.Text)) };
                 if (isWrite) writeAttempted = true;
 
                 long toolTimer = RuntimeDiagnosticJournal.StartTimer();
@@ -685,10 +697,17 @@ namespace OMNIX.Core.AiGateway
             };
         }
 
-        private static ChatResponse MutationRuntimeFailure(string message)
+        private static bool ContainsPersian(string text)
+        {
+            if (text == null) return false;
+            foreach (char c in text) if (c >= '\u0600' && c <= '\u06ff') return true;
+            return false;
+        }
+
+        private static ChatResponse MutationRuntimeFailure(string message, int successfulWrites = 0, int failedWrites = 0)
         {
             RuntimeDiagnosticJournal.Event("runtime_failure", null, "safe_stop", null, null, "category=mutation_or_tool_runtime");
-            RuntimeDiagnosticJournal.CompleteRequest("runtime_failure", 0, 0, false);
+            RuntimeDiagnosticJournal.CompleteRequest("runtime_failure", successfulWrites, failedWrites, false);
             return new ChatResponse
             {
                 Text = "OMNIX runtime stopped safely: " + message,

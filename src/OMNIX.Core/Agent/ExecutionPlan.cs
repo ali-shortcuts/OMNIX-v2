@@ -147,7 +147,11 @@ namespace OMNIX.Core.Agent
             foreach(var token in (JArray)step["checks"])
             {
                 try { string failure=host.CheckPostcondition((JObject)token); if(failure!=null) failures.Add(failure); }
-                catch(Exception) { failures.Add("Native check could not complete for " + (string)token["kind"] + "; inspect the target."); }
+                catch(Exception ex) {
+                    OMNIX.Core.Logging.RuntimeDiagnosticJournal.Event("postcondition_error", (string)token["kind"], "failed", null, null,
+                        "exceptionType=" + ex.GetType().Name + "; hresult=" + ex.HResult.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    failures.Add("Native check could not complete for " + (string)token["kind"] + "; inspect the target.");
+                }
             }
             return failures;
         }

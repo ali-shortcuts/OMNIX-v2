@@ -299,6 +299,43 @@ class WorkspaceStartupRegression {
         } finally { settings.SelectedProviderId=oldProvider;settings.Privacy=oldPrivacy;settings.PreferLocalWhenAvailable=oldLocal; }
     }
 
+    static void ModelEvidenceRegression() {
+        var c=new ProviderCredentials { Model="CaseModel",BaseUrl="https://example.invalid/v1",ApiType="OpenAI",ApiKey="fixture-key" };
+        var failed=new ModelVerificationResult { ModelId=c.Model,State=ModelVerificationState.TextOnly };
+        ModelCapabilityEvidence.Record("custom",c,failed);
+        Check(ModelCapabilityEvidence.BlocksOfficeActions("custom",c),"Known text-only model still allowed to act");
+        foreach(var changed in new[]{
+            new ProviderCredentials { Model="casemodel",BaseUrl=c.BaseUrl,ApiType=c.ApiType,ApiKey=c.ApiKey },
+            new ProviderCredentials { Model=c.Model,BaseUrl=c.BaseUrl+"/other",ApiType=c.ApiType,ApiKey=c.ApiKey },
+            new ProviderCredentials { Model=c.Model,BaseUrl=c.BaseUrl,ApiType="Anthropic",ApiKey=c.ApiKey },
+            new ProviderCredentials { Model=c.Model,BaseUrl=c.BaseUrl,ApiType=c.ApiType,ApiKey="different-key" }})
+            Check(!ModelCapabilityEvidence.BlocksOfficeActions("custom",changed),"Evidence leaked between model/endpoint/protocol/key configurations");
+        Check(!ModelCapabilityEvidence.BlocksOfficeActions("other",c),"Evidence leaked between providers");
+        ModelCapabilityEvidence.Record("custom",c,new ModelVerificationResult {ModelId=c.Model,State=ModelVerificationState.Working,ToolCallingVerified=true});
+        Check(!ModelCapabilityEvidence.BlocksOfficeActions("custom",c),"Successful retest failed to clear negative evidence");
+        var settings=SettingsManager.Instance.Settings;
+        var oldProvider=settings.SelectedProviderId; var oldPrivacy=settings.Privacy; bool oldLocal=settings.PreferLocalWhenAvailable;
+        try {
+            settings.SelectedProviderId="custom"; settings.Privacy=PrivacyMode.CloudAllowed;settings.PreferLocalWhenAvailable=false;
+            var registry=new ProviderRegistry();var provider=new NoReadbackProvider();
+            var providers=(List<IProviderAdapter>)typeof(ProviderRegistry).GetField("_providers",BindingFlags.NonPublic|BindingFlags.Instance).GetValue(registry);
+            providers.Clear();providers.Add(provider);
+            var gateway=new OMNIX.Core.AiGateway.AiGateway(registry);
+            var credentials=gateway.Router.BuildCredentials("custom");
+            ModelCapabilityEvidence.Record("custom",credentials,new ModelVerificationResult {ModelId=credentials.Model,State=ModelVerificationState.TextOnly});
+            var host=new FakeHost {AllowWrites=true};
+            var executor=new ToolExecutor {WriteConfirmation=preview=>Task.FromResult(true)};
+            var response=gateway.ChatAsync(new ChatRequest {UserTurn=new ChatTurn {Role=ChatRole.User,Text="Write a table into Excel"}},host,part=>{},executor,CancellationToken.None).GetAwaiter().GetResult();
+            Check(provider.Calls==0 && host.Writes==0 && response.Text.Contains("Test model"),"Negative evidence did not block mutation before provider call");
+            response=gateway.ChatAsync(new ChatRequest {UserTurn=new ChatTurn {Role=ChatRole.User,Text="Hello"}},host,part=>{},executor,CancellationToken.None).GetAwaiter().GetResult();
+            Check(host.Writes==0,"Text chat response bypassed action guard with an unsolicited write");
+            ModelCapabilityEvidence.Record("custom",credentials,new ModelVerificationResult {ModelId=credentials.Model,State=ModelVerificationState.Working,ToolCallingVerified=true});
+        } finally {settings.SelectedProviderId=oldProvider;settings.Privacy=oldPrivacy;settings.PreferLocalWhenAvailable=oldLocal;}
+        Check(OMNIX.Core.Reference.OfficeReference.Search("Word","table").Contains("table.insert"),"Word reference omitted implemented table tools");
+        Check(OMNIX.Core.Reference.OfficeReference.Search("PowerPoint","shape").Contains("shape.add"),"PowerPoint reference omitted implemented shapes");
+        Check(OMNIX.Core.Reference.OfficeReference.Search("Excel","SUM").Contains("SUM"),"Excel function reference disappeared");
+    }
+
     static void NativeGatewayRegression() {
         var settings=SettingsManager.Instance.Settings;
         var oldProvider=settings.SelectedProviderId; var oldPrivacy=settings.Privacy; bool oldLocal=settings.PreferLocalWhenAvailable;
@@ -666,6 +703,7 @@ class WorkspaceStartupRegression {
             CatalogRoutesRegression();
             ExecutionPlanRegression();
             NativeContractGatewayRegression();
+            ModelEvidenceRegression();
             CapabilityRegression();
             AccessRecoveryRegression();
             NativeGatewayRegression();

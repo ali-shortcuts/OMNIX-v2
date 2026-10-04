@@ -612,6 +612,7 @@ namespace OMNIX.Core.Ui
         {
             if (_loading) return;
             RefreshModelOptions(EffectiveModelId);
+            RenderVerificationSummary(_modelVerification.Count, _discoveredModels.Count);
         }
 
         private void RefreshModelOptions(string current)
@@ -656,7 +657,7 @@ namespace OMNIX.Core.Ui
             int textOnly = ordered.Count(x => x.State == ModelVerificationState.TextOnly);
             ModelVerificationText.Text = completed + "/" + total + " · tools " + working + " · text " + textOnly;
             VerifiedModelsPanel.Children.Clear();
-            foreach (var result in ordered.Where(x => string.IsNullOrWhiteSpace(VerifiedModelSearch.Text) || x.ModelId.IndexOf(VerifiedModelSearch.Text.Trim(), StringComparison.OrdinalIgnoreCase) >= 0).Take(100))
+            foreach (var result in ordered.Where(x => WorkingModelsOnlyCheck.IsChecked != true || x.Working).Where(x => string.IsNullOrWhiteSpace(VerifiedModelSearch.Text) || x.ModelId.IndexOf(VerifiedModelSearch.Text.Trim(), StringComparison.OrdinalIgnoreCase) >= 0).Take(100))
             {
                 var captured = result;
                 bool selectable = result.Working || result.State == ModelVerificationState.TextOnly;
@@ -679,7 +680,7 @@ namespace OMNIX.Core.Ui
                     RememberModel(captured.ModelId, true);
                     ModelCombo.Text = captured.ModelId;
                     ManualModelBox.Visibility = Visibility.Collapsed;
-                    TestResultText.Text = "Selected: " + captured.ModelId;
+                    TestResultText.Text = "Selected: " + captured.ModelId + (captured.Working ? " · Office tools" : " · text chat only");
                 };
                 row.Children.Add(keep);
                 row.Children.Add(select);
