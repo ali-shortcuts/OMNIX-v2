@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using OMNIX.Core.Context;
@@ -154,7 +156,7 @@ namespace OMNIX.Core.Agent
             if (step != null) { _started.Add((string)step["id"]); Checkpoint(); }
         }
 
-        public bool TryResume(string request, HostType host, IPlanVerificationHost verifier)
+        public bool TryResume(string request, HostType host, IPlanVerificationHost verifier, bool revalidate = true)
         {
             string command = (request ?? "").Trim().TrimEnd('.', '!', '؟', '?');
             if (!(command == "ادامه" || command == "ادامه بده" || command.Equals("continue", StringComparison.OrdinalIgnoreCase))) return false;
@@ -191,7 +193,7 @@ namespace OMNIX.Core.Agent
                 // Include uncertain writes in read-back, never assume their old passed status.
                 foreach (var id in _started) _applied.Add(id);
                 SaveCheckpoint = checkpointWriter;
-                VerifyAll(verifier);
+                if (revalidate) VerifyAll(verifier);
                 return true;
             }
             catch
@@ -213,6 +215,49 @@ namespace OMNIX.Core.Agent
             VerifyAll(host); // A later write can invalidate an earlier accepted result.
             return failures.Count == 0 ? "POSTCONDITIONS PASSED: " + id + ". " + Summary() :
                 "CHANGE APPLIED, POSTCONDITIONS FAILED: " + id + ". Repair existing content. " + string.Join("; ", failures);
+        }
+
+        public async Task<string> AfterWriteAsync(IPlanVerificationHost host, CancellationToken ct, Action validateScope)
+        {
+            if (!Required || _plan == null) return "";
+            var step = Steps.FirstOrDefault(s => !_passed.Contains((string)s["id"]));
+            if (step == null) return Summary();
+            string id = (string)step["id"]; _applied.Add(id);
+            var failures = await CheckAsync(host, step, ct, validateScope).ConfigureAwait(true);
+            if (failures.Count == 0) _passed.Add(id);
+            await VerifyAllAsync(host, ct, validateScope).ConfigureAwait(true);
+            return failures.Count == 0 ? "POSTCONDITIONS PASSED: " + id + ". " + Summary() :
+                "CHANGE APPLIED, POSTCONDITIONS FAILED: " + id + ". Repair existing content. " + string.Join("; ", failures);
+        }
+
+        public async Task<string> VerifyAllAsync(IPlanVerificationHost host, CancellationToken ct, Action validateScope)
+        {
+            if (_plan == null) return "No execution plan exists.";
+            var details = new List<string>();
+            foreach (var step in Steps)
+            {
+                string id = (string)step["id"];
+                if (!_applied.Contains(id)) continue;
+                var failures = await CheckAsync(host, step, ct, validateScope).ConfigureAwait(true);
+                if (failures.Count == 0) _passed.Add(id);
+                else { _passed.Remove(id); details.Add(id + ": " + string.Join("; ", failures)); }
+            }
+            Checkpoint(); return Summary() + (details.Count == 0 ? "" : "\n" + string.Join("\n", details));
+        }
+
+        private static async Task<List<string>> CheckAsync(IPlanVerificationHost host, JObject step, CancellationToken ct, Action validateScope)
+        {
+            var failures = new List<string>();
+            foreach (var token in (JArray)step["checks"])
+            {
+                // Only wait between native operations; never move Office COM to worker threads.
+                if (host is IVisibleOfficeExecutionHost) await Task.Delay(1, ct).ConfigureAwait(true);
+                ct.ThrowIfCancellationRequested();
+                validateScope?.Invoke();
+                ct.ThrowIfCancellationRequested();
+                failures.AddRange(Check(host, new JObject { ["id"]=step["id"], ["checks"]=new JArray(token.DeepClone()) }));
+            }
+            return failures;
         }
 
         public string VerifyAll(IPlanVerificationHost host)

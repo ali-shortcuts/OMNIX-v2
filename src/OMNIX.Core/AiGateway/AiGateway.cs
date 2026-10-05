@@ -110,10 +110,11 @@ namespace OMNIX.Core.AiGateway
                 request.HasImages);
             toolExecutor?.ReportRequestPhase("preparing");
             bool resumed = toolExecutor != null && toolExecutor.Execution.Required &&
-                toolExecutor.Execution.TryResume(request.UserTurn != null ? request.UserTurn.Text : "", hostAdapter.Host, hostAdapter as Agent.IPlanVerificationHost);
+                toolExecutor.Execution.TryResume(request.UserTurn != null ? request.UserTurn.Text : "", hostAdapter.Host, hostAdapter as Agent.IPlanVerificationHost, false);
             if (resumed)
             {
                 mutationRequested = true;
+                await toolExecutor.ExecuteAsync(new ToolCall { Name = ToolNames.VerifyExecutionPlan, ArgumentsJson = "{}" }, hostAdapter, ct).ConfigureAwait(true);
                 RuntimeDiagnosticJournal.Event("task_resume", null, "revalidated", null, null, null);
                 if (toolExecutor.Execution.Complete)
                 {

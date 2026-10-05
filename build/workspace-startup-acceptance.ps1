@@ -308,6 +308,15 @@ class WorkspaceStartupRegression {
         }
         bool over=false;try{batch.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("extra")),true).ToString(),HostType.Excel);}catch(ArgumentException){over=true;}
         Check(over,"Segment bound exceeded");
+        var cancellable=new OMNIX.Core.Agent.ExecutionPlan(); cancellable.Begin("write",true);
+        cancellable.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("check"))).ToString(),HostType.Excel);
+        probe.Accept=true; int beforeChecks=probe.Reads;
+        using(var cts=new CancellationTokenSource()) {
+            try { cancellable.AfterWriteAsync(probe,cts.Token,()=>cts.Cancel()).GetAwaiter().GetResult(); throw new Exception("Cancelled native verification continued"); }
+            catch(OperationCanceledException) {}
+        }
+        Check(probe.Reads==beforeChecks,"Cancellation during scope validation crossed native boundary");
+        Check(cancellable.AfterWriteAsync(probe,CancellationToken.None,()=>{}).GetAwaiter().GetResult().Contains("PASSED") && cancellable.Complete,"Asynchronous native verification failed");
     }
 
     sealed class ContractHost : FakeHost, OMNIX.Core.Agent.IPlanVerificationHost {
