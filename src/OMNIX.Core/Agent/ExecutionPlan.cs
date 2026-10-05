@@ -16,12 +16,15 @@ namespace OMNIX.Core.Agent
 
     public sealed class ExecutionPlan
     {
+        private string _host;
         private JObject _plan;
+        private readonly HashSet<string> _started = new HashSet<string>(StringComparer.Ordinal);
         private readonly HashSet<string> _applied = new HashSet<string>(StringComparer.Ordinal);
         private readonly HashSet<string> _passed = new HashSet<string>(StringComparer.Ordinal);
         private readonly Dictionary<string,int> _attempts = new Dictionary<string,int>(StringComparer.Ordinal);
         public string OriginalRequest { get; private set; }
         public bool Required { get; private set; }
+        public int VerifiedStepCount { get { return _passed.Count; } }
         public bool Complete { get { return _plan != null && Steps.All(s => _passed.Contains((string)s["id"])); } }
         public string PreviousCheckpoint { get; set; }
         public Action<string> SaveCheckpoint { get; set; }
@@ -29,8 +32,8 @@ namespace OMNIX.Core.Agent
 
         public void Begin(string request, bool required)
         {
-            OriginalRequest = request ?? ""; Required = required; _plan = null;
-            _applied.Clear(); _passed.Clear(); _attempts.Clear();
+            OriginalRequest = request ?? ""; Required = required; _plan = null; _host = null;
+            _applied.Clear(); _started.Clear(); _passed.Clear(); _attempts.Clear();
         }
 
         public string Submit(string json, HostType host)
@@ -38,7 +41,16 @@ namespace OMNIX.Core.Agent
             if (json == null || json.Length > 60000) throw new ArgumentException("Plan exceeds 60,000 characters.");
             var plan = JObject.Parse(json);
             var steps = plan["steps"] as JArray;
-            if (steps == null || steps.Count < 1 || steps.Count > 12) throw new ArgumentException("Plan requires 1–12 ordered steps.");
+            bool append = (bool?)plan["append"] == true;
+            if (append)
+            {
+                if (_plan == null || steps == null || steps.Count < 1 || steps.Count > 12)
+                    throw new ArgumentException("Append requires an existing plan and 1–12 new steps.");
+                var merged = new JArray(Steps.Select(s => s.DeepClone()));
+                foreach (var step in steps) merged.Add(step.DeepClone());
+                plan = new JObject { ["steps"] = merged }; steps = merged;
+            }
+            if (steps == null || steps.Count < 1 || steps.Count > (append ? 36 : _plan != null ? 36 : 12)) throw new ArgumentException("Initial plan requires 1–12 steps; append at most 12 per segment, 36 total.");
             var ids = new HashSet<string>(StringComparer.Ordinal);
             foreach (var token in steps)
             {
@@ -53,8 +65,10 @@ namespace OMNIX.Core.Agent
                 if (tool == ToolNames.CreateDataTable && (bool?)step["args"]["uniqueName"] == true)
                     throw new ArgumentException("Planned creation requires an exact, unused sheet name; automatic suffixes are not allowed.");
             }
+            string coverage = RequestCoverage.Validate(OriginalRequest, steps, host);
+            if (coverage != null) throw new ArgumentException(coverage);
             // A model cannot erase already-executed goals or weaken checks to declare success.
-            if (_plan != null && _applied.Count > 0)
+            if (_plan != null && (_applied.Count > 0 || _started.Count > 0))
             {
                 foreach (var old in Steps)
                 {
@@ -65,7 +79,9 @@ namespace OMNIX.Core.Agent
                         throw new ArgumentException("Do not change an already verified step.");
                 }
             }
+            if (plan.ToString(Formatting.None).Length > 60000) throw new ArgumentException("Combined plan exceeds 60,000 characters.");
             _plan = plan;
+            _host = host.ToString();
             Checkpoint();
             return "Plan accepted. Execute the next pending step exactly; a native check follows each write. " + Summary();
         }
@@ -108,10 +124,82 @@ namespace OMNIX.Core.Agent
             int attempts; _attempts.TryGetValue(id,out attempts);
             if (attempts >= 3) return "Step exhausted its three execution attempts. Stop and report incomplete; do not create a duplicate deliverable.";
             // Replaying an additive write after successful apply but failed verification duplicates content.
-            if (_applied.Contains(id) && call.Name == ToolNames.CreateDataTable)
-                return "This creation already applied. Revise this pending step to repair the existing sheet, retaining its checks.";
+            if ((_applied.Contains(id) || _started.Contains(id)) && IsAdditive(call))
+                return "This additive operation may already have applied. Inspect the existing target; revise the pending step to an idempotent repair while retaining its checks. Do not replay creation.";
             _attempts[id] = attempts + 1;
             return null;
+        }
+
+        private static bool IsAdditive(ToolCall call)
+        {
+            // Only these exact overwrites are intrinsically safe to replay. Other operations
+            // must be inspected and revised after a persisted apply intent.
+            if (call.Name == ToolNames.ExecuteOfficeCapability)
+            {
+                try
+                {
+                    string id = (string)JObject.Parse(call.ArgumentsJson ?? "{}")["capability"];
+                    if (new[]{"sheet.heading","shape.text","shape.format","table.cell_text","table.cell_shading","table.cell_alignment"}.Contains(id)) return false;
+                }
+                catch { }
+            }
+            return call.Name != ToolNames.WriteToCell && call.Name != ToolNames.InsertFormula &&
+                call.Name != ToolNames.FormatRange && call.Name != ToolNames.HighlightRange;
+        }
+
+        public void MarkApplying()
+        {
+            if (!Required || _plan == null) return;
+            var step = Steps.FirstOrDefault(s => !_passed.Contains((string)s["id"]));
+            if (step != null) { _started.Add((string)step["id"]); Checkpoint(); }
+        }
+
+        public bool TryResume(string request, HostType host, IPlanVerificationHost verifier)
+        {
+            string command = (request ?? "").Trim().TrimEnd('.', '!', '؟', '?');
+            if (!(command == "ادامه" || command == "ادامه بده" || command.Equals("continue", StringComparison.OrdinalIgnoreCase))) return false;
+            if (string.IsNullOrWhiteSpace(PreviousCheckpoint) || PreviousCheckpoint.Length > 250000 || verifier == null) return false;
+            var checkpointWriter = SaveCheckpoint;
+            try
+            {
+                SaveCheckpoint = null;
+                var saved = JObject.Parse(PreviousCheckpoint);
+                if ((int?)saved["version"] != 2 || (string)saved["host"] != host.ToString()) return false;
+                string original = (string)saved["request"];
+                var candidate = saved["plan"] as JObject;
+                if (string.IsNullOrWhiteSpace(original) || candidate == null) return false;
+                OriginalRequest = original;
+                // Validate in segments so a checkpoint cannot bypass the 36-step bound.
+                var all = candidate["steps"] as JArray;
+                if (all == null || all.Count < 1 || all.Count > 36) throw new ArgumentException("Invalid checkpoint steps.");
+                // Full request coverage is checked against the complete restored plan.
+                foreach (var step in all.OfType<JObject>())
+                    foreach (var check in (JArray)step["checks"]) ValidateCheck((JObject)check, host);
+                string coverage = RequestCoverage.Validate(original, all, host);
+                if (coverage != null) throw new ArgumentException(coverage);
+                // Submit's normal validation also guards duplicate IDs/tools/arguments.
+                _plan = new JObject { ["steps"] = new JArray() };
+                Submit(candidate.ToString(Formatting.None), host);
+                var ids = new HashSet<string>(Steps.Select(s => (string)s["id"]));
+                foreach (string id in (saved["applied"] as JArray ?? new JArray()).Values<string>())
+                    if (ids.Contains(id)) _applied.Add(id);
+                foreach (string id in (saved["started"] as JArray ?? new JArray()).Values<string>())
+                    if (ids.Contains(id)) _started.Add(id);
+                var attempts = saved["attempts"] as JObject;
+                if (attempts != null) foreach (var a in attempts.Properties())
+                    if (ids.Contains(a.Name)) _attempts[a.Name] = Math.Max(0, Math.Min(3, (int)a.Value));
+                // Include uncertain writes in read-back, never assume their old passed status.
+                foreach (var id in _started) _applied.Add(id);
+                SaveCheckpoint = checkpointWriter;
+                VerifyAll(verifier);
+                return true;
+            }
+            catch
+            {
+                Begin(request, Required);
+                return false;
+            }
+            finally { SaveCheckpoint = checkpointWriter; }
         }
 
         public string AfterWrite(IPlanVerificationHost host)
@@ -162,7 +250,7 @@ namespace OMNIX.Core.Agent
         }
         public string Snapshot()
         {
-            return new JObject { ["request"]=OriginalRequest, ["plan"]=_plan, ["status"]=Summary() }.ToString(Formatting.None);
+            return new JObject { ["version"]=2, ["host"]=_host, ["request"]=OriginalRequest, ["plan"]=_plan, ["applied"]=new JArray(_applied), ["started"]=new JArray(_started), ["attempts"]=JObject.FromObject(_attempts), ["status"]=Summary() }.ToString(Formatting.None);
         }
         private void Checkpoint()
         {

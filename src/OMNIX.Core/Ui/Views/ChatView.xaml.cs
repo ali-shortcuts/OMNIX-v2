@@ -96,6 +96,9 @@ namespace OMNIX.Core.Ui
             string label;
             switch (phase)
             {
+                case "preparing": label = fa ? "آماده‌سازی" : "Preparing"; break;
+                case "waiting": label = fa ? "انتظار مدل" : "Waiting for model"; break;
+                case "processing": label = fa ? "پردازش" : "Processing"; break;
                 case "inspect": label = fa ? "بررسی" : "Inspecting"; break;
                 case "preview": label = fa ? "پیش‌نمایش" : "Preview"; break;
                 case "apply": label = fa ? "اجرا" : "Applying"; break;

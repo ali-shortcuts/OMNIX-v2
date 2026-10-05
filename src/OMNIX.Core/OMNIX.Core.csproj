@@ -91,6 +91,7 @@
     <Compile Include="AiGateway\Adapters\OllamaAdapter.cs" />
     <Compile Include="AiGateway\Adapters\OpenRouterAdapter.cs" />
     <Compile Include="Agent\ExecutionPlan.cs" />
+    <Compile Include="Agent\RequestCoverage.cs" />
     <Compile Include="Agent\OfficePlaybooks.cs" />
     <Compile Include="Agent\OfficePostconditions.cs" />
     <Compile Include="AiGateway\AiGateway.cs" />

@@ -28,6 +28,8 @@ namespace OMNIX.Core.Tools
         // Metadata only: never publish document values, credentials or full tool arguments.
         public Action<string, string> OperationProgress { get; set; }
 
+        public void ReportRequestPhase(string phase) { NotifyOperation(new ToolCall { Name = "request" }, phase); }
+
         private void NotifyOperation(ToolCall call, string phase)
         {
             try { OperationProgress?.Invoke(call.Name + CapabilityDetail(call), phase); }
@@ -334,6 +336,7 @@ namespace OMNIX.Core.Tools
             RuntimeDiagnosticJournal.Event("write_apply_start", call.Name, "start", null, null, null);
             try
             {
+                Execution.MarkApplying();
                 adapter.ApplyWrite(call.Name, applyArguments);
                 RuntimeDiagnosticJournal.Event("write_apply_end", call.Name, "success",
                     RuntimeDiagnosticJournal.ElapsedMs(applyTimer), null, null);
