@@ -33,12 +33,25 @@
           "kind": "heading",
           "sheet": "",
           "address": "A1:E2",
-          "text": "نام دکان — نمونه"
+          "text": "نام دکان — نمونه",
+          "aboveTable": "A4:E5"
         },
         {
           "kind": "table",
           "sheet": "",
-          "address": "A4:E5"
+          "address": "A4:E5",
+          "headers": [
+            "کد کالا",
+            "نام کالا",
+            "تعداد",
+            "قیمت واحد (افغانی)",
+            "ارزش (افغانی)"
+          ],
+          "rows": 1,
+          "keyColumn": 1,
+          "keys": [
+            "P001"
+          ]
         },
         {
           "kind": "formula",

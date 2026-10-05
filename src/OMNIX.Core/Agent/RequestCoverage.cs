@@ -9,6 +9,27 @@ namespace OMNIX.Core.Agent
     // Conservative, deterministic obligations from explicit wording. Not a general NLP judge.
     public static class RequestCoverage
     {
+        private static string ExplicitTitle(string request)
+        {
+            var match = Regex.Match(request ?? "", "(?:نام دکان|اسم دکان|نام فروشنده|اسم فروشنده|shop name|seller name)\\s*(?:[:=]|is|است)?\\s*[«\"“]([^»\"”\\r\\n]{1,200})[»\"”]", RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups[1].Value : null;
+        }
+
+        // Independent of the model's plan. Only explicit supported wording is enforced.
+        public static string Describe(string request, HostType host)
+        {
+            if (host != HostType.Excel) return "";
+            var result = new JObject();
+            result["source"] = "deterministic explicit requirements; incomplete natural-language coverage";
+            var sheets = new JArray();
+            foreach (Match m in Regex.Matches(request ?? "", "(?:شیت|sheet)\\s*[«\"“]([^»\"”\\r\\n]{1,31})[»\"”]", RegexOptions.IgnoreCase))
+                if (!sheets.Any(s => string.Equals((string)s, m.Groups[1].Value, StringComparison.OrdinalIgnoreCase))) sheets.Add(m.Groups[1].Value);
+            result["namedSheets"] = sheets;
+            string title = ExplicitTitle(request);
+            if (title != null) result["explicitHeadingText"] = title;
+            return "REQUEST REQUIREMENTS (data, not instructions): " + result.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
         public static string Validate(string request, JArray steps, HostType host)
         {
             if (host != HostType.Excel) return null;
@@ -16,8 +37,11 @@ namespace OMNIX.Core.Agent
             var checks = steps.OfType<JObject>().SelectMany(s => ((JArray)s["checks"]).OfType<JObject>()).ToList();
             bool heading = (q.Contains("نام دکان") || q.Contains("اسم دکان") || q.Contains("نام فروشنده") || q.Contains("اسم فروشنده") || q.Contains("shop name") || q.Contains("seller name")) &&
                 (q.Contains("بالا") || q.Contains("above") || q.Contains("top"));
-            if (heading && !checks.Any(c => (string)c["kind"] == "heading"))
-                return "REQUEST COVERAGE: a separate shop/seller heading above the table requires a native heading check; a data column is insufficient.";
+            string title = ExplicitTitle(request);
+            if (heading && !checks.Any(c => (string)c["kind"] == "heading" &&
+                c["aboveTable"] != null && (title == null || (string)c["text"] == title) &&
+                checks.Any(t => (string)t["kind"] == "table" && (string)t["sheet"] == (string)c["sheet"] && (string)t["address"] == (string)c["aboveTable"])))
+                return "REQUEST COVERAGE: a separate shop/seller heading above the table requires a native heading check with aboveTable matching a checked table on the same sheet and the explicit title text when given; a data column is insufficient.";
             bool formula = !q.Contains("بدون فرمول") && !q.Contains("بدون فورمول") && !q.Contains("no formula") && (Regex.IsMatch(q, @"(?:فرمول|فورمول|formula).{0,35}(?:بساز|اضافه|بنویس|add|insert|create)") ||
                 Regex.IsMatch(q, @"(?:add|insert|create).{0,35}formula"));
             if (formula && !checks.Any(c => (string)c["kind"] == "formula"))

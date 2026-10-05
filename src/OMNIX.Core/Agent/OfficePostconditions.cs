@@ -70,12 +70,45 @@ namespace OMNIX.Core.Agent
                 if(!ValuesEqual(first.Value2,c["text"])) return "Heading text differs from the plan.";
                 foreach(Excel.ListObject table in sheet.ListObjects)
                     if(app.Intersect(range,table.Range)!=null) return "Heading overlaps a data table.";
+                if(c["aboveTable"]!=null)
+                {
+                    var target=sheet.Range[(string)c["aboveTable"]];
+                    bool found=false;
+                    foreach(Excel.ListObject table in sheet.ListObjects)
+                        if(table.Range.Address[false,false]==target.Address[false,false]) {found=true; break;}
+                    if(!found) return "The table below the heading is absent.";
+                    if(range.Row+range.Rows.Count>target.Row) return "Heading is not above the requested table.";
+                }
                 return null;
             }
             if(kind=="table")
             {
                 foreach(Excel.ListObject table in sheet.ListObjects)
-                    if(table.Range.Address[false,false]==range.Address[false,false]) return null;
+                    if(table.Range.Address[false,false]==range.Address[false,false])
+                    {
+                        if(c["rows"]!=null && table.ListRows.Count!=(int)c["rows"]) return "Table data row count differs from the plan.";
+                        var headers=c["headers"] as JArray;
+                        if(headers!=null)
+                        {
+                            if(table.ListColumns.Count!=headers.Count) return "Table column count differs from the plan.";
+                            for(int i=0;i<headers.Count;i++)
+                                if(!string.Equals(table.ListColumns[i+1].Name,(string)headers[i],StringComparison.Ordinal))
+                                    return "Table header differs from the plan at column "+(i+1)+".";
+                        }
+                        var keys=c["keys"] as JArray;
+                        if(keys!=null && keys.Count>0)
+                        {
+                            int column=(int)c["keyColumn"];
+                            if(column>table.ListColumns.Count || table.DataBodyRange==null) return "Table key column is absent.";
+                            // A single bulk read; no per-row COM traversal.
+                            object stored=table.ListColumns[column].DataBodyRange.Value2;
+                            var values=stored as Array;
+                            for(int i=0;i<keys.Count;i++)
+                                if(!ValuesEqual(values==null?stored:values.GetValue(i+1,1),keys[i]))
+                                    return "Table record ID/type differs from the plan at data row "+(i+1)+".";
+                        }
+                        return null;
+                    }
                 return "No native table matches the planned range.";
             }
             // One bounded calculation instead of hundreds of cross-COM calls on the UI thread.

@@ -243,10 +243,22 @@ class WorkspaceStartupRegression {
         Check(plan.BeforeWrite(first)!=null, "Completed writes replayed");
         Check(!OMNIX.Core.Agent.OfficePostconditions.ValuesEqual("5",new Newtonsoft.Json.Linq.JValue(5)), "Numeric text accepted as a real number");
         Check(OMNIX.Core.Agent.OfficePostconditions.ValuesEqual(5.0,new Newtonsoft.Json.Linq.JValue(5)), "Equivalent numeric value rejected");
-        foreach(string name in new[]{"gold","inventory","invoice"}) {
+        foreach(string name in new[]{"gold","gold_shop","inventory","invoice"}) {
             var template=OMNIX.Core.Agent.OfficePlaybooks.Template(name,"Demo",HostType.Excel);
             var templatePlan=Newtonsoft.Json.Linq.JObject.Parse(template);
-            ExcelTableBuilder.ValidatePlan(templatePlan["steps"][0]["args"].ToString());
+            foreach(Newtonsoft.Json.Linq.JObject step in (Newtonsoft.Json.Linq.JArray)templatePlan["steps"]) {
+                ExcelTableBuilder.ValidatePlan(step["args"].ToString());
+                foreach(Newtonsoft.Json.Linq.JObject check in (Newtonsoft.Json.Linq.JArray)step["checks"])
+                    OMNIX.Core.Agent.ExecutionPlan.ValidateCheck(check,HostType.Excel);
+            }
+            if(name=="gold_shop") {
+                Check(((Newtonsoft.Json.Linq.JArray)templatePlan["steps"]).Count==4,"Gold shop dropped a required sheet");
+                Check(!template.Contains("@SALES@") && template.Contains("Demo — فروش"),"Gold shop sheet references unresolved");
+                var quoted=OMNIX.Core.Agent.OfficePlaybooks.Template(name,"Ali's",HostType.Excel);
+                Check(quoted.Contains("Ali''s — فروش"),"Cross-sheet formulas did not escape apostrophes");
+                bool invalid=false; try {OMNIX.Core.Agent.OfficePlaybooks.Template(name,new string('x',31),HostType.Excel);} catch(ArgumentException){invalid=true;}
+                Check(invalid,"Invalid generated sheet names were returned for later mutation");
+            }
             var candidate=new OMNIX.Core.Agent.ExecutionPlan(); candidate.Begin("demo",true); candidate.Submit(template,HostType.Excel);
         }
         foreach(var host in new[]{HostType.Excel,HostType.Word,HostType.PowerPoint})
@@ -290,8 +302,18 @@ class WorkspaceStartupRegression {
         Check(OMNIX.Core.Agent.RequestCoverage.Validate("Add formula",steps,HostType.Excel)!=null,"Missing explicit formula accepted");
         Check(OMNIX.Core.Agent.RequestCoverage.Validate("شیت «فروش» بساز",steps,HostType.Excel)!=null,"Missing named sheet accepted");
         Check(OMNIX.Core.Agent.RequestCoverage.Validate("create table with no formula",steps,HostType.Excel)==null,"No-formula request falsely required formula");
-        var heading=PlanStep("heading"); ((Newtonsoft.Json.Linq.JArray)heading["checks"]).Add(Newtonsoft.Json.Linq.JObject.Parse("{\"kind\":\"heading\",\"sheet\":\"Sheet1\",\"address\":\"A1:H2\",\"text\":\"Shop\"}"));
+        var heading=PlanStep("heading"); ((Newtonsoft.Json.Linq.JArray)heading["checks"]).Add(Newtonsoft.Json.Linq.JObject.Parse("{\"kind\":\"heading\",\"sheet\":\"Sheet1\",\"address\":\"A1:H2\",\"text\":\"Shop\",\"aboveTable\":\"A4:H5\"}"));
+        ((Newtonsoft.Json.Linq.JArray)heading["checks"]).Add(Newtonsoft.Json.Linq.JObject.Parse("{\"kind\":\"table\",\"sheet\":\"Sheet1\",\"address\":\"A4:H5\"}"));
         Check(OMNIX.Core.Agent.RequestCoverage.Validate("shop name above table",new Newtonsoft.Json.Linq.JArray(heading),HostType.Excel)==null,"Valid heading coverage rejected");
+        Check(OMNIX.Core.Agent.RequestCoverage.Validate("shop name \"Different\" above table",new Newtonsoft.Json.Linq.JArray(heading),HostType.Excel)!=null,"Wrong explicit heading text accepted");
+        var described=OMNIX.Core.Agent.RequestCoverage.Describe("shop name \"Shop\" above table, sheet \"Sales\"",HostType.Excel);
+        Check(described.Contains("explicitHeadingText") && described.Contains("Sales"),"Original explicit requirements not exposed to the model");
+        var wrongTable=(Newtonsoft.Json.Linq.JObject)heading.DeepClone(); wrongTable["checks"][2]["sheet"]="Other";
+        Check(OMNIX.Core.Agent.RequestCoverage.Validate("shop name above table",new Newtonsoft.Json.Linq.JArray(wrongTable),HostType.Excel)!=null,"Heading matched a table on a different sheet");
+        foreach(string invalidTable in new[]{"{\"kind\":\"table\",\"sheet\":\"S\",\"address\":\"A1:B2\",\"rows\":-1}","{\"kind\":\"table\",\"sheet\":\"S\",\"address\":\"A1:B2\",\"headers\":[\"ID\",\"ID\"]}","{\"kind\":\"table\",\"sheet\":\"S\",\"address\":\"A1:B3\",\"rows\":2,\"keyColumn\":1,\"keys\":[\"X\",\"X\"]}"}) {
+            bool rejectedTable=false; try {OMNIX.Core.Agent.ExecutionPlan.ValidateCheck(Newtonsoft.Json.Linq.JObject.Parse(invalidTable),HostType.Excel);} catch(ArgumentException){rejectedTable=true;}
+            Check(rejectedTable,"Malformed native table criterion accepted");
+        }
         var plan=new OMNIX.Core.Agent.ExecutionPlan(); plan.Begin("write cells",true);
         plan.Submit(PlanEnvelope(steps).ToString(),HostType.Excel);
         var probe=new AcceptanceProbe {Accept=true};
