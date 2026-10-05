@@ -537,7 +537,8 @@ class WorkspaceStartupRegression {
         view.SetBusy(false); string ended=history.Text; view.ShowOperation("late","apply");
         Check(history.Text==ended,"Late progress changed finished request");
         view.SetBusy(true); Check(history.Text.Length==0,"New request retained old operation history");
-        view.SetBusy(false);
+        view.ShowOperation("request","waiting"); view.SetBusy(false);
+        Check(!((System.Windows.Controls.TextBlock)view.FindName("ExecutionText")).Text.Contains("Waiting"),"Completed request still displayed waiting for model");
         SettingsManager.Instance.Settings.UiLanguage=language;
     }
     static void CapabilityRegression() {

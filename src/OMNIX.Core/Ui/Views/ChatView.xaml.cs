@@ -20,6 +20,7 @@ namespace OMNIX.Core.Ui
         private WorkspaceController _controller;
         private ImageAttachment _pendingImage;
         private bool _busy;
+        private string _lastOperationPhase;
         private readonly Queue<string> _operationHistory = new Queue<string>();
 
         public ChatView()
@@ -67,13 +68,14 @@ namespace OMNIX.Core.Ui
             _busy = busy;
             if (busy)
             {
+                _lastOperationPhase = "preparing";
                 _operationHistory.Clear();
                 ExecutionHistory.Clear();
                 ExecutionText.Text = OMNIX.Core.Settings.SettingsManager.Instance.Settings.UiLanguage == "fa" ? "در حال آماده‌سازی" : "Preparing";
                 ExecutionText.SetResourceReference(TextBlock.ForegroundProperty, "B.Foreground");
                 ExecutionBorder.Visibility = Visibility.Visible;
             }
-            else if (_operationHistory.Count == 0)
+            else if (_operationHistory.Count == 0 || _lastOperationPhase == "preparing" || _lastOperationPhase == "waiting" || _lastOperationPhase == "processing")
             {
                 ExecutionText.Text = OMNIX.Core.Settings.SettingsManager.Instance.Settings.UiLanguage == "fa" ? "درخواست پایان یافت" : "Request ended";
             }
@@ -92,6 +94,7 @@ namespace OMNIX.Core.Ui
                 return;
             }
             if (!_busy) return;
+            _lastOperationPhase = phase;
             bool fa = OMNIX.Core.Settings.SettingsManager.Instance.Settings.UiLanguage == "fa";
             string label;
             switch (phase)
