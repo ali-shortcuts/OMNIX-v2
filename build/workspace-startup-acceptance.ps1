@@ -262,6 +262,9 @@ class WorkspaceStartupRegression {
     static Newtonsoft.Json.Linq.JObject PlanStep(string id) {
         return Newtonsoft.Json.Linq.JObject.Parse("{\"id\":\""+id+"\",\"tool\":\"write_to_cell\",\"args\":{\"sheet\":\"Sheet1\",\"address\":\"A1\",\"value\":1},\"checks\":[{\"kind\":\"cell_value\",\"sheet\":\"Sheet1\",\"address\":\"A1\",\"value\":1}]}");
     }
+    static Newtonsoft.Json.Linq.JObject PlanEnvelope(Newtonsoft.Json.Linq.JArray steps, bool append=false) {
+        var result=new Newtonsoft.Json.Linq.JObject(); result["steps"]=steps; if(append)result["append"]=true; return result;
+    }
     static void TaskLifecycleRegression() {
         var steps=new Newtonsoft.Json.Linq.JArray(PlanStep("one"));
         Check(OMNIX.Core.Agent.RequestCoverage.Validate("اسم دکان در بالا باشد",steps,HostType.Excel)!=null,"Missing separate heading accepted");
@@ -271,14 +274,14 @@ class WorkspaceStartupRegression {
         var heading=PlanStep("heading"); ((Newtonsoft.Json.Linq.JArray)heading["checks"]).Add(Newtonsoft.Json.Linq.JObject.Parse("{\"kind\":\"heading\",\"sheet\":\"Sheet1\",\"address\":\"A1:H2\",\"text\":\"Shop\"}"));
         Check(OMNIX.Core.Agent.RequestCoverage.Validate("shop name above table",new Newtonsoft.Json.Linq.JArray(heading),HostType.Excel)==null,"Valid heading coverage rejected");
         var plan=new OMNIX.Core.Agent.ExecutionPlan(); plan.Begin("write cells",true);
-        plan.Submit(new Newtonsoft.Json.Linq.JObject {["steps"]=steps}.ToString(),HostType.Excel);
+        plan.Submit(PlanEnvelope(steps).ToString(),HostType.Excel);
         var probe=new AcceptanceProbe {Accept=true};
         var call=new ToolCall {Name=ToolNames.WriteToCell,ArgumentsJson=steps[0]["args"].ToString()};
         Check(plan.BeforeWrite(call)==null,"Initial step rejected"); plan.MarkApplying(); plan.AfterWrite(probe);
         Check(plan.Complete,"Native accepted step incomplete");
-        plan.Submit(new Newtonsoft.Json.Linq.JObject {["append"]=true,["steps"]=new Newtonsoft.Json.Linq.JArray(PlanStep("two"))}.ToString(),HostType.Excel);
+        plan.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("two")),true).ToString(),HostType.Excel);
         Check(!plan.Complete && plan.VerifiedStepCount==1,"Appending lost acceptance or reported completion too early");
-        bool duplicate=false; try {plan.Submit(new Newtonsoft.Json.Linq.JObject {["append"]=true,["steps"]=new Newtonsoft.Json.Linq.JArray(PlanStep("two"))}.ToString(),HostType.Excel);} catch(ArgumentException){duplicate=true;}
+        bool duplicate=false; try {plan.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("two")),true).ToString(),HostType.Excel);} catch(ArgumentException){duplicate=true;}
         Check(duplicate,"Duplicate appended step ID accepted");
         string saved=plan.Snapshot(); var resumed=new OMNIX.Core.Agent.ExecutionPlan {PreviousCheckpoint=saved}; resumed.Begin("continue",true);
         Check(resumed.TryResume("continue",HostType.Excel,probe) && resumed.VerifiedStepCount==1 && !resumed.Complete,"Partial task not safely resumed");
@@ -289,7 +292,7 @@ class WorkspaceStartupRegression {
         Check(!unrelated.TryResume("new task",HostType.Excel,probe),"Unrelated request resumed old task");
         var creation=PlanStep("create"); creation["tool"]="create_data_table";
         var uncertain=new OMNIX.Core.Agent.ExecutionPlan(); uncertain.Begin("create",true);
-        uncertain.Submit(new Newtonsoft.Json.Linq.JObject {["steps"]=new Newtonsoft.Json.Linq.JArray(creation)}.ToString(),HostType.Excel);
+        uncertain.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(creation)).ToString(),HostType.Excel);
         var createCall=new ToolCall {Name=ToolNames.CreateDataTable,ArgumentsJson=creation["args"].ToString()};
         Check(uncertain.BeforeWrite(createCall)==null,"Initial creation rejected"); uncertain.MarkApplying();
         var recovered=new OMNIX.Core.Agent.ExecutionPlan {PreviousCheckpoint=uncertain.Snapshot()}; recovered.Begin("ادامه",true); probe.Accept=false;
@@ -300,10 +303,10 @@ class WorkspaceStartupRegression {
         var batch=new OMNIX.Core.Agent.ExecutionPlan(); batch.Begin("batch",true);
         for(int segment=0;segment<3;segment++) {
             var chunk=new Newtonsoft.Json.Linq.JArray(); for(int i=0;i<12;i++)chunk.Add(PlanStep("s"+(segment*12+i)));
-            var envelope=new Newtonsoft.Json.Linq.JObject {["steps"]=chunk}; if(segment>0)envelope["append"]=true;
+            var envelope=PlanEnvelope(chunk); if(segment>0)envelope["append"]=true;
             batch.Submit(envelope.ToString(),HostType.Excel);
         }
-        bool over=false;try{batch.Submit(new Newtonsoft.Json.Linq.JObject {["append"]=true,["steps"]=new Newtonsoft.Json.Linq.JArray(PlanStep("extra"))}.ToString(),HostType.Excel);}catch(ArgumentException){over=true;}
+        bool over=false;try{batch.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("extra")),true).ToString(),HostType.Excel);}catch(ArgumentException){over=true;}
         Check(over,"Segment bound exceeded");
     }
 
@@ -359,7 +362,7 @@ class WorkspaceStartupRegression {
         public Task<bool> TestConnectionAsync(CancellationToken ct){return Task.FromResult(true);}
         public Task<ChatResponse> SendAsync(ChatRequest request,Action<string> delta,CancellationToken ct) {
             Calls++; string tool=ToolNames.ReadDocumentMap, args="{}";
-            if(Progress && Calls==1) {tool=ToolNames.SubmitExecutionPlan;args=new Newtonsoft.Json.Linq.JObject {["steps"]=new Newtonsoft.Json.Linq.JArray(PlanStep("one"))}.ToString();}
+            if(Progress && Calls==1) {tool=ToolNames.SubmitExecutionPlan;args=PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("one"))).ToString();}
             else if(Progress && Calls==2){tool=ToolNames.WriteToCell;args=PlanStep("one")["args"].ToString();}
             if(Progress && Calls==26)return Task.FromResult(new ChatResponse {Text="Finished after checkpoint."});
             return Task.FromResult(new ChatResponse {ToolCalls=new List<ProviderToolCall>{new ProviderToolCall {Id="segment-"+Calls,Name=tool,ArgumentsJson=args}}});
