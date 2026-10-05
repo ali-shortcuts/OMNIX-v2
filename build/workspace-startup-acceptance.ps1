@@ -133,7 +133,8 @@ class WorkspaceStartupRegression {
         public int Reads;
         public HostType Host { get { return HostType.Excel; } }
         public string HostDisplayName { get { return "Excel"; } }
-        public OfficeContext ReadContext() { return new OfficeContext { Host=HostType.Excel,DocumentName="navigation-test.xlsx" }; }
+        public int ContextReads;
+        public OfficeContext ReadContext() { ContextReads++; return new OfficeContext { Host=HostType.Excel,DocumentName="navigation-test.xlsx" }; }
         public string ReadSelection() { return "selection"; }
         public string ReadDocument(int max) { return "document"; }
         public string ReadDocumentMap(int offset) { Reads++; return "offset="+offset; }
@@ -255,6 +256,24 @@ class WorkspaceStartupRegression {
         Check(plan.Complete, "Checkpoint failure changed native verification result");
     }
 
+    sealed class ScopeIdentityHost : FakeHost, IRequestScopeIdentityHost {
+        public int IdentityReads; public string IdentityName="navigation-test.xlsx";
+        public OfficeContext ReadScopeIdentity() {IdentityReads++; return new OfficeContext {Host=HostType.Excel,DocumentName=IdentityName};}
+    }
+    static void ScopeIdentityRegression() {
+        var host=new ScopeIdentityHost();
+        using(var controller=new WorkspaceController(host,new ChatHistoryStore())) {
+            controller.RefreshContextBar();
+            string key=(string)typeof(WorkspaceController).GetField("_docKey",BindingFlags.NonPublic|BindingFlags.Instance).GetValue(controller);
+            int version=(int)typeof(WorkspaceController).GetField("_documentScopeVersion",BindingFlags.NonPublic|BindingFlags.Instance).GetValue(controller);
+            var validate=typeof(WorkspaceController).GetMethod("ValidateCurrentOfficeDocumentScope",BindingFlags.NonPublic|BindingFlags.Instance);
+            int heavyReads=host.ContextReads;
+            Check((bool)validate.Invoke(controller,new object[]{key,version}),"Identity-only scope rejected current document");
+            Check(host.ContextReads==heavyReads && host.IdentityReads==1,"Scope validation performed a full content scan");
+            host.IdentityName="another.xlsx";
+            Check(!(bool)validate.Invoke(controller,new object[]{key,version}),"Identity-only validation accepted a changed document");
+        }
+    }
     sealed class AcceptanceProbe : OMNIX.Core.Agent.IPlanVerificationHost {
         public bool Accept; public int Reads;
         public string CheckPostcondition(Newtonsoft.Json.Linq.JObject check) { Reads++; return Accept ? null : "mismatch"; }
@@ -856,6 +875,7 @@ class WorkspaceStartupRegression {
             CatalogRoutesRegression();
             ExecutionPlanRegression();
             TaskLifecycleRegression();
+            ScopeIdentityRegression();
             NativeContractGatewayRegression();
             SegmentGatewayRegression();
             ModelEvidenceRegression();

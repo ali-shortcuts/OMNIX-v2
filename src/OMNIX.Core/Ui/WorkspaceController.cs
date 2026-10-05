@@ -207,7 +207,8 @@ namespace OMNIX.Core.Ui
             if (!IsRequestScopeVersionValid(requestDocKey, requestScopeVersion)) return false;
             try
             {
-                var ctx = _adapter.ReadContext();
+                var identity = _adapter as IRequestScopeIdentityHost;
+                var ctx = identity != null ? identity.ReadScopeIdentity() : _adapter.ReadContext();
                 string currentKey = StableDocumentKey(ctx);
                 return string.Equals(currentKey, requestDocKey, StringComparison.OrdinalIgnoreCase);
             }
