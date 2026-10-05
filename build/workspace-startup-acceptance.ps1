@@ -418,6 +418,39 @@ class WorkspaceStartupRegression {
             }
         } finally { settings.SelectedProviderId=oldProvider; settings.Privacy=oldPrivacy; settings.PreferLocalWhenAvailable=oldLocal; }
     }
+    static void OperationProgressRegression() {
+        var phases=new List<string>(); var host=new FakeHost();
+        var executor=new ToolExecutor { OperationProgress=(operation,phase)=>phases.Add(phase) };
+        var call=new ToolCall {Name=ToolNames.ReadDocumentMap,ArgumentsJson="{}"};
+        Check(executor.ExecuteAsync(call,host).GetAwaiter().GetResult().Success,"Read failed with progress observer");
+        Check(string.Join(",",phases)=="inspect,complete","Read progress must follow actual execution");
+        phases.Clear(); call.ArgumentsJson="{\"offset\":-1}";
+        Check(!executor.ExecuteAsync(call,host).GetAwaiter().GetResult().Success,"Invalid read accepted");
+        Check(string.Join(",",phases)=="inspect,failed","Failure was displayed as successful");
+        int reads=host.Reads;
+        using(var cts=new CancellationTokenSource()) {
+            executor.OperationProgress=(operation,phase)=>{ if(phase=="inspect") cts.Cancel(); };
+            call.ArgumentsJson="{}";
+            try { executor.ExecuteAsync(call,host,cts.Token).GetAwaiter().GetResult(); throw new Exception("Cancelled operation ran"); }
+            catch(OperationCanceledException) {}
+        }
+        Check(host.Reads==reads,"Cancellation after progress crossed host boundary");
+        executor.OperationProgress=(operation,phase)=>{ throw new InvalidOperationException("UI observer unavailable"); };
+        Check(executor.ExecuteAsync(call,host).GetAwaiter().GetResult().Success,"UI observer failure broke real operation");
+        string language=SettingsManager.Instance.Settings.UiLanguage;
+        SettingsManager.Instance.Settings.UiLanguage="en";
+        var view=new OMNIX.Core.Ui.ChatView(); view.SetBusy(true);
+        for(int i=0;i<100;i++) view.ShowOperation("read_selection","inspect");
+        var history=(System.Windows.Controls.TextBox)view.FindName("ExecutionHistory");
+        Check(history.Text.Split(new[]{Environment.NewLine},StringSplitOptions.None).Length==80,"Operation history must be bounded");
+        view.ShowOperation("read_selection","failed");
+        Check(((System.Windows.Controls.TextBlock)view.FindName("ExecutionText")).Text.Contains("failed"),"Failed tool state not visible");
+        view.SetBusy(false); string ended=history.Text; view.ShowOperation("late","apply");
+        Check(history.Text==ended,"Late progress changed finished request");
+        view.SetBusy(true); Check(history.Text.Length==0,"New request retained old operation history");
+        view.SetBusy(false);
+        SettingsManager.Instance.Settings.UiLanguage=language;
+    }
     static void CapabilityRegression() {
         var host=new FakeHost(); var executor=new ToolExecutor();
         var accessCall = new ToolCall { Name=ToolNames.ReadOfficeAccess, ArgumentsJson="{}" };
@@ -725,6 +758,7 @@ class WorkspaceStartupRegression {
             ExecutionPlanRegression();
             NativeContractGatewayRegression();
             ModelEvidenceRegression();
+            OperationProgressRegression();
             CapabilityRegression();
             AccessRecoveryRegression();
             NativeGatewayRegression();

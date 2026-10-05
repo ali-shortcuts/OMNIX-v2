@@ -20,6 +20,7 @@ namespace OMNIX.Core.Ui
         private WorkspaceController _controller;
         private ImageAttachment _pendingImage;
         private bool _busy;
+        private readonly Queue<string> _operationHistory = new Queue<string>();
 
         public ChatView()
         {
@@ -64,11 +65,56 @@ namespace OMNIX.Core.Ui
         public void SetBusy(bool busy)
         {
             _busy = busy;
+            if (busy)
+            {
+                _operationHistory.Clear();
+                ExecutionHistory.Clear();
+                ExecutionText.Text = OMNIX.Core.Settings.SettingsManager.Instance.Settings.UiLanguage == "fa" ? "در حال آماده‌سازی" : "Preparing";
+                ExecutionText.SetResourceReference(TextBlock.ForegroundProperty, "B.Foreground");
+                ExecutionBorder.Visibility = Visibility.Visible;
+            }
+            else if (_operationHistory.Count == 0)
+            {
+                ExecutionText.Text = OMNIX.Core.Settings.SettingsManager.Instance.Settings.UiLanguage == "fa" ? "درخواست پایان یافت" : "Request ended";
+            }
             SendButton.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
             StopButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
             NewChatButton.IsEnabled = !busy;
             ClearButton.IsEnabled = !busy;
             RetryButton.IsEnabled = !busy;
+        }
+
+        public void ShowOperation(string operation, string phase)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.BeginInvoke(new Action(() => ShowOperation(operation, phase)));
+                return;
+            }
+            if (!_busy) return;
+            bool fa = OMNIX.Core.Settings.SettingsManager.Instance.Settings.UiLanguage == "fa";
+            string label;
+            switch (phase)
+            {
+                case "inspect": label = fa ? "بررسی" : "Inspecting"; break;
+                case "preview": label = fa ? "پیش‌نمایش" : "Preview"; break;
+                case "apply": label = fa ? "اجرا" : "Applying"; break;
+                case "verify": label = fa ? "بررسی نتیجه" : "Verifying"; break;
+                case "verified": label = fa ? "طرح تأیید شد" : "Plan verified"; break;
+                case "incomplete": label = fa ? "طرح هنوز کامل نیست" : "Plan incomplete"; break;
+                case "complete": label = fa ? "ابزار اجرا شد" : "Tool completed"; break;
+                case "cancelled": label = fa ? "متوقف شد" : "Stopped"; break;
+                default: label = fa ? "خطای ابزار" : "Tool failed"; break;
+            }
+            string line = label + " · " + operation;
+            ExecutionText.Text = line;
+            ExecutionText.SetResourceReference(TextBlock.ForegroundProperty,
+                phase == "failed" || phase == "incomplete" ? "B.Danger" : phase == "verified" ? "B.Success" : "B.Foreground");
+            _operationHistory.Enqueue(DateTime.Now.ToString("HH:mm:ss") + "  " + line);
+            while (_operationHistory.Count > 80) _operationHistory.Dequeue();
+            ExecutionHistory.Text = string.Join(Environment.NewLine, _operationHistory);
+            ExecutionHistory.ScrollToEnd();
+            ExecutionBorder.Visibility = Visibility.Visible;
         }
 
         public void SetContextText(string text)

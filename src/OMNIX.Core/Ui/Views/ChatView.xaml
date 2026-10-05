@@ -32,6 +32,10 @@
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="bd" Property="Opacity" Value="0.85" />
                             </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource B.Accent}" />
+                                <Setter TargetName="bd" Property="BorderThickness" Value="2" />
+                            </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="bd" Property="Opacity" Value="0.45" />
                             </Trigger>
@@ -127,7 +131,7 @@
                          CaretBrush="{DynamicResource B.Foreground}"
                          AcceptsReturn="True" TextWrapping="Wrap"
                          FontSize="12" MinHeight="72" MaxHeight="200" VerticalScrollBarVisibility="Auto"
-                         VerticalContentAlignment="Center" Padding="6,5"
+                         VerticalContentAlignment="Top" Padding="8,7"
                          PreviewKeyDown="OnInputKeyDown" />
 
                 <Button x:Name="SendButton" Grid.Column="2" Margin="4,0,0,0"
@@ -144,6 +148,7 @@
         <!-- Toolbar + messages -->
         <Grid>
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
@@ -168,11 +173,26 @@
                 </WrapPanel>
             </Border>
 
-            <TextBox x:Name="TranscriptBox" Grid.Row="1" Visibility="Collapsed" IsReadOnly="True"
+            <Border x:Name="ExecutionBorder" Grid.Row="1" Visibility="Collapsed"
+                    Background="{DynamicResource B.Surface}" BorderBrush="{DynamicResource B.Accent}"
+                    BorderThickness="3,0,0,0" Padding="8,6" Margin="6,4">
+                <StackPanel>
+                    <TextBlock x:Name="ExecutionText" FontSize="12" FontWeight="SemiBold"
+                               Foreground="{DynamicResource B.Foreground}" TextWrapping="Wrap"
+                               AutomationProperties.AutomationId="OMNIX.ExecutionStatus" />
+                    <Expander Header="Steps" Foreground="{DynamicResource B.ForegroundDim}" Margin="0,4,0,0">
+                        <TextBox x:Name="ExecutionHistory" IsReadOnly="True" TextWrapping="Wrap"
+                                 MaxHeight="120" VerticalScrollBarVisibility="Auto" FontSize="11"
+                                 Background="{DynamicResource B.Surface}" Foreground="{DynamicResource B.Foreground}"
+                                 BorderThickness="0" AutomationProperties.AutomationId="OMNIX.ExecutionHistory" />
+                    </Expander>
+                </StackPanel>
+            </Border>
+            <TextBox x:Name="TranscriptBox" Grid.Row="2" Visibility="Collapsed" IsReadOnly="True"
                      AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                      Background="{DynamicResource B.Background}" Foreground="{DynamicResource B.Foreground}"
                      BorderThickness="0" Padding="8" />
-            <ScrollViewer x:Name="MessagesScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
+            <ScrollViewer x:Name="MessagesScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto"
                           AutomationProperties.AutomationId="OMNIX.MessagesScroll"
                           Padding="4,4,4,2">
                 <StackPanel x:Name="MessagesPanel"

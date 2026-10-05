@@ -25,6 +25,24 @@ namespace OMNIX.Core.Tools
 
         public Func<string, string> ConversationSearch { get; set; }
 
+        // Metadata only: never publish document values, credentials or full tool arguments.
+        public Action<string, string> OperationProgress { get; set; }
+
+        private void NotifyOperation(ToolCall call, string phase)
+        {
+            try { OperationProgress?.Invoke(call.Name + CapabilityDetail(call), phase); }
+            catch (Exception ex) { Logger.Error("ui", "Operation progress display failed", ex); }
+        }
+
+        private async Task PaceAsync(IHostAdapter adapter, CancellationToken ct)
+        {
+            if (!(adapter is IVisibleOfficeExecutionHost)) return;
+            int delay = Math.Max(1, Math.Min(2000, Settings.SettingsManager.Instance.Settings.ExecutionStepDelayMs));
+            // Even with pacing disabled, yield for selection painting and cancellation.
+            await Task.Delay(delay, ct).ConfigureAwait(true);
+            EnsureRequestScope(ct);
+        }
+
         public Func<WritePreview, Task<bool>> WriteConfirmation { get; set; }
 
         /// <summary>
@@ -74,9 +92,17 @@ namespace OMNIX.Core.Tools
                     ToolNames.IsWriteTool(call.Name) ? "write" : "read", null, null,
                     "host=" + (adapter != null ? adapter.HostDisplayName : "none") + CapabilityDetail(call));
                 EnsureRequestScope(ct);
+                NotifyOperation(call, "inspect");
+                EnsureRequestScope(ct);
+                Reveal(adapter, call, OfficeExecutionStage.Inspect);
+                await PaceAsync(adapter, ct).ConfigureAwait(true);
                 ToolResult result = ToolNames.IsWriteTool(call.Name)
                     ? await ExecuteWriteAsync(call, adapter, ct).ConfigureAwait(true)
                     : ExecuteRead(call, adapter, ct);
+                string phase = result != null && result.Success ? "complete" : "failed";
+                if (result != null && result.Success && call.Name == ToolNames.VerifyExecutionPlan)
+                    phase = Execution.Complete ? "verified" : "incomplete";
+                NotifyOperation(call, phase);
                 Logger.Gateway("Tool result: " + call.Name + "; success=" + result.Success);
                 RuntimeDiagnosticJournal.Event("executor_result", call.Name,
                     result != null && result.Success ? "success" : "failed",
@@ -85,6 +111,7 @@ namespace OMNIX.Core.Tools
             }
             catch (OperationCanceledException)
             {
+                NotifyOperation(call, "cancelled");
                 RuntimeDiagnosticJournal.Event("executor_result", call != null ? call.Name : null,
                     "cancelled", RuntimeDiagnosticJournal.ElapsedMs(dispatchTimer), null, null);
                 // Cancellation/scope loss is a request boundary. Never convert it into a
@@ -93,12 +120,14 @@ namespace OMNIX.Core.Tools
             }
             catch (OmnixException ex)
             {
+                NotifyOperation(call, "failed");
                 RuntimeDiagnosticJournal.Event("executor_result", call != null ? call.Name : null,
                     "omnix_error", RuntimeDiagnosticJournal.ElapsedMs(dispatchTimer), ex.Code, null);
                 return ToolResult.Fail("TOOL ERROR [" + ex.Code + "]: " + ex.Message);
             }
             catch (Exception ex)
             {
+                NotifyOperation(call, "failed");
                 RuntimeDiagnosticJournal.Event("executor_result", call != null ? call.Name : null,
                     "exception", RuntimeDiagnosticJournal.ElapsedMs(dispatchTimer), null,
                     "type=" + ex.GetType().Name);
@@ -124,8 +153,6 @@ namespace OMNIX.Core.Tools
         private ToolResult ExecuteRead(ToolCall call, IHostAdapter adapter, CancellationToken ct)
         {
             EnsureRequestScope(ct);
-            Reveal(adapter, call, OfficeExecutionStage.Inspect);
-
             switch (call.Name)
             {
                 case ToolNames.GetOfficeTemplate:
@@ -136,6 +163,7 @@ namespace OMNIX.Core.Tools
                 case ToolNames.VerifyExecutionPlan:
                     var verifier = adapter as Agent.IPlanVerificationHost;
                     if (verifier == null) return ToolResult.Fail("Native plan verification is unavailable.");
+                    NotifyOperation(call, "verify");
                     return ToolResult.Ok(Execution.VerifyAll(verifier));
                 case ToolNames.ReadOfficeAccess:
                 {
@@ -252,6 +280,7 @@ namespace OMNIX.Core.Tools
 
             // The active Office document may have changed while PrepareWrite inspected it.
             EnsureRequestScope(ct);
+            NotifyOperation(call, "preview");
             Reveal(adapter, call, OfficeExecutionStage.Preview);
 
             if (WriteConfirmation == null)
@@ -296,10 +325,10 @@ namespace OMNIX.Core.Tools
             string applyArguments = !string.IsNullOrWhiteSpace(preview.ArgumentsJson)
                 ? preview.ArgumentsJson
                 : call.ArgumentsJson;
+            NotifyOperation(call, "apply");
             Reveal(adapter, new ToolCall { Name = call.Name, ArgumentsJson = applyArguments }, OfficeExecutionStage.Apply);
             // Yield to Office/WPF so the real selection/reveal can paint and Stop can run.
-            int delay = Math.Max(1, Math.Min(2000, Settings.SettingsManager.Instance.Settings.ExecutionStepDelayMs));
-            if (adapter is IVisibleOfficeExecutionHost) await Task.Delay(delay, ct).ConfigureAwait(true);
+            await PaceAsync(adapter, ct).ConfigureAwait(true);
             EnsureRequestScope(ct);
             long applyTimer = RuntimeDiagnosticJournal.StartTimer();
             RuntimeDiagnosticJournal.Event("write_apply_start", call.Name, "start", null, null, null);
@@ -321,7 +350,9 @@ namespace OMNIX.Core.Tools
                     RuntimeDiagnosticJournal.ElapsedMs(applyTimer), null, "type=" + ex.GetType().Name);
                 throw;
             }
+            NotifyOperation(call, "verify");
             Reveal(adapter, new ToolCall { Name = call.Name, ArgumentsJson = applyArguments }, OfficeExecutionStage.Verify);
+            await PaceAsync(adapter, ct).ConfigureAwait(true);
             string hint = call.Name == ToolNames.CreateDataTable
                 ? "New worksheet and data table created; headers, cell values and row count verified. To reverse this operation, delete the new worksheet; native Ctrl+Z is not guaranteed."
                 : call.Name == ToolNames.ExecuteOfficeCapability

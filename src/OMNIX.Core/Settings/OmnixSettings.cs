@@ -68,7 +68,7 @@ namespace OMNIX.Core.Settings
             s.SchemaVersion = 4;
             s.Privacy = PrivacyMode.CloudAllowed;
             s.SavedModels = new Dictionary<string, List<string>>();
-            s.ExecutionStepDelayMs = 350;
+            s.ExecutionStepDelayMs = 800;
             s.BusinessLocale = "Afghanistan; Dari; currency AFN";
             s.Theme = ThemeMode.System;
             s.UiLanguage = "en";
