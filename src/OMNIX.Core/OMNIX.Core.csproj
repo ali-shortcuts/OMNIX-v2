@@ -147,6 +147,7 @@
     <EmbeddedResource Include="Agent\Playbooks\Word.md"><LogicalName>OMNIX.Agent.Word.md</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="Agent\Playbooks\business.md"><LogicalName>OMNIX.Agent.business.md</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="Agent\Playbooks\contract.md"><LogicalName>OMNIX.Agent.contract.md</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="Agent\Playbooks\gold_shop.json"><LogicalName>OMNIX.Agent.gold_shop.json</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="Agent\Playbooks\gold.json"><LogicalName>OMNIX.Agent.gold.json</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="Agent\Playbooks\inventory.json"><LogicalName>OMNIX.Agent.inventory.json</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="Agent\Playbooks\invoice.json"><LogicalName>OMNIX.Agent.invoice.json</LogicalName></EmbeddedResource>

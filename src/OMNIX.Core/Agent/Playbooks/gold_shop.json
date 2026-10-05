@@ -1,0 +1,591 @@
+{
+  "steps": [
+    {
+      "id": "sales",
+      "tool": "create_data_table",
+      "args": {
+        "sheet": "@SALES@",
+        "uniqueName": false,
+        "title": "فروش — داده‌های نمونه",
+        "startRow": 4,
+        "headers": [
+          "شماره فروش",
+          "تاریخ میلادی",
+          "کد مشتری",
+          "کد کالا",
+          "تعداد",
+          "وزن هر قطعه (گرم)",
+          "نرخ (افغانی/گرم)",
+          "مبلغ (افغانی)",
+          "پرداخت (افغانی)",
+          "باقی (افغانی)",
+          "نوع داده"
+        ],
+        "rows": [
+          [
+            "S001",
+            {
+              "date": "2026-10-01",
+              "numberFormat": "yyyy-mm-dd"
+            },
+            "C001",
+            "G001",
+            1,
+            5.2,
+            2500,
+            {
+              "formula": "=E5*F5*G5",
+              "numberFormat": "#,##0.00"
+            },
+            10000,
+            {
+              "formula": "=H5-I5",
+              "numberFormat": "#,##0.00"
+            },
+            "نمونه"
+          ],
+          [
+            "S002",
+            {
+              "date": "2026-10-02",
+              "numberFormat": "yyyy-mm-dd"
+            },
+            "C002",
+            "G002",
+            2,
+            3,
+            3000,
+            {
+              "formula": "=E6*F6*G6",
+              "numberFormat": "#,##0.00"
+            },
+            18000,
+            {
+              "formula": "=H6-I6",
+              "numberFormat": "#,##0.00"
+            },
+            "نمونه"
+          ],
+          [
+            "S003",
+            {
+              "date": "2026-10-03",
+              "numberFormat": "yyyy-mm-dd"
+            },
+            "C001",
+            "G001",
+            1,
+            5.2,
+            2500,
+            {
+              "formula": "=E7*F7*G7",
+              "numberFormat": "#,##0.00"
+            },
+            8000,
+            {
+              "formula": "=H7-I7",
+              "numberFormat": "#,##0.00"
+            },
+            "نمونه"
+          ]
+        ]
+      },
+      "checks": [
+        {
+          "kind": "heading",
+          "sheet": "@SALES@",
+          "address": "A1:K2",
+          "text": "فروش — داده‌های نمونه",
+          "aboveTable": "A4:K7"
+        },
+        {
+          "kind": "table",
+          "sheet": "@SALES@",
+          "address": "A4:K7",
+          "headers": [
+            "شماره فروش",
+            "تاریخ میلادی",
+            "کد مشتری",
+            "کد کالا",
+            "تعداد",
+            "وزن هر قطعه (گرم)",
+            "نرخ (افغانی/گرم)",
+            "مبلغ (افغانی)",
+            "پرداخت (افغانی)",
+            "باقی (افغانی)",
+            "نوع داده"
+          ],
+          "rows": 3,
+          "keyColumn": 1,
+          "keys": [
+            "S001",
+            "S002",
+            "S003"
+          ]
+        },
+        {
+          "kind": "formula",
+          "address": "H5",
+          "formula": "=E5*F5*G5",
+          "value": 13000.0,
+          "sheet": "@SALES@"
+        },
+        {
+          "kind": "formula",
+          "address": "J5",
+          "formula": "=H5-I5",
+          "value": 3000.0,
+          "sheet": "@SALES@"
+        },
+        {
+          "kind": "formula",
+          "address": "H6",
+          "formula": "=E6*F6*G6",
+          "value": 18000,
+          "sheet": "@SALES@"
+        },
+        {
+          "kind": "formula",
+          "address": "J6",
+          "formula": "=H6-I6",
+          "value": 0,
+          "sheet": "@SALES@"
+        },
+        {
+          "kind": "formula",
+          "address": "H7",
+          "formula": "=E7*F7*G7",
+          "value": 13000.0,
+          "sheet": "@SALES@"
+        },
+        {
+          "kind": "formula",
+          "address": "J7",
+          "formula": "=H7-I7",
+          "value": 5000.0,
+          "sheet": "@SALES@"
+        },
+        {
+          "kind": "no_errors",
+          "sheet": "@SALES@",
+          "address": "A4:K7"
+        }
+      ]
+    },
+    {
+      "id": "products",
+      "tool": "create_data_table",
+      "args": {
+        "sheet": "@PRODUCTS@",
+        "uniqueName": false,
+        "title": "نام دکان — نمونه",
+        "startRow": 4,
+        "headers": [
+          "کد کالا",
+          "نام کالا",
+          "وزن هر قطعه (گرم)",
+          "عیار",
+          "نرخ (افغانی/گرم)",
+          "موجودی آغازین (قطعه)",
+          "فروش (قطعه)",
+          "مانده (قطعه)",
+          "ارزش مانده (افغانی)"
+        ],
+        "rows": [
+          [
+            "G001",
+            "گردنبند نمونه",
+            5.2,
+            21,
+            2500,
+            5,
+            {
+              "formula": "=SUMIF('@SALES@'!D5:D7,A5,'@SALES@'!E5:E7)",
+              "numberFormat": "#,##0.00"
+            },
+            {
+              "formula": "=F5-G5",
+              "numberFormat": "#,##0.00"
+            },
+            {
+              "formula": "=C5*E5*H5",
+              "numberFormat": "#,##0.00"
+            }
+          ],
+          [
+            "G002",
+            "انگشتر نمونه",
+            3,
+            22,
+            3000,
+            4,
+            {
+              "formula": "=SUMIF('@SALES@'!D5:D7,A6,'@SALES@'!E5:E7)",
+              "numberFormat": "#,##0.00"
+            },
+            {
+              "formula": "=F6-G6",
+              "numberFormat": "#,##0.00"
+            },
+            {
+              "formula": "=C6*E6*H6",
+              "numberFormat": "#,##0.00"
+            }
+          ],
+          [
+            "G003",
+            "دستبند نمونه",
+            7,
+            21,
+            2600,
+            2,
+            {
+              "formula": "=SUMIF('@SALES@'!D5:D7,A7,'@SALES@'!E5:E7)",
+              "numberFormat": "#,##0.00"
+            },
+            {
+              "formula": "=F7-G7",
+              "numberFormat": "#,##0.00"
+            },
+            {
+              "formula": "=C7*E7*H7",
+              "numberFormat": "#,##0.00"
+            }
+          ]
+        ]
+      },
+      "checks": [
+        {
+          "kind": "heading",
+          "sheet": "@PRODUCTS@",
+          "address": "A1:I2",
+          "text": "نام دکان — نمونه",
+          "aboveTable": "A4:I7"
+        },
+        {
+          "kind": "table",
+          "sheet": "@PRODUCTS@",
+          "address": "A4:I7",
+          "headers": [
+            "کد کالا",
+            "نام کالا",
+            "وزن هر قطعه (گرم)",
+            "عیار",
+            "نرخ (افغانی/گرم)",
+            "موجودی آغازین (قطعه)",
+            "فروش (قطعه)",
+            "مانده (قطعه)",
+            "ارزش مانده (افغانی)"
+          ],
+          "rows": 3,
+          "keyColumn": 1,
+          "keys": [
+            "G001",
+            "G002",
+            "G003"
+          ]
+        },
+        {
+          "kind": "formula",
+          "address": "G5",
+          "formula": "=SUMIF('@SALES@'!D5:D7,A5,'@SALES@'!E5:E7)",
+          "value": 2,
+          "sheet": "@PRODUCTS@"
+        },
+        {
+          "kind": "formula",
+          "address": "H5",
+          "formula": "=F5-G5",
+          "value": 3,
+          "sheet": "@PRODUCTS@"
+        },
+        {
+          "kind": "formula",
+          "address": "I5",
+          "formula": "=C5*E5*H5",
+          "value": 39000.0,
+          "sheet": "@PRODUCTS@"
+        },
+        {
+          "kind": "formula",
+          "address": "G6",
+          "formula": "=SUMIF('@SALES@'!D5:D7,A6,'@SALES@'!E5:E7)",
+          "value": 2,
+          "sheet": "@PRODUCTS@"
+        },
+        {
+          "kind": "formula",
+          "address": "H6",
+          "formula": "=F6-G6",
+          "value": 2,
+          "sheet": "@PRODUCTS@"
+        },
+        {
+          "kind": "formula",
+          "address": "I6",
+          "formula": "=C6*E6*H6",
+          "value": 18000,
+          "sheet": "@PRODUCTS@"
+        },
+        {
+          "kind": "formula",
+          "address": "G7",
+          "formula": "=SUMIF('@SALES@'!D5:D7,A7,'@SALES@'!E5:E7)",
+          "value": 0,
+          "sheet": "@PRODUCTS@"
+        },
+        {
+          "kind": "formula",
+          "address": "H7",
+          "formula": "=F7-G7",
+          "value": 2,
+          "sheet": "@PRODUCTS@"
+        },
+        {
+          "kind": "formula",
+          "address": "I7",
+          "formula": "=C7*E7*H7",
+          "value": 36400,
+          "sheet": "@PRODUCTS@"
+        },
+        {
+          "kind": "no_errors",
+          "sheet": "@PRODUCTS@",
+          "address": "A4:I7"
+        }
+      ]
+    },
+    {
+      "id": "customers",
+      "tool": "create_data_table",
+      "args": {
+        "sheet": "@CUSTOMERS@",
+        "uniqueName": false,
+        "title": "مشتریان — داده‌های نمونه",
+        "startRow": 4,
+        "headers": [
+          "کد مشتری",
+          "نام مشتری",
+          "تماس",
+          "خرید (افغانی)",
+          "پرداخت (افغانی)",
+          "باقی (افغانی)"
+        ],
+        "rows": [
+          [
+            "C001",
+            "مشتری نمونه ۱",
+            "ثبت نشده",
+            {
+              "formula": "=SUMIF('@SALES@'!C5:C7,A5,'@SALES@'!H5:H7)",
+              "numberFormat": "#,##0.00"
+            },
+            {
+              "formula": "=SUMIF('@SALES@'!C5:C7,A5,'@SALES@'!I5:I7)",
+              "numberFormat": "#,##0.00"
+            },
+            {
+              "formula": "=SUMIF('@SALES@'!C5:C7,A5,'@SALES@'!J5:J7)",
+              "numberFormat": "#,##0.00"
+            }
+          ],
+          [
+            "C002",
+            "مشتری نمونه ۲",
+            "ثبت نشده",
+            {
+              "formula": "=SUMIF('@SALES@'!C5:C7,A6,'@SALES@'!H5:H7)",
+              "numberFormat": "#,##0.00"
+            },
+            {
+              "formula": "=SUMIF('@SALES@'!C5:C7,A6,'@SALES@'!I5:I7)",
+              "numberFormat": "#,##0.00"
+            },
+            {
+              "formula": "=SUMIF('@SALES@'!C5:C7,A6,'@SALES@'!J5:J7)",
+              "numberFormat": "#,##0.00"
+            }
+          ]
+        ]
+      },
+      "checks": [
+        {
+          "kind": "heading",
+          "sheet": "@CUSTOMERS@",
+          "address": "A1:F2",
+          "text": "مشتریان — داده‌های نمونه",
+          "aboveTable": "A4:F6"
+        },
+        {
+          "kind": "table",
+          "sheet": "@CUSTOMERS@",
+          "address": "A4:F6",
+          "headers": [
+            "کد مشتری",
+            "نام مشتری",
+            "تماس",
+            "خرید (افغانی)",
+            "پرداخت (افغانی)",
+            "باقی (افغانی)"
+          ],
+          "rows": 2,
+          "keyColumn": 1,
+          "keys": [
+            "C001",
+            "C002"
+          ]
+        },
+        {
+          "kind": "formula",
+          "address": "D5",
+          "formula": "=SUMIF('@SALES@'!C5:C7,A5,'@SALES@'!H5:H7)",
+          "value": 26000,
+          "sheet": "@CUSTOMERS@"
+        },
+        {
+          "kind": "formula",
+          "address": "E5",
+          "formula": "=SUMIF('@SALES@'!C5:C7,A5,'@SALES@'!I5:I7)",
+          "value": 18000,
+          "sheet": "@CUSTOMERS@"
+        },
+        {
+          "kind": "formula",
+          "address": "F5",
+          "formula": "=SUMIF('@SALES@'!C5:C7,A5,'@SALES@'!J5:J7)",
+          "value": 8000,
+          "sheet": "@CUSTOMERS@"
+        },
+        {
+          "kind": "formula",
+          "address": "D6",
+          "formula": "=SUMIF('@SALES@'!C5:C7,A6,'@SALES@'!H5:H7)",
+          "value": 18000,
+          "sheet": "@CUSTOMERS@"
+        },
+        {
+          "kind": "formula",
+          "address": "E6",
+          "formula": "=SUMIF('@SALES@'!C5:C7,A6,'@SALES@'!I5:I7)",
+          "value": 18000,
+          "sheet": "@CUSTOMERS@"
+        },
+        {
+          "kind": "formula",
+          "address": "F6",
+          "formula": "=SUMIF('@SALES@'!C5:C7,A6,'@SALES@'!J5:J7)",
+          "value": 0,
+          "sheet": "@CUSTOMERS@"
+        },
+        {
+          "kind": "no_errors",
+          "sheet": "@CUSTOMERS@",
+          "address": "A4:F6"
+        }
+      ]
+    },
+    {
+      "id": "summary",
+      "tool": "create_data_table",
+      "args": {
+        "sheet": "@SUMMARY@",
+        "uniqueName": false,
+        "title": "گزارش — داده‌های نمونه",
+        "startRow": 4,
+        "headers": [
+          "شاخص",
+          "مبلغ (افغانی)"
+        ],
+        "rows": [
+          [
+            "مجموع فروش",
+            {
+              "formula": "=SUM('@SALES@'!H5:H7)",
+              "numberFormat": "#,##0.00"
+            }
+          ],
+          [
+            "مجموع پرداخت",
+            {
+              "formula": "=SUM('@SALES@'!I5:I7)",
+              "numberFormat": "#,##0.00"
+            }
+          ],
+          [
+            "طلب از مشتریان",
+            {
+              "formula": "=SUM('@SALES@'!J5:J7)",
+              "numberFormat": "#,##0.00"
+            }
+          ],
+          [
+            "ارزش موجودی نمونه",
+            {
+              "formula": "=SUM('@PRODUCTS@'!I5:I7)",
+              "numberFormat": "#,##0.00"
+            }
+          ]
+        ]
+      },
+      "checks": [
+        {
+          "kind": "heading",
+          "sheet": "@SUMMARY@",
+          "address": "A1:B2",
+          "text": "گزارش — داده‌های نمونه",
+          "aboveTable": "A4:B8"
+        },
+        {
+          "kind": "table",
+          "sheet": "@SUMMARY@",
+          "address": "A4:B8",
+          "headers": [
+            "شاخص",
+            "مبلغ (افغانی)"
+          ],
+          "rows": 4,
+          "keyColumn": 1,
+          "keys": [
+            "مجموع فروش",
+            "مجموع پرداخت",
+            "طلب از مشتریان",
+            "ارزش موجودی نمونه"
+          ]
+        },
+        {
+          "kind": "formula",
+          "address": "B5",
+          "formula": "=SUM('@SALES@'!H5:H7)",
+          "value": 44000,
+          "sheet": "@SUMMARY@"
+        },
+        {
+          "kind": "formula",
+          "address": "B6",
+          "formula": "=SUM('@SALES@'!I5:I7)",
+          "value": 36000,
+          "sheet": "@SUMMARY@"
+        },
+        {
+          "kind": "formula",
+          "address": "B7",
+          "formula": "=SUM('@SALES@'!J5:J7)",
+          "value": 8000,
+          "sheet": "@SUMMARY@"
+        },
+        {
+          "kind": "formula",
+          "address": "B8",
+          "formula": "=SUM('@PRODUCTS@'!I5:I7)",
+          "value": 93400,
+          "sheet": "@SUMMARY@"
+        },
+        {
+          "kind": "no_errors",
+          "sheet": "@SUMMARY@",
+          "address": "A4:B8"
+        }
+      ]
+    }
+  ]
+}

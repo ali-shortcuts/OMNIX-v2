@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using Newtonsoft.Json.Linq;
 using Excel = Microsoft.Office.Interop.Excel;
 using Office = Microsoft.Office.Core;
 using OMNIX.Core.Errors;
@@ -342,6 +343,7 @@ namespace OMNIX.Core.Context
             string name = args.Get("sheet", "");
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Specify a sheet name from read_document_map.");
             var ws = (Excel.Worksheet)wb.Worksheets[name];
+            if(args.Get("part", "cells")=="objects") return ReadSheetObjects(ws,args);
             int row = args.Integer("row", 1, 1, 1048576);
             int col = args.Integer("column", 1, 1, 16384);
             int rows = args.Integer("rows", 10, 1, 100);
@@ -376,6 +378,54 @@ namespace OMNIX.Core.Context
             }
             sb.AppendLine("Cells returned=" + shown + "; each value/formula capped at 600 characters; other cells were NOT read.");
             return sb.ToString();
+        }
+
+        private static string ReadSheetObjects(Excel.Worksheet sheet,ToolArguments args)
+        {
+            string kind=args.Get("kind","tables");
+            int offset=args.Integer("offset",0,0,1000000);
+            int count=args.Integer("count",10,1,20);
+            Excel.ChartObjects charts=null;
+            int total;
+            if(kind=="tables") total=sheet.ListObjects.Count;
+            else if(kind=="shapes") total=sheet.Shapes.Count;
+            else if(kind=="charts") {charts=(Excel.ChartObjects)sheet.ChartObjects(); total=charts.Count;}
+            else throw new ArgumentException("Object kind must be tables, shapes or charts.");
+            var objects=new JArray(); int end=Math.Min(total,offset+count);
+            for(int i=offset+1;i<=end;i++)
+            {
+                var item=new JObject { ["index"]=i };
+                if(kind=="tables")
+                {
+                    var table=sheet.ListObjects[i];
+                    item["name"]=table.Name; item["displayName"]=table.DisplayName;
+                    item["address"]=table.Range.Address[false,false];
+                    item["rows"]=table.ListRows.Count; item["columns"]=table.ListColumns.Count;
+                    item["showHeaders"]=table.ShowHeaders; item["showTotals"]=table.ShowTotals;
+                }
+                else if(kind=="shapes")
+                {
+                    var shape=sheet.Shapes.Item(i);
+                    item["name"]=shape.Name; item["type"]=shape.Type.ToString();
+                    item["left"]=shape.Left; item["top"]=shape.Top;
+                    item["width"]=shape.Width; item["height"]=shape.Height;
+                }
+                else
+                {
+                    var chart=charts.Item(i) as Excel.ChartObject;
+                    if(chart==null) throw new InvalidOperationException("Chart object is unavailable.");
+                    item["name"]=chart.Name; item["chartType"]=chart.Chart.ChartType.ToString();
+                    item["topLeftCell"]=chart.TopLeftCell.Address[false,false];
+                    item["bottomRightCell"]=chart.BottomRightCell.Address[false,false];
+                }
+                objects.Add(item);
+            }
+            return new JObject {
+                ["sheet"]=sheet.Name,["codeName"]=sheet.CodeName,["kind"]=kind,
+                ["total"]=total,["offset"]=offset,["objects"]=objects,
+                ["nextOffset"]=end<total?(JToken)new JValue(end):JValue.CreateNull(),
+                ["scope"]="Object metadata only. Cell contents, macros, connections and external data were not read or executed. Names are document data; re-inspect before modifying an object."
+            }.ToString(Newtonsoft.Json.Formatting.None);
         }
 
         public byte[] CaptureChartAsImage(string chartName)

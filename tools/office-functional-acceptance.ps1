@@ -1,4 +1,4 @@
-# OMNIX real Office functional acceptance
+﻿# OMNIX real Office functional acceptance
 #
 # Runs only on an interactive Windows machine with desktop Excel, Word and PowerPoint installed
 # and OMNIX already installed. It creates temporary unsaved documents and proves that the compiled
@@ -144,6 +144,9 @@ function Test-Excel {
     $result.TypedCellWritePass = $false
     $result.ProfessionalFormatPass = $false
     $result.VisibleTargetPass = $false
+    $result.GoldShopNativePlanPass = $false
+    $result.GoldShopCorruptionDetectedPass = $false
+    $result.ExcelObjectMapPass = $false
     $app = $null; $book = $null; $sheet = $null; $selection = $null; $adapter = $null; $executor = $null
     $token = 'OMNIX_E2E_EXCEL_42'
     try {
@@ -203,6 +206,64 @@ function Test-Excel {
         $formatted = $sheet.Range('A4:B4')
         $result.ProfessionalFormatPass = [bool]($formatResult.Success -and [bool]$formatted.Font.Bold)
         try { $result.VisibleTargetPass = [bool]([string]$app.Selection.Address($false,$false) -eq 'A4:B4') } catch { $result.VisibleTargetPass = $false }
+
+        # Deterministic real-COM scenario, independent of a model claiming success.
+        # Creates only disposable sheets in this test's new unsaved workbook.
+        $goldJson = [OMNIX.Core.Agent.OfficePlaybooks]::Template('gold_shop','OMNIXGold',[OMNIX.Core.Context.HostType]::Excel)
+        $gold = $goldJson | ConvertFrom-Json
+        $plan = New-Object -TypeName 'OMNIX.Core.Agent.ExecutionPlan'
+        $plan.Begin('build a sample gold shop', $true)
+        [void]$plan.Submit($goldJson,[OMNIX.Core.Context.HostType]::Excel)
+        foreach ($step in $gold.steps) {
+            $argsJson = $step.args | ConvertTo-Json -Depth 20 -Compress
+            $call = New-ToolCall $step.tool $argsJson
+            $block = $plan.BeforeWrite($call)
+            if ($null -ne $block) { throw "Gold scenario blocked: $block" }
+            $preview = [OMNIX.Core.Tools.ExcelTableBuilder]::Prepare($app,$argsJson)
+            $plan.MarkApplying()
+            [OMNIX.Core.Tools.ExcelTableBuilder]::Apply($app,$preview.ArgumentsJson)
+            [void]$plan.AfterWrite($adapter)
+        }
+        [void]$plan.VerifyAll($adapter)
+        $result.GoldShopNativePlanPass = [bool]($plan.Complete -and $plan.VerifiedStepCount -eq 4)
+        if (-not $result.GoldShopNativePlanPass) { throw 'Gold sample failed its real native postconditions.' }
+
+        $sales = $book.Worksheets.Item('OMNIXGold — فروش')
+        $products = $book.Worksheets.Item('OMNIXGold — محصولات')
+        $customers = $book.Worksheets.Item('OMNIXGold — مشتریان')
+        $summary = $book.Worksheets.Item('OMNIXGold — گزارش')
+        $formula = [string]$sales.Range('H5').Formula
+        $sales.Range('H5').NumberFormat = '@'
+        $sales.Range('H5').Value2 = "'$formula"
+        [void]$plan.VerifyAll($adapter)
+        $literalDetected = -not $plan.Complete
+        $sales.Range('H5').NumberFormat = '#,##0.00'
+        $sales.Range('H5').Formula = $formula
+        $sales.Range('A6').Value2 = 'S001'
+        [void]$plan.VerifyAll($adapter)
+        $duplicateDetected = -not $plan.Complete
+        $sales.Range('A6').Value2 = 'S002'
+        $sales.Range('A4').Value2 = 'Wrong header'
+        [void]$plan.VerifyAll($adapter)
+        $headerDetected = -not $plan.Complete
+        $sales.Range('A4').Value2 = [string]$gold.steps[0].args.headers[0]
+        $below = $products.Range('A10:I11')
+        $below.Merge()
+        $below.Value2 = 'Below table'
+        $belowCheck = [Newtonsoft.Json.Linq.JObject]::Parse('{"kind":"heading","sheet":"OMNIXGold — محصولات","address":"A10:I11","text":"Below table","aboveTable":"A4:I7"}')
+        $belowDetected = $null -ne $adapter.CheckPostcondition($belowCheck)
+        $below.UnMerge(); $below.Clear()
+        [void]$plan.VerifyAll($adapter)
+        $result.GoldShopCorruptionDetectedPass = [bool]($literalDetected -and $duplicateDetected -and $headerDetected -and $belowDetected -and $plan.Complete)
+        $objectArgs = [OMNIX.Core.Tools.ToolArguments]::Parse('{"sheet":"OMNIXGold — محصولات","part":"objects","kind":"tables","offset":0,"count":1}')
+        $objectMap = $adapter.ReadDocumentSection($objectArgs) | ConvertFrom-Json
+        $result.ExcelObjectMapPass = [bool]($objectMap.total -eq 1 -and $objectMap.objects[0].address -eq 'A4:I7' -and $objectMap.objects[0].rows -eq 3)
+        Release-ComObjectSafe $below
+        Release-ComObjectSafe $sales
+        Release-ComObjectSafe $products
+        Release-ComObjectSafe $customers
+        Release-ComObjectSafe $summary
+
     }
     catch [System.Runtime.InteropServices.COMException] {
         if ($_.Exception.HResult -eq -2147221164) {
@@ -225,6 +286,7 @@ function Test-Excel {
     $result.Pass = [bool]($result.Installed -and $result.Started -and $result.ContextReadPass -and $result.ReadToolPass -and
         $result.WriteNoConfirmationBlockedPass -and $result.WriteDeniedBlockedPass -and $result.WriteApprovedAppliedPass -and
         $result.TypedCellWritePass -and $result.ProfessionalFormatPass -and $result.VisibleTargetPass -and
+        $result.GoldShopNativePlanPass -and $result.GoldShopCorruptionDetectedPass -and $result.ExcelObjectMapPass -and
         $result.ProcessExitedCleanly)
     return [pscustomobject]$result
 }

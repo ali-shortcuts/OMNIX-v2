@@ -101,6 +101,31 @@ namespace OMNIX.Core.Agent
                 throw new ArgumentException("Cell/formula checks require the expected computed value.");
             if ((kind == "heading" || kind == "text") && string.IsNullOrWhiteSpace((string)c["text"]))
                 throw new ArgumentException("Text checks require expected nonempty text.");
+            if (kind == "heading" && c["aboveTable"] != null &&
+                (c["aboveTable"].Type != JTokenType.String || string.IsNullOrWhiteSpace((string)c["aboveTable"])))
+                throw new ArgumentException("aboveTable must identify the exact table range on the same sheet.");
+            if (kind == "table")
+            {
+                if (c["rows"] != null && (c["rows"].Type != JTokenType.Integer || (int)c["rows"] < 0 || (int)c["rows"] > 511))
+                    throw new ArgumentException("Table rows must be an integer between 0 and 511.");
+                if (c["headers"] != null)
+                {
+                    var headers = c["headers"] as JArray;
+                    if (headers == null || headers.Count < 1 || headers.Count > 24 ||
+                        headers.Any(h => h.Type != JTokenType.String || string.IsNullOrWhiteSpace((string)h) || ((string)h).Length > 100) ||
+                        headers.Select(h => (string)h).Distinct(StringComparer.OrdinalIgnoreCase).Count() != headers.Count)
+                        throw new ArgumentException("Table headers require 1–24 unique nonempty names.");
+                }
+                if (c["keyColumn"] != null || c["keys"] != null)
+                {
+                    var keys=c["keys"] as JArray;
+                    if(c["keyColumn"]==null || c["keyColumn"].Type!=JTokenType.Integer || (int)c["keyColumn"]<1 || (int)c["keyColumn"]>24 ||
+                        keys==null || keys.Count>511 || c["rows"]==null || keys.Count!=(int)c["rows"] ||
+                        keys.Any(k=>k.Type!=JTokenType.String || string.IsNullOrWhiteSpace((string)k) || ((string)k).Length>500) ||
+                        keys.Select(k=>(string)k).Distinct(StringComparer.Ordinal).Count()!=keys.Count)
+                        throw new ArgumentException("Table keys require a valid keyColumn, exact rows and unique nonempty text IDs in row order.");
+                }
+            }
             if (kind == "format" && !new[]{"bold","italic","wrapText","fontSize","numberFormat","horizontalAlignment"}.Any(k => c[k] != null))
                 throw new ArgumentException("Format checks require at least one explicit formatting property.");
             if (kind == "paragraph_style" && string.IsNullOrWhiteSpace((string)c["style"]))

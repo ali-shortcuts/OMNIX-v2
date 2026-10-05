@@ -35,12 +35,26 @@
           "kind": "heading",
           "sheet": "",
           "address": "A1:F2",
-          "text": "نام دکان — نمونه"
+          "text": "نام دکان — نمونه",
+          "aboveTable": "A4:F5"
         },
         {
           "kind": "table",
           "sheet": "",
-          "address": "A4:F5"
+          "address": "A4:F5",
+          "headers": [
+            "کد کالا",
+            "نام کالا",
+            "وزن (گرم)",
+            "عیار",
+            "نرخ (افغانی/گرم)",
+            "ارزش (افغانی)"
+          ],
+          "rows": 1,
+          "keyColumn": 1,
+          "keys": [
+            "G001"
+          ]
         },
         {
           "kind": "formula",
