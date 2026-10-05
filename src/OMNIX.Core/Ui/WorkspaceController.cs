@@ -57,6 +57,10 @@ namespace OMNIX.Core.Ui
             _gateway = new AiGateway.AiGateway(new ProviderRegistry());
 
             _toolExecutor = new ToolExecutor();
+            _toolExecutor.OperationProgress = (operation, phase) =>
+            {
+                if (!_disposed && View != null) View.Chat.ShowOperation(operation, phase);
+            };
             _toolExecutor.ConversationSearch = query =>
             {
                 var matches = _turns.Where(t => !string.IsNullOrEmpty(t.Text) &&
