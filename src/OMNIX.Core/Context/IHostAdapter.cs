@@ -10,6 +10,12 @@ namespace OMNIX.Core.Context
     /// OMNIX.Core so the thin host projects only wire the Application object in.
     /// </summary>
     /// <summary>Optional bounded navigation; every call stays in the request's document scope.</summary>
+    public interface IRequestScopeIdentityHost
+    {
+        // Identity only; must not scan selections, tables, formulas or slide contents.
+        OfficeContext ReadScopeIdentity();
+    }
+
     public interface IIndexedHostAdapter
     {
         string ReadDocumentMap(int offset);

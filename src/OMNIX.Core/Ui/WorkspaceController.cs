@@ -39,6 +39,9 @@ namespace OMNIX.Core.Ui
         private bool _disposed;
         private bool _pendingContextRefresh;
         private int _documentScopeVersion;
+        private string _requestTraceId = "no-trace";
+        private string _activeOperation = "request";
+        private string _activePhase = "preparing";
 
         public WorkspaceView View { get; private set; }
         public AiGateway.AiGateway Gateway { get { return _gateway; } }
@@ -59,6 +62,9 @@ namespace OMNIX.Core.Ui
             _toolExecutor = new ToolExecutor();
             _toolExecutor.OperationProgress = (operation, phase) =>
             {
+                _activeOperation = operation; _activePhase = phase;
+                string trace = RuntimeDiagnosticJournal.CurrentTraceId;
+                if (trace != "no-trace") _requestTraceId = trace;
                 if (!_disposed && View != null) View.Chat.ShowOperation(operation, phase);
             };
             _toolExecutor.ConversationSearch = query =>
@@ -201,7 +207,8 @@ namespace OMNIX.Core.Ui
             if (!IsRequestScopeVersionValid(requestDocKey, requestScopeVersion)) return false;
             try
             {
-                var ctx = _adapter.ReadContext();
+                var identity = _adapter as IRequestScopeIdentityHost;
+                var ctx = identity != null ? identity.ReadScopeIdentity() : _adapter.ReadContext();
                 string currentKey = StableDocumentKey(ctx);
                 return string.Equals(currentKey, requestDocKey, StringComparison.OrdinalIgnoreCase);
             }
@@ -283,6 +290,21 @@ namespace OMNIX.Core.Ui
             streamTimer.Tick += (sender, args) => flushDeltas();
             bubble.ReplaceText("");
             streamTimer.Start();
+            _requestTraceId = "no-trace";
+            _activeOperation = "request"; _activePhase = "provider_or_context";
+            var heartbeatWatch = System.Diagnostics.Stopwatch.StartNew();
+            long previousHeartbeat = 0;
+            var heartbeat = new System.Windows.Threading.DispatcherTimer(
+                System.Windows.Threading.DispatcherPriority.Background, View.Dispatcher);
+            heartbeat.Interval = TimeSpan.FromMilliseconds(250);
+            heartbeat.Tick += (sender, args) =>
+            {
+                long now = heartbeatWatch.ElapsedMilliseconds;
+                long gap = now - previousHeartbeat; previousHeartbeat = now;
+                if (gap >= 1000 && !_disposed)
+                    RuntimeDiagnosticJournal.UiDispatcherGap(_requestTraceId, _activeOperation, _activePhase, gap);
+            };
+            heartbeat.Start();
 
             // AiGateway owns the provider/tool loop, while this per-window executor owns the
             // Office boundary. The validator performs a deep Office identity check only when a
@@ -385,6 +407,7 @@ namespace OMNIX.Core.Ui
             }
             finally
             {
+                heartbeat.Stop(); heartbeatWatch.Stop();
                 lock (deltaGate) { acceptDeltas = false; }
                 streamTimer.Stop();
                 lock (deltaGate) { pendingDeltas.Clear(); }

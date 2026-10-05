@@ -12,7 +12,7 @@ namespace OMNIX.Core.Context
     /// PowerPoint adapter (spec Section 3, Layer 3): Presentation, current slide as image for
     /// Vision, speaker notes, shapes/text. Write tools: insert_slide, add_speaker_notes.
     /// </summary>
-    public sealed class PowerPointHostAdapter : IHostAdapter, IIndexedHostAdapter, IVisibleOfficeExecutionHost, IOfficeCapabilityHost, IOfficeAccessHost, Agent.IPlanVerificationHost
+    public sealed class PowerPointHostAdapter : IHostAdapter, IRequestScopeIdentityHost, IIndexedHostAdapter, IVisibleOfficeExecutionHost, IOfficeCapabilityHost, IOfficeAccessHost, Agent.IPlanVerificationHost
     {
         private const int MaxSlideTitleChars = 500;
         private const int MaxSlideBodyChars = 20000;
@@ -149,6 +149,13 @@ namespace OMNIX.Core.Context
             if (tab == null || _ribbonUi == null) return;
             try { _ribbonUi.ActivateTabMso(tab); }
             catch { }
+        }
+
+        public OfficeContext ReadScopeIdentity()
+        {
+            var pres = _app.ActivePresentation;
+            if (pres == null) throw new InvalidOperationException("No active Office document.");
+            return new OfficeContext { Host = HostType.PowerPoint, DocumentName = pres.Name, DocumentPath = pres.FullName };
         }
 
         public OfficeContext ReadContext()

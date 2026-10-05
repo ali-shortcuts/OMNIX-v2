@@ -28,6 +28,8 @@ namespace OMNIX.Core.Tools
         // Metadata only: never publish document values, credentials or full tool arguments.
         public Action<string, string> OperationProgress { get; set; }
 
+        public void ReportRequestPhase(string phase) { NotifyOperation(new ToolCall { Name = "request" }, phase); }
+
         private void NotifyOperation(ToolCall call, string phase)
         {
             try { OperationProgress?.Invoke(call.Name + CapabilityDetail(call), phase); }
@@ -98,7 +100,9 @@ namespace OMNIX.Core.Tools
                 await PaceAsync(adapter, ct).ConfigureAwait(true);
                 ToolResult result = ToolNames.IsWriteTool(call.Name)
                     ? await ExecuteWriteAsync(call, adapter, ct).ConfigureAwait(true)
-                    : ExecuteRead(call, adapter, ct);
+                    : call.Name == ToolNames.VerifyExecutionPlan
+                        ? await ExecuteVerificationAsync(call, adapter, ct).ConfigureAwait(true)
+                        : ExecuteRead(call, adapter, ct);
                 string phase = result != null && result.Success ? "complete" : "failed";
                 if (result != null && result.Success && call.Name == ToolNames.VerifyExecutionPlan)
                     phase = Execution.Complete ? "verified" : "incomplete";
@@ -148,6 +152,14 @@ namespace OMNIX.Core.Tools
             catch { valid = false; }
             if (!valid)
                 throw new OperationCanceledException("The active Office document changed while the AI request was running.", ct);
+        }
+
+        private async Task<ToolResult> ExecuteVerificationAsync(ToolCall call, IHostAdapter adapter, CancellationToken ct)
+        {
+            var verifier = adapter as Agent.IPlanVerificationHost;
+            if (verifier == null) return ToolResult.Fail("Native plan verification is unavailable.");
+            NotifyOperation(call, "verify");
+            return ToolResult.Ok(await Execution.VerifyAllAsync(verifier, ct, () => EnsureRequestScope(ct)).ConfigureAwait(true));
         }
 
         private ToolResult ExecuteRead(ToolCall call, IHostAdapter adapter, CancellationToken ct)
@@ -334,6 +346,7 @@ namespace OMNIX.Core.Tools
             RuntimeDiagnosticJournal.Event("write_apply_start", call.Name, "start", null, null, null);
             try
             {
+                Execution.MarkApplying();
                 adapter.ApplyWrite(call.Name, applyArguments);
                 RuntimeDiagnosticJournal.Event("write_apply_end", call.Name, "success",
                     RuntimeDiagnosticJournal.ElapsedMs(applyTimer), null, null);
@@ -359,7 +372,7 @@ namespace OMNIX.Core.Tools
                     ? "Office capability applied through the active host's validated Object Model implementation."
                     : Localization.Strings.T("S.Tools.Applied");
             var verifier = adapter as Agent.IPlanVerificationHost;
-            string verification = verifier != null ? Execution.AfterWrite(verifier) : "";
+            string verification = verifier != null ? await Execution.AfterWriteAsync(verifier, ct, () => EnsureRequestScope(ct)).ConfigureAwait(true) : "";
             return ToolResult.Ok("CHANGE APPLIED. " + hint + "\n" + verification, hint);
         }
 

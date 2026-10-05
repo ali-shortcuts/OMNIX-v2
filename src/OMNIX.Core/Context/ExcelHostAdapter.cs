@@ -19,7 +19,7 @@ namespace OMNIX.Core.Context
     /// it afterward can allocate millions of cells and freeze Office, so all bulk reads first resize
     /// to the configured context budget.
     /// </summary>
-    public sealed class ExcelHostAdapter : IHostAdapter, IIndexedHostAdapter, IVisibleOfficeExecutionHost, IOfficeCapabilityHost, IOfficeAccessHost, Agent.IPlanVerificationHost
+    public sealed class ExcelHostAdapter : IHostAdapter, IRequestScopeIdentityHost, IIndexedHostAdapter, IVisibleOfficeExecutionHost, IOfficeCapabilityHost, IOfficeAccessHost, Agent.IPlanVerificationHost
     {
         private const int DisplayMaxColumns = 8;
         private const int FormulaCellCap = 60;
@@ -222,6 +222,13 @@ namespace OMNIX.Core.Context
             {
                 try { range.Select(); } catch { }
             }
+        }
+
+        public OfficeContext ReadScopeIdentity()
+        {
+            var wb = _app.ActiveWorkbook;
+            if (wb == null) throw new InvalidOperationException("No active Office document.");
+            return new OfficeContext { Host = HostType.Excel, DocumentName = wb.Name, DocumentPath = wb.FullName };
         }
 
         public OfficeContext ReadContext()

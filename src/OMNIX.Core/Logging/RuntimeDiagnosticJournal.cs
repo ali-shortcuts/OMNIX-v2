@@ -56,6 +56,17 @@ namespace OMNIX.Core.Logging
                 "; images=" + hasImages);
         }
 
+        public static void UiDispatcherGap(string traceId, string operation, string phase, long gapMs)
+        {
+            var previous = Current.Value;
+            try
+            {
+                Current.Value = new TraceState { TraceId = SafeToken(traceId, 80) };
+                Event("ui_dispatcher_gap", operation, phase, gapMs, null, null);
+            }
+            finally { Current.Value = previous; }
+        }
+
         public static void SetProvider(string providerId, string modelId)
         {
             var state = Current.Value;

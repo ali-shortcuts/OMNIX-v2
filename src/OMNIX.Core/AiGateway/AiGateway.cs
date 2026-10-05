@@ -27,6 +27,7 @@ namespace OMNIX.Core.AiGateway
     public sealed class AiGateway
     {
         private const int MaxProviderToolRounds = 24;
+        private const int MaxProgressSegments = 3;
         private const int MaxMutationRepairTurns = 2;
         private const int MaxProtocolRepairTurns = 2;
         private readonly ProviderRegistry _registry;
@@ -107,6 +108,20 @@ namespace OMNIX.Core.AiGateway
                 request.UserTurn != null && request.UserTurn.Text != null ? request.UserTurn.Text.Length : 0,
                 request.History != null ? request.History.Count : 0,
                 request.HasImages);
+            toolExecutor?.ReportRequestPhase("preparing");
+            bool resumed = toolExecutor != null && toolExecutor.Execution.Required &&
+                toolExecutor.Execution.TryResume(request.UserTurn != null ? request.UserTurn.Text : "", hostAdapter.Host, hostAdapter as Agent.IPlanVerificationHost, false);
+            if (resumed)
+            {
+                mutationRequested = true;
+                await toolExecutor.ExecuteAsync(new ToolCall { Name = ToolNames.VerifyExecutionPlan, ArgumentsJson = "{}" }, hostAdapter, ct).ConfigureAwait(true);
+                RuntimeDiagnosticJournal.Event("task_resume", null, "revalidated", null, null, null);
+                if (toolExecutor.Execution.Complete)
+                {
+                    RuntimeDiagnosticJournal.CompleteRequest("checkpoint_verified", 0, 0, true);
+                    return new ChatResponse { Text = "Previous task was re-read and its native acceptance checks passed. No duplicate changes were made." };
+                }
+            }
             string runtimePreflight = "";
 
             if (mutationRequested && hostAdapter != null && toolExecutor != null)
@@ -151,8 +166,23 @@ namespace OMNIX.Core.AiGateway
                 }
             }
 
-            for (int round = 0; round < MaxProviderToolRounds; round++)
+            var taskClock = Stopwatch.StartNew();
+            int segmentProgress = toolExecutor != null ? toolExecutor.Execution.VerifiedStepCount : 0;
+            for (int round = 0; round < MaxProviderToolRounds * MaxProgressSegments; round++)
             {
+                ct.ThrowIfCancellationRequested();
+                if (taskClock.Elapsed >= TimeSpan.FromMinutes(10)) break;
+                if (round > 0 && round % MaxProviderToolRounds == 0)
+                {
+                    int progress = toolExecutor != null ? toolExecutor.Execution.VerifiedStepCount : 0;
+                    if (progress <= segmentProgress)
+                    {
+                        RuntimeDiagnosticJournal.Event("task_segment", null, "no_verified_progress", null, null, null);
+                        break;
+                    }
+                    segmentProgress = progress;
+                    RuntimeDiagnosticJournal.Event("task_segment", null, "continue_verified_progress", null, null, "segment=" + (round / MaxProviderToolRounds + 1));
+                }
                 // Refresh the Office runtime envelope before EVERY provider turn. A previous tool
                 // may have changed the active sheet, selection, slide or visible Word range; the
                 // model must never continue with stale "generic chatbot" context.
@@ -160,7 +190,11 @@ namespace OMNIX.Core.AiGateway
                 try
                 {
                     if (hostAdapter != null)
-                        liveSystemPrompt = BuildSystemPrompt(hostAdapter, hostAdapter.ReadContext());
+                        {
+                            long contextTimer = RuntimeDiagnosticJournal.StartTimer();
+                            try { liveSystemPrompt = BuildSystemPrompt(hostAdapter, hostAdapter.ReadContext()); }
+                            finally { RuntimeDiagnosticJournal.Event("host_context", null, "end", RuntimeDiagnosticJournal.ElapsedMs(contextTimer), null, null); }
+                        }
                 }
                 catch (Exception ex)
                 {
@@ -239,9 +273,11 @@ namespace OMNIX.Core.AiGateway
                     }
                 }
 
+                toolExecutor?.ReportRequestPhase("processing");
                 ChatResponse response;
                 var visibleDelta = new ToolProtocolDeltaFilter(onDelta);
                 var sw = Stopwatch.StartNew();
+                toolExecutor?.ReportRequestPhase("waiting");
                 RuntimeDiagnosticJournal.Event("provider_call_start", null, "start", null, null,
                     "round=" + (round + 1) + "; historyTurns=" + history.Count +
                     "; currentChars=" + (current != null && current.Text != null ? current.Text.Length : 0));
@@ -251,7 +287,7 @@ namespace OMNIX.Core.AiGateway
                     // The continuation (and all Office tools) still resumes on the UI dispatcher.
                     using (var roundCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                     {
-                        roundCts.CancelAfter(TimeSpan.FromSeconds(120));
+                        roundCts.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(1, Math.Min(120000, (TimeSpan.FromMinutes(10) - taskClock.Elapsed).TotalMilliseconds))));
                         try
                         {
                             response = await Task.Run(() => RetryPolicy.ExecuteWithRetryAsync(
@@ -631,7 +667,7 @@ namespace OMNIX.Core.AiGateway
                 final = new ChatResponse { Text = string.Empty };
             // Never return the last internal tool call as if it were a completed user answer.
             RuntimeDiagnosticJournal.CompleteRequest("bounded_limit", successfulWrites, failedWrites, lastWriteVerified);
-            return new ChatResponse { Text = "OMNIX reached the bounded multi-step limit for this request. The work may be incomplete. Ask to continue; re-read the document state before applying more changes." };
+            return new ChatResponse { Text = "OMNIX stopped at its task budget or because no additional verified progress was made. Work may be incomplete. A saved checkpoint can be resumed with continue; the document will be re-read before any further changes." };
         }
 
         private static bool IsVerificationTool(string name)

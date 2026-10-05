@@ -133,7 +133,8 @@ class WorkspaceStartupRegression {
         public int Reads;
         public HostType Host { get { return HostType.Excel; } }
         public string HostDisplayName { get { return "Excel"; } }
-        public OfficeContext ReadContext() { return new OfficeContext { Host=HostType.Excel,DocumentName="navigation-test.xlsx" }; }
+        public int ContextReads;
+        public OfficeContext ReadContext() { ContextReads++; return new OfficeContext { Host=HostType.Excel,DocumentName="navigation-test.xlsx" }; }
         public string ReadSelection() { return "selection"; }
         public string ReadDocument(int max) { return "document"; }
         public string ReadDocumentMap(int offset) { Reads++; return "offset="+offset; }
@@ -255,6 +256,88 @@ class WorkspaceStartupRegression {
         Check(plan.Complete, "Checkpoint failure changed native verification result");
     }
 
+    sealed class ScopeIdentityHost : FakeHost, IRequestScopeIdentityHost {
+        public int IdentityReads; public string IdentityName="navigation-test.xlsx";
+        public OfficeContext ReadScopeIdentity() {IdentityReads++; return new OfficeContext {Host=HostType.Excel,DocumentName=IdentityName};}
+    }
+    static void ScopeIdentityRegression() {
+        var host=new ScopeIdentityHost();
+        using(var controller=new WorkspaceController(host,new ChatHistoryStore())) {
+            controller.RefreshContextBar();
+            string key=(string)typeof(WorkspaceController).GetField("_docKey",BindingFlags.NonPublic|BindingFlags.Instance).GetValue(controller);
+            int version=(int)typeof(WorkspaceController).GetField("_documentScopeVersion",BindingFlags.NonPublic|BindingFlags.Instance).GetValue(controller);
+            var validate=typeof(WorkspaceController).GetMethod("ValidateCurrentOfficeDocumentScope",BindingFlags.NonPublic|BindingFlags.Instance);
+            int heavyReads=host.ContextReads;
+            Check((bool)validate.Invoke(controller,new object[]{key,version}),"Identity-only scope rejected current document");
+            Check(host.ContextReads==heavyReads && host.IdentityReads==1,"Scope validation performed a full content scan");
+            host.IdentityName="another.xlsx";
+            Check(!(bool)validate.Invoke(controller,new object[]{key,version}),"Identity-only validation accepted a changed document");
+        }
+    }
+    sealed class AcceptanceProbe : OMNIX.Core.Agent.IPlanVerificationHost {
+        public bool Accept; public int Reads;
+        public string CheckPostcondition(Newtonsoft.Json.Linq.JObject check) { Reads++; return Accept ? null : "mismatch"; }
+    }
+    static Newtonsoft.Json.Linq.JObject PlanStep(string id) {
+        return Newtonsoft.Json.Linq.JObject.Parse("{\"id\":\""+id+"\",\"tool\":\"write_to_cell\",\"args\":{\"sheet\":\"Sheet1\",\"address\":\"A1\",\"value\":1},\"checks\":[{\"kind\":\"cell_value\",\"sheet\":\"Sheet1\",\"address\":\"A1\",\"value\":1}]}");
+    }
+    static Newtonsoft.Json.Linq.JObject PlanEnvelope(Newtonsoft.Json.Linq.JArray steps, bool append=false) {
+        var result=new Newtonsoft.Json.Linq.JObject(); result["steps"]=steps; if(append)result["append"]=true; return result;
+    }
+    static void TaskLifecycleRegression() {
+        var steps=new Newtonsoft.Json.Linq.JArray(PlanStep("one"));
+        Check(OMNIX.Core.Agent.RequestCoverage.Validate("اسم دکان در بالا باشد",steps,HostType.Excel)!=null,"Missing separate heading accepted");
+        Check(OMNIX.Core.Agent.RequestCoverage.Validate("Add formula",steps,HostType.Excel)!=null,"Missing explicit formula accepted");
+        Check(OMNIX.Core.Agent.RequestCoverage.Validate("شیت «فروش» بساز",steps,HostType.Excel)!=null,"Missing named sheet accepted");
+        Check(OMNIX.Core.Agent.RequestCoverage.Validate("create table with no formula",steps,HostType.Excel)==null,"No-formula request falsely required formula");
+        var heading=PlanStep("heading"); ((Newtonsoft.Json.Linq.JArray)heading["checks"]).Add(Newtonsoft.Json.Linq.JObject.Parse("{\"kind\":\"heading\",\"sheet\":\"Sheet1\",\"address\":\"A1:H2\",\"text\":\"Shop\"}"));
+        Check(OMNIX.Core.Agent.RequestCoverage.Validate("shop name above table",new Newtonsoft.Json.Linq.JArray(heading),HostType.Excel)==null,"Valid heading coverage rejected");
+        var plan=new OMNIX.Core.Agent.ExecutionPlan(); plan.Begin("write cells",true);
+        plan.Submit(PlanEnvelope(steps).ToString(),HostType.Excel);
+        var probe=new AcceptanceProbe {Accept=true};
+        var call=new ToolCall {Name=ToolNames.WriteToCell,ArgumentsJson=steps[0]["args"].ToString()};
+        Check(plan.BeforeWrite(call)==null,"Initial step rejected"); plan.MarkApplying(); plan.AfterWrite(probe);
+        Check(plan.Complete,"Native accepted step incomplete");
+        plan.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("two")),true).ToString(),HostType.Excel);
+        Check(!plan.Complete && plan.VerifiedStepCount==1,"Appending lost acceptance or reported completion too early");
+        bool duplicate=false; try {plan.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("two")),true).ToString(),HostType.Excel);} catch(ArgumentException){duplicate=true;}
+        Check(duplicate,"Duplicate appended step ID accepted");
+        string saved=plan.Snapshot(); var resumed=new OMNIX.Core.Agent.ExecutionPlan {PreviousCheckpoint=saved}; resumed.Begin("continue",true);
+        Check(resumed.TryResume("continue",HostType.Excel,probe) && resumed.VerifiedStepCount==1 && !resumed.Complete,"Partial task not safely resumed");
+        Check(resumed.OriginalRequest=="write cells","Resume lost original goal");
+        var wrong=new OMNIX.Core.Agent.ExecutionPlan {PreviousCheckpoint=saved}; wrong.Begin("continue",true);
+        Check(!wrong.TryResume("continue",HostType.Word,probe),"Cross-host checkpoint accepted");
+        var unrelated=new OMNIX.Core.Agent.ExecutionPlan {PreviousCheckpoint=saved}; unrelated.Begin("new task",true);
+        Check(!unrelated.TryResume("new task",HostType.Excel,probe),"Unrelated request resumed old task");
+        var creation=PlanStep("create"); creation["tool"]="create_data_table";
+        var uncertain=new OMNIX.Core.Agent.ExecutionPlan(); uncertain.Begin("create",true);
+        uncertain.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(creation)).ToString(),HostType.Excel);
+        var createCall=new ToolCall {Name=ToolNames.CreateDataTable,ArgumentsJson=creation["args"].ToString()};
+        Check(uncertain.BeforeWrite(createCall)==null,"Initial creation rejected"); uncertain.MarkApplying();
+        var recovered=new OMNIX.Core.Agent.ExecutionPlan {PreviousCheckpoint=uncertain.Snapshot()}; recovered.Begin("ادامه",true); probe.Accept=false;
+        Check(recovered.TryResume("ادامه",HostType.Excel,probe),"Uncertain checkpoint not inspected");
+        Check(recovered.BeforeWrite(createCall)!=null,"Uncertain additive creation replayed");
+        int reads=probe.Reads; var corrupt=new OMNIX.Core.Agent.ExecutionPlan {PreviousCheckpoint="not json"}; corrupt.Begin("continue",true);
+        Check(!corrupt.TryResume("continue",HostType.Excel,probe) && probe.Reads==reads,"Invalid checkpoint crossed native boundary");
+        var batch=new OMNIX.Core.Agent.ExecutionPlan(); batch.Begin("batch",true);
+        for(int segment=0;segment<3;segment++) {
+            var chunk=new Newtonsoft.Json.Linq.JArray(); for(int i=0;i<12;i++)chunk.Add(PlanStep("s"+(segment*12+i)));
+            var envelope=PlanEnvelope(chunk); if(segment>0)envelope["append"]=true;
+            batch.Submit(envelope.ToString(),HostType.Excel);
+        }
+        bool over=false;try{batch.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("extra")),true).ToString(),HostType.Excel);}catch(ArgumentException){over=true;}
+        Check(over,"Segment bound exceeded");
+        var cancellable=new OMNIX.Core.Agent.ExecutionPlan(); cancellable.Begin("write",true);
+        cancellable.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("check"))).ToString(),HostType.Excel);
+        probe.Accept=true; int beforeChecks=probe.Reads;
+        using(var cts=new CancellationTokenSource()) {
+            try { cancellable.AfterWriteAsync(probe,cts.Token,()=>cts.Cancel()).GetAwaiter().GetResult(); throw new Exception("Cancelled native verification continued"); }
+            catch(OperationCanceledException) {}
+        }
+        Check(probe.Reads==beforeChecks,"Cancellation during scope validation crossed native boundary");
+        Check(cancellable.AfterWriteAsync(probe,CancellationToken.None,()=>{}).GetAwaiter().GetResult().Contains("PASSED") && cancellable.Complete,"Asynchronous native verification failed");
+    }
+
     sealed class ContractHost : FakeHost, OMNIX.Core.Agent.IPlanVerificationHost {
         public bool Accept;
         public string CheckPostcondition(Newtonsoft.Json.Linq.JObject check) { return Accept && Writes > 0 ? null : "Native value mismatch"; }
@@ -297,6 +380,40 @@ class WorkspaceStartupRegression {
                 Check((result.Text=="Everything is complete.")==accept,"Unrelated document read falsely verified the execution plan");
             }
         } finally { settings.SelectedProviderId=oldProvider;settings.Privacy=oldPrivacy;settings.PreferLocalWhenAvailable=oldLocal; }
+    }
+
+    sealed class SegmentProvider : IProviderAdapter {
+        public bool Progress; public int Calls;
+        public ProviderInfo Info {get {return new ProviderInfo {Id="custom",DisplayName="Segment fixture",Kind=ProviderKind.Cloud,Vision=VisionSupport.No};}}
+        public void Configure(ProviderCredentials c) {} public bool SupportsVisionNow(){return false;}
+        public Task<IReadOnlyList<string>> ListModelsAsync(CancellationToken ct){return Task.FromResult<IReadOnlyList<string>>(new string[0]);}
+        public Task<bool> TestConnectionAsync(CancellationToken ct){return Task.FromResult(true);}
+        public Task<ChatResponse> SendAsync(ChatRequest request,Action<string> delta,CancellationToken ct) {
+            Calls++; string tool=ToolNames.ReadDocumentMap, args="{}";
+            if(Progress && Calls==1) {tool=ToolNames.SubmitExecutionPlan;args=PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("one"))).ToString();}
+            else if(Progress && Calls==2){tool=ToolNames.WriteToCell;args=PlanStep("one")["args"].ToString();}
+            if(Progress && Calls==26)return Task.FromResult(new ChatResponse {Text="Finished after checkpoint."});
+            return Task.FromResult(new ChatResponse {ToolCalls=new List<ProviderToolCall>{new ProviderToolCall {Id="segment-"+Calls,Name=tool,ArgumentsJson=args}}});
+        }
+    }
+    static void SegmentGatewayRegression() {
+        var settings=SettingsManager.Instance.Settings; var providerId=settings.SelectedProviderId;
+        var privacy=settings.Privacy; bool local=settings.PreferLocalWhenAvailable;
+        try {
+            settings.SelectedProviderId="custom"; settings.Privacy=PrivacyMode.CloudAllowed; settings.PreferLocalWhenAvailable=false;
+            foreach(bool progress in new[]{false,true}) {
+                var registry=new ProviderRegistry();var provider=new SegmentProvider {Progress=progress};
+                var providers=(List<IProviderAdapter>)typeof(ProviderRegistry).GetField("_providers",BindingFlags.NonPublic|BindingFlags.Instance).GetValue(registry);
+                providers.Clear();providers.Add(provider);
+                var gateway=new OMNIX.Core.AiGateway.AiGateway(registry);
+                var host=new ContractHost {AllowWrites=true,Accept=true};
+                var executor=new ToolExecutor {WriteConfirmation=preview=>Task.FromResult(true)};
+                var result=gateway.ChatAsync(new ChatRequest {UserTurn=new ChatTurn {Role=ChatRole.User,Text="Write one into A1"}},host,part=>{},executor,CancellationToken.None).GetAwaiter().GetResult();
+                Check(provider.Calls==(progress?26:24),"Segments must continue only with native verified progress");
+                Check(host.Writes==(progress?1:0),"Segment continuation repeated a write");
+                Check((result.Text=="Finished after checkpoint.")==progress,"No-progress loop falsely completed");
+            }
+        } finally {settings.SelectedProviderId=providerId;settings.Privacy=privacy;settings.PreferLocalWhenAvailable=local;}
     }
 
     sealed class TextProtocolProvider : IProviderAdapter {
@@ -448,7 +565,8 @@ class WorkspaceStartupRegression {
         view.SetBusy(false); string ended=history.Text; view.ShowOperation("late","apply");
         Check(history.Text==ended,"Late progress changed finished request");
         view.SetBusy(true); Check(history.Text.Length==0,"New request retained old operation history");
-        view.SetBusy(false);
+        view.ShowOperation("request","waiting"); view.SetBusy(false);
+        Check(!((System.Windows.Controls.TextBlock)view.FindName("ExecutionText")).Text.Contains("Waiting"),"Completed request still displayed waiting for model");
         SettingsManager.Instance.Settings.UiLanguage=language;
     }
     static void CapabilityRegression() {
@@ -756,7 +874,10 @@ class WorkspaceStartupRegression {
             ResponsiveGatewayRegression();
             CatalogRoutesRegression();
             ExecutionPlanRegression();
+            TaskLifecycleRegression();
+            ScopeIdentityRegression();
             NativeContractGatewayRegression();
+            SegmentGatewayRegression();
             ModelEvidenceRegression();
             OperationProgressRegression();
             CapabilityRegression();
