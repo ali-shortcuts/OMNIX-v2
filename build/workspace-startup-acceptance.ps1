@@ -267,6 +267,10 @@ class WorkspaceStartupRegression {
         Check(OMNIX.Core.Agent.OfficePostconditions.WordText("A\r\a") == "A", "Word cell marker retained");
         Check(OMNIX.Core.Agent.OfficePostconditions.WordText(" A \r\a") == " A ", "Meaningful spaces lost");
         Check(OMNIX.Core.Agent.OfficePostconditions.WordText("A\rB\r\a") == "A\rB", "Meaningful paragraph break lost");
+        Check(OMNIX.Core.Agent.OfficePostconditions.TextMatches("A\r\nB", "A\nB", true), "CRLF and LF equivalent content rejected");
+        Check(OMNIX.Core.Agent.OfficePostconditions.TextMatches("A\rB", "A\nB", true), "Office CR and LF equivalent content rejected");
+        Check(!OMNIX.Core.Agent.OfficePostconditions.TextMatches("A\n\nB", "A\nB", true), "Meaningful empty line lost");
+        Check(!OMNIX.Core.Agent.OfficePostconditions.TextMatches("A \rB", "A\nB", true), "Meaningful trailing space lost");
         Check(!OMNIX.Core.Agent.OfficePostconditions.TextMatches("Title extra","Title",true), "Extra text passed exact acceptance");
         Check(OMNIX.Core.Agent.OfficePostconditions.TextMatches("Title extra","Title",false), "Legacy contains check changed");
         foreach(var host in new[]{HostType.Word,HostType.PowerPoint}) {
@@ -321,6 +325,8 @@ class WorkspaceStartupRegression {
                 var body=(Newtonsoft.Json.Linq.JObject)exact.DeepClone();body["text"]="Body";body["shape"]=2;
                 ((Newtonsoft.Json.Linq.JArray)step["checks"]).Add(body);
                 Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)==null,"Complete slide content criteria rejected");
+                step["args"]["body"]="Line1\nLine2";body["text"]="Line1\rLine2";
+                Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)==null,"Equivalent Office line endings failed plan coverage");
                 step["args"]["index"]="0";
                 Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Unresolved append target accepted");
             }
