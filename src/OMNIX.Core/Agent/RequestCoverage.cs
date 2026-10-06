@@ -44,10 +44,16 @@ namespace OMNIX.Core.Agent
                         return "REQUEST COVERAGE: writing document/slide text requires an exact native text check for this step; counts or substring checks alone are insufficient. Split large content into bounded targets.";
                     if(tool=="insert_slide")
                     {
-                        string title=(string)step["args"]["title"];
-                        if(!string.IsNullOrEmpty(title) && !nativeChecks.Any(c => (string)c["kind"]=="text" &&
-                            (bool?)c["exact"]==true && (string)c["text"]==title))
-                            return "REQUEST COVERAGE: the inserted slide requires an exact check of its requested title.";
+                        int index;
+                        if(!int.TryParse((string)step["args"]["index"], out index) || index<1)
+                            return "REQUEST COVERAGE: inspect the presentation and specify the exact positive insertion index before planning a slide.";
+                        foreach(string field in new[]{"title","body"})
+                        {
+                            string expected=(string)step["args"][field];
+                            if(!string.IsNullOrEmpty(expected) && !nativeChecks.Any(c => (string)c["kind"]=="text" &&
+                                (bool?)c["exact"]==true && (string)c["text"]==expected && (int?)c["slide"]==index))
+                                return "REQUEST COVERAGE: the inserted slide requires an exact check of its requested "+field+" on the insertion slide.";
+                        }
                     }
                 }
                 return null;

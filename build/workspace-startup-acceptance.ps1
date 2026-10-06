@@ -310,6 +310,15 @@ class WorkspaceStartupRegression {
             if(host==HostType.PowerPoint) {
                 exact["text"]="Other";
                 Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Wrong slide title accepted");
+                exact["text"]="Title";exact["slide"]=2;
+                Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Different slide accepted as creation evidence");
+                exact["slide"]=1;step["args"]["body"]="Body";
+                Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Missing slide body acceptance passed");
+                var body=(Newtonsoft.Json.Linq.JObject)exact.DeepClone();body["text"]="Body";body["shape"]=2;
+                ((Newtonsoft.Json.Linq.JArray)step["checks"]).Add(body);
+                Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)==null,"Complete slide content criteria rejected");
+                step["args"]["index"]="0";
+                Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Unresolved append target accepted");
             }
         }
         plan.SaveCheckpoint = text => { throw new IOException("disk unavailable"); };
