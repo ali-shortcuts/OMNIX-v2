@@ -180,6 +180,7 @@
                     <TextBlock x:Name="ExecutionText" FontSize="12" FontWeight="SemiBold"
                                Foreground="{DynamicResource B.Foreground}" TextWrapping="Wrap"
                                AutomationProperties.AutomationId="OMNIX.ExecutionStatus" />
+                    <TextBlock x:Name="ExecutionLesson" Visibility="Collapsed" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource B.Foreground}" Margin="0,4,0,0" AutomationProperties.AutomationId="OMNIX.ExecutionLesson" />
                     <Expander Header="Steps" Foreground="{DynamicResource B.ForegroundDim}" Margin="0,4,0,0">
                         <TextBox x:Name="ExecutionHistory" IsReadOnly="True" TextWrapping="Wrap"
                                  MaxHeight="120" VerticalScrollBarVisibility="Auto" FontSize="11"

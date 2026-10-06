@@ -66,6 +66,7 @@ namespace OMNIX.Core.Ui
         public void SetBusy(bool busy)
         {
             _busy = busy;
+            ExecutionLesson.Text = ""; ExecutionLesson.Visibility = Visibility.Collapsed;
             if (busy)
             {
                 _lastOperationPhase = "preparing";
@@ -114,6 +115,10 @@ namespace OMNIX.Core.Ui
             }
             string line = label + " · " + operation;
             ExecutionText.Text = line;
+            string lesson = TeachingLesson(phase,fa);
+            bool teaching = OMNIX.Core.Settings.SettingsManager.Instance.Settings.ExecutionTeachingMode && !string.IsNullOrEmpty(lesson);
+            ExecutionLesson.Text = teaching ? lesson : "";
+            ExecutionLesson.Visibility = teaching ? Visibility.Visible : Visibility.Collapsed;
             ExecutionText.SetResourceReference(TextBlock.ForegroundProperty,
                 phase == "failed" || phase == "incomplete" ? "B.Danger" : phase == "verified" ? "B.Success" : "B.Foreground");
             _operationHistory.Enqueue(DateTime.Now.ToString("HH:mm:ss") + "  " + line);
@@ -121,6 +126,21 @@ namespace OMNIX.Core.Ui
             ExecutionHistory.Text = string.Join(Environment.NewLine, _operationHistory);
             ExecutionHistory.ScrollToEnd();
             ExecutionBorder.Visibility = Visibility.Visible;
+        }
+
+        internal static string TeachingLesson(string phase,bool fa)
+        {
+            switch(phase)
+            {
+                case "inspect": return fa ? "مقصد واقعی پیش از تغییر بررسی می‌شود." : "Inspect the actual target before changing it.";
+                case "preview": return fa ? "محدوده و تغییر پیشنهادی آماده می‌شود." : "Prepare the target range and proposed change.";
+                case "apply": return fa ? "ابزار واقعی Office تغییر را اجرا می‌کند." : "The actual Office tool applies the change.";
+                case "verify": return fa ? "محتوا و فرمول‌ها با معیارهای طرح مقایسه می‌شوند." : "Compare actual content and formulas with the plan criteria.";
+                case "incomplete": return fa ? "معیارهای طرح هنوز کامل نیست؛ همان مقصد نیاز به اصلاح دارد." : "Some plan criteria still fail; inspect and repair the existing target.";
+                case "verified": return fa ? "همهٔ معیارهای ثبت‌شدهٔ طرح در این بررسی موفق شدند." : "All recorded plan criteria passed this check.";
+                case "complete": return fa ? "این ابزار پایان یافت؛ تکمیل کل درخواست جدا بررسی می‌شود." : "This tool ended; completion of the whole request is checked separately.";
+                default: return "";
+            }
         }
 
         public void SetContextText(string text)

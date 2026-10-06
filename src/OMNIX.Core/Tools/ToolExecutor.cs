@@ -40,6 +40,7 @@ namespace OMNIX.Core.Tools
         {
             if (!(adapter is IVisibleOfficeExecutionHost)) return;
             int delay = Math.Max(1, Math.Min(2000, Settings.SettingsManager.Instance.Settings.ExecutionStepDelayMs));
+            if (Settings.SettingsManager.Instance.Settings.ExecutionTeachingMode) delay = Math.Max(800, delay);
             // Even with pacing disabled, yield for selection painting and cancellation.
             await Task.Delay(delay, ct).ConfigureAwait(true);
             EnsureRequestScope(ct);
@@ -171,7 +172,9 @@ namespace OMNIX.Core.Tools
                     var templateArgs = Newtonsoft.Json.Linq.JObject.Parse(call.ArgumentsJson ?? "{}");
                     return ToolResult.Ok(Agent.OfficePlaybooks.Template((string)templateArgs["name"], (string)templateArgs["sheet"], adapter.Host));
                 case ToolNames.SubmitExecutionPlan:
-                    return ToolResult.Ok(Execution.Submit(call.ArgumentsJson, adapter.Host));
+                    var targets=adapter as Agent.IPlanTargetInspectionHost;
+                    return ToolResult.Ok(Execution.Submit(call.ArgumentsJson, adapter.Host,
+                        targets==null?(Func<string,bool>)null:targets.CreationTargetExists));
                 case ToolNames.VerifyExecutionPlan:
                     var verifier = adapter as Agent.IPlanVerificationHost;
                     if (verifier == null) return ToolResult.Fail("Native plan verification is unavailable.");

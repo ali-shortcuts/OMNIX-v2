@@ -147,6 +147,9 @@ function Test-Excel {
     $result.GoldShopNativePlanPass = $false
     $result.GoldShopCorruptionDetectedPass = $false
     $result.ExcelObjectMapPass = $false
+    $result.ExcelBatchMixedDataPass = $false
+    $result.ExcelBatchCorruptionPass = $false
+    $result.GoldCreationPreflightPass = $false
     $app = $null; $book = $null; $sheet = $null; $selection = $null; $adapter = $null; $executor = $null
     $token = 'OMNIX_E2E_EXCEL_42'
     try {
@@ -207,6 +210,28 @@ function Test-Excel {
         $result.ProfessionalFormatPass = [bool]($formatResult.Success -and [bool]$formatted.Font.Bold)
         try { $result.VisibleTargetPass = [bool]([string]$app.Selection.Address($false,$false) -eq 'A4:B4') } catch { $result.VisibleTargetPass = $false }
 
+
+        # Real mixed-data batching: text IDs/leading zeros, numbers, bools, dates, formulas and blanks.
+        $mixedJson = '{"sheet":"OMNIXMixed","headers":["ID","Number","Bool","Date","Formula","Empty"],"rows":[["001",12.5,false,{"date":"2026-10-06"},{"formula":"=1+1"},null],["002",0,true,{"date":"2026-10-06"},{"formula":"=3+2"},""]]}'
+        [OMNIX.Core.Tools.ExcelTableBuilder]::Apply($app,$mixedJson)
+        $mixed = $book.Worksheets.Item('OMNIXMixed')
+        $result.ExcelBatchMixedDataPass = [bool]([string]$mixed.Range('A2').Value2 -ceq '001' -and $mixed.Range('A2').Value2 -is [string] -and [double]$mixed.Range('B2').Value2 -eq 12.5 -and $mixed.Range('C2').Value2 -is [bool] -and -not [bool]$mixed.Range('C2').Value2 -and [double]$mixed.Range('D2').Value2 -eq ([datetime]'2026-10-06').ToOADate() -and [bool]$mixed.Range('E2').HasFormula -and [double]$mixed.Range('E2').Value2 -eq 2)
+        $typedCheck = [Newtonsoft.Json.Linq.JObject]::Parse('{"kind":"cell_value","sheet":"OMNIXMixed","address":"B2","value":12.5}')
+        $mixed.Range('B2').NumberFormat = '@'; $mixed.Range('B2').Value2 = '12.5'
+        $result.ExcelBatchCorruptionPass = [bool]($null -ne $adapter.CheckPostcondition($typedCheck))
+        $mixed.Range('B2').NumberFormat = 'General'; $mixed.Range('B2').Value2 = 12.5
+        $largeRows = @(); for ($r=0; $r -lt 50; $r++) { $row=@();for ($c=0;$c -lt 10;$c++){$row+=($r*10+$c)};$largeRows+=,@($row) }
+        $largeHeaders = @();for ($c=0;$c -lt 10;$c++){$largeHeaders+="C$c"}
+        $largeJson = @{sheet='OMNIXBulk';headers=$largeHeaders;rows=$largeRows} | ConvertTo-Json -Depth 20 -Compress
+        $batchClock = [Diagnostics.Stopwatch]::StartNew()
+        [OMNIX.Core.Tools.ExcelTableBuilder]::Apply($app,$largeJson)
+        $batchClock.Stop()
+        $bulk = $book.Worksheets.Item('OMNIXBulk')
+        $result.ExcelBatchMixedDataPass = [bool]($result.ExcelBatchMixedDataPass -and $bulk.ListObjects.Item(1).ListRows.Count -eq 50 -and [double]$bulk.Range('J51').Value2 -eq 499)
+        $result.Excel500CellElapsedMs = $batchClock.ElapsedMilliseconds
+        Release-ComObjectSafe $bulk
+        Release-ComObjectSafe $mixed
+
         # Deterministic real-COM scenario, independent of a model claiming success.
         # Creates only disposable sheets in this test's new unsaved workbook.
         $goldJson = [OMNIX.Core.Agent.OfficePlaybooks]::Template('gold_shop','OMNIXGold',[OMNIX.Core.Context.HostType]::Excel)
@@ -258,6 +283,14 @@ function Test-Excel {
         $objectArgs = [OMNIX.Core.Tools.ToolArguments]::Parse('{"sheet":"OMNIXGold — محصولات","part":"objects","kind":"tables","offset":0,"count":1}')
         $objectMap = $adapter.ReadDocumentSection($objectArgs) | ConvertFrom-Json
         $result.ExcelObjectMapPass = [bool]($objectMap.total -eq 1 -and $objectMap.objects[0].address -eq 'A4:I7' -and $objectMap.objects[0].rows -eq 3)
+        $guard = New-Object -TypeName 'OMNIX.Core.Agent.ExecutionPlan'
+        $guard.Begin('create gold again',$true)
+        $countBefore = $book.Worksheets.Count
+        $inspection = [Func[string,bool]]{param($name) $adapter.CreationTargetExists($name)}
+        $collided = $false
+        try { [void]$guard.Submit($goldJson,[OMNIX.Core.Context.HostType]::Excel,$inspection) } catch { $collided = $true }
+        $guardedCall = New-ToolCall 'create_data_table' ($gold.steps[0].args | ConvertTo-Json -Depth 20 -Compress)
+        $result.GoldCreationPreflightPass = [bool]($collided -and $book.Worksheets.Count -eq $countBefore -and $guard.BeforeWrite($guardedCall).Contains('PLAN REQUIRED'))
         Release-ComObjectSafe $below
         Release-ComObjectSafe $sales
         Release-ComObjectSafe $products
@@ -287,6 +320,7 @@ function Test-Excel {
         $result.WriteNoConfirmationBlockedPass -and $result.WriteDeniedBlockedPass -and $result.WriteApprovedAppliedPass -and
         $result.TypedCellWritePass -and $result.ProfessionalFormatPass -and $result.VisibleTargetPass -and
         $result.GoldShopNativePlanPass -and $result.GoldShopCorruptionDetectedPass -and $result.ExcelObjectMapPass -and
+        $result.ExcelBatchMixedDataPass -and $result.ExcelBatchCorruptionPass -and $result.GoldCreationPreflightPass -and
         $result.ProcessExitedCleanly)
     return [pscustomobject]$result
 }

@@ -20,7 +20,7 @@ namespace OMNIX.Core.Context
     /// it afterward can allocate millions of cells and freeze Office, so all bulk reads first resize
     /// to the configured context budget.
     /// </summary>
-    public sealed class ExcelHostAdapter : IHostAdapter, IRequestScopeIdentityHost, IIndexedHostAdapter, IVisibleOfficeExecutionHost, IOfficeCapabilityHost, IOfficeAccessHost, Agent.IPlanVerificationHost
+    public sealed class ExcelHostAdapter : IHostAdapter, IRequestScopeIdentityHost, IIndexedHostAdapter, IVisibleOfficeExecutionHost, IOfficeCapabilityHost, IOfficeAccessHost, Agent.IPlanVerificationHost, Agent.IPlanTargetInspectionHost
     {
         private const int DisplayMaxColumns = 8;
         private const int FormulaCellCap = 60;
@@ -42,6 +42,18 @@ namespace OMNIX.Core.Context
         public string HostDisplayName { get { return "Excel"; } }
 
         public string CheckPostcondition(Newtonsoft.Json.Linq.JObject check) { return Agent.OfficePostconditions.ExcelCheck(_app, check); }
+        public bool CreationTargetExists(string name)
+        {
+            var book=_app.ActiveWorkbook;
+            if(book==null || book.ReadOnly || book.ProtectStructure)
+                throw new InvalidOperationException("An editable workbook with unprotected structure is required for new sheets.");
+            foreach(object item in book.Sheets)
+            {
+                string existing=item is Excel.Worksheet?((Excel.Worksheet)item).Name:((Excel.Chart)item).Name;
+                if(string.Equals(existing,name,StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
 
         public string ReadOfficeAccess()
         {

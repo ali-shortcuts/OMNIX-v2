@@ -44,6 +44,7 @@ namespace OMNIX.Core.Settings
         public Dictionary<string, string> Models { get; set; }
         public Dictionary<string, List<string>> SavedModels { get; set; }
         public int ExecutionStepDelayMs { get; set; }
+        public bool ExecutionTeachingMode { get; set; }
         public string BusinessLocale { get; set; }
         public string CloudflareAccountId { get; set; }
         public bool ConfirmEveryWrite { get; set; }

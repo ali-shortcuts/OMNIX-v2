@@ -257,20 +257,18 @@ namespace OMNIX.Core.Tools
                 int dataRowCount = Math.Max(1, rows.Count);
                 var area = ((Excel.Range)created.Cells[headerRow, 1]).Resize[dataRowCount + 1, headers.Count];
 
-                for (int c = 0; c < headers.Count; c++)
+                var headerValues=new object[1,headers.Count];
+                for(int c=0;c<headers.Count;c++) headerValues[0,c]=(string)headers[c];
+                var headerRange=((Excel.Range)created.Cells[headerRow,1]).Resize[1,headers.Count];
+                headerRange.NumberFormat="@";
+                headerRange.Value2=headerValues;
+                var batches=ExcelCellBatch.Build(plan);
+                foreach(var batch in batches)
                 {
-                    var cell = (Excel.Range)created.Cells[headerRow, c + 1];
-                    cell.NumberFormat = "@";
-                    cell.Value2 = (string)headers[c];
-                }
-
-                for (int y = 0; y < rows.Count; y++)
-                {
-                    for (int c = 0; c < headers.Count; c++)
-                    {
-                        var cell = (Excel.Range)created.Cells[headerRow + 1 + y, c + 1];
-                        WriteCell(cell, rows[y][c]);
-                    }
+                    var target=((Excel.Range)created.Cells[headerRow+1+batch.Row,batch.Column+1]).Resize[batch.Count,1];
+                    target.NumberFormat=batch.NumberFormat;
+                    if(batch.IsFormula) target.Formula=batch.Values;
+                    else target.Value2=batch.Values;
                 }
 
                 var table = created.ListObjects.Add(
@@ -295,22 +293,26 @@ namespace OMNIX.Core.Tools
                 }
                 ((Excel.Range)created.Cells[headerRow, 1]).Resize[1, headers.Count].EntireRow.AutoFit();
 
-                for (int y = 0; y < rows.Count; y++)
+                if(rows.Count>0)
                 {
-                    for (int c = 0; c < headers.Count; c++)
+                    var data=((Excel.Range)created.Cells[headerRow+1,1]).Resize[rows.Count,headers.Count];
+                    // Two bounded bulk reads; formula type is checked once per semantic batch.
+                    ExcelCellBatch.Verify(plan,data.Value2,data.Formula,batch=>
                     {
-                        var cell = (Excel.Range)created.Cells[headerRow + 1 + y, c + 1];
-                        VerifyCell(cell, rows[y][c]);
-                    }
+                        var target=((Excel.Range)created.Cells[headerRow+1+batch.Row,batch.Column+1]).Resize[batch.Count,1];
+                        object value=target.HasFormula;
+                        return value is bool?(bool?)value:null;
+                    });
                 }
 
                 if (table.ListColumns.Count != headers.Count ||
                     table.ListRows.Count != dataRowCount)
                     throw new InvalidOperationException("Table dimensions did not match the approved plan.");
 
+                object storedHeaders=headerRange.Value2;
                 for (int c = 0; c < headers.Count; c++)
                 {
-                    if (Convert.ToString(((Excel.Range)created.Cells[headerRow, c + 1]).Value2) != (string)headers[c])
+                    if (!Agent.OfficePostconditions.ValuesEqual(ExcelCellBatch.MatrixCell(storedHeaders,0,c,1,headers.Count),headers[c]))
                         throw new InvalidOperationException("Table header verification failed.");
                 }
 
@@ -360,103 +362,5 @@ namespace OMNIX.Core.Tools
             }
         }
 
-        private static void WriteCell(Excel.Range cell, JToken token)
-        {
-            if (token == null || token.Type == JTokenType.Null)
-            {
-                cell.Value2 = null;
-                return;
-            }
-
-            if (token.Type == JTokenType.String)
-            {
-                cell.NumberFormat = "@";
-                cell.Value2 = (string)token;
-                return;
-            }
-
-            if (token.Type == JTokenType.Boolean)
-            {
-                cell.Value2 = (bool)token;
-                return;
-            }
-
-            if (token.Type == JTokenType.Integer || token.Type == JTokenType.Float)
-            {
-                cell.Value2 = Convert.ToDouble(token, CultureInfo.InvariantCulture);
-                return;
-            }
-
-            var obj = (JObject)token;
-            string numberFormat = (string)obj["numberFormat"];
-
-            if (obj["formula"] != null)
-            {
-                cell.NumberFormat = string.IsNullOrWhiteSpace(numberFormat) ? "General" : numberFormat;
-                cell.Formula = (string)obj["formula"];
-                if (!Convert.ToBoolean(cell.HasFormula))
-                    throw new InvalidOperationException("Excel did not accept an approved formula.");
-                return;
-            }
-
-            DateTime date = DateTime.ParseExact((string)obj["date"], "yyyy-MM-dd", CultureInfo.InvariantCulture);
-            cell.NumberFormat = string.IsNullOrWhiteSpace(numberFormat) ? "yyyy-mm-dd" : numberFormat;
-            cell.Value2 = date.ToOADate();
-        }
-
-        private static void VerifyCell(Excel.Range cell, JToken expected)
-        {
-            object actual = cell.Value2;
-
-            if (expected == null || expected.Type == JTokenType.Null)
-            {
-                if (actual != null || Convert.ToBoolean(cell.HasFormula))
-                    throw new InvalidOperationException("Blank-cell verification failed.");
-                return;
-            }
-
-            if (expected.Type == JTokenType.String)
-            {
-                if (Convert.ToString(actual) != (string)expected || Convert.ToBoolean(cell.HasFormula))
-                    throw new InvalidOperationException("Text-cell verification failed.");
-                return;
-            }
-
-            if (expected.Type == JTokenType.Boolean)
-            {
-                if (!(actual is bool) || (bool)actual != (bool)expected || Convert.ToBoolean(cell.HasFormula))
-                    throw new InvalidOperationException("Boolean-cell verification failed.");
-                return;
-            }
-
-            if (expected.Type == JTokenType.Integer || expected.Type == JTokenType.Float)
-            {
-                if (actual == null ||
-                    Convert.ToDouble(actual, CultureInfo.InvariantCulture) != Convert.ToDouble(expected, CultureInfo.InvariantCulture) ||
-                    Convert.ToBoolean(cell.HasFormula))
-                    throw new InvalidOperationException("Numeric-cell verification failed.");
-                return;
-            }
-
-            var obj = (JObject)expected;
-            if (obj["formula"] != null)
-            {
-                if (!Convert.ToBoolean(cell.HasFormula))
-                    throw new InvalidOperationException("Formula verification failed.");
-                string actualFormula = Convert.ToString(cell.Formula, CultureInfo.InvariantCulture);
-                if (string.IsNullOrWhiteSpace(actualFormula) ||
-                    !actualFormula.TrimStart().StartsWith("=", StringComparison.Ordinal))
-                    throw new InvalidOperationException("Excel formula read-back was empty or not a real formula.");
-                // Excel may normalize an A1 formula into a table structured-reference formula
-                // when the surrounding range becomes a ListObject. HasFormula + a non-empty
-                // formula read-back is therefore the stable correctness check here; later
-                // read_document_section exposes Excel's actual stored formula for verification.
-                return;
-            }
-
-            DateTime date = DateTime.ParseExact((string)obj["date"], "yyyy-MM-dd", CultureInfo.InvariantCulture);
-            if (actual == null || Math.Abs(Convert.ToDouble(actual, CultureInfo.InvariantCulture) - date.ToOADate()) > 0.000001d)
-                throw new InvalidOperationException("Date-cell verification failed.");
-        }
     }
 }
