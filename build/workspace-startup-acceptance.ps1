@@ -263,6 +263,55 @@ class WorkspaceStartupRegression {
         }
         foreach(var host in new[]{HostType.Excel,HostType.Word,HostType.PowerPoint})
             Check(OMNIX.Core.Agent.OfficePlaybooks.Load(host,"gold shop").Contains("BUSINESS TASK GUIDE"), "Selective embedded playbook missing");
+        Check(OMNIX.Core.Agent.OfficePostconditions.WordText("Title\r") == "Title", "Word paragraph marker retained");
+        Check(OMNIX.Core.Agent.OfficePostconditions.WordText("A\r\a") == "A", "Word cell marker retained");
+        Check(OMNIX.Core.Agent.OfficePostconditions.WordText(" A \r\a") == " A ", "Meaningful spaces lost");
+        Check(OMNIX.Core.Agent.OfficePostconditions.WordText("A\rB\r\a") == "A\rB", "Meaningful paragraph break lost");
+        Check(!OMNIX.Core.Agent.OfficePostconditions.TextMatches("Title extra","Title",true), "Extra text passed exact acceptance");
+        Check(OMNIX.Core.Agent.OfficePostconditions.TextMatches("Title extra","Title",false), "Legacy contains check changed");
+        foreach(var host in new[]{HostType.Word,HostType.PowerPoint}) {
+            var content = new Newtonsoft.Json.Linq.JObject();
+            content["kind"]="table_content";
+            content["table"]=1; content["slide"]=1; content["shape"]=1;
+            content["cells"]=Newtonsoft.Json.Linq.JArray.Parse("[[\"ID\",\"Amount\"],[\"001\",\"20\"]]");
+            OMNIX.Core.Agent.ExecutionPlan.ValidateCheck(content,host);
+            foreach(string bad in new[]{"[]","[[\"ID\"],[]]","[[1]]","[[null]]"}) {
+                var invalid=(Newtonsoft.Json.Linq.JObject)content.DeepClone();
+                invalid["cells"]=Newtonsoft.Json.Linq.JArray.Parse(bad);
+                bool rejectedCheck=false;try{OMNIX.Core.Agent.ExecutionPlan.ValidateCheck(invalid,host);}catch(ArgumentException){rejectedCheck=true;}
+                Check(rejectedCheck,"Malformed table matrix accepted: "+bad);
+            }
+            var oversized=(Newtonsoft.Json.Linq.JObject)content.DeepClone();
+            var rows=new Newtonsoft.Json.Linq.JArray();
+            for(int row=0;row<9;row++) { var cells=new Newtonsoft.Json.Linq.JArray(); for(int col=0;col<8;col++) cells.Add("x"); rows.Add(cells); }
+            oversized["cells"]=rows;
+            bool tooLarge=false;try{OMNIX.Core.Agent.ExecutionPlan.ValidateCheck(oversized,host);}catch(ArgumentException){tooLarge=true;}
+            Check(tooLarge,"Unbounded native table check accepted");
+            var missing=(Newtonsoft.Json.Linq.JObject)content.DeepClone(); missing.Remove(host==HostType.Word?"table":"shape");
+            bool unspecified=false;try{OMNIX.Core.Agent.ExecutionPlan.ValidateCheck(missing,host);}catch(ArgumentException){unspecified=true;}
+            Check(unspecified,"Unspecified table target accepted");
+            var exact=Newtonsoft.Json.Linq.JObject.Parse("{\"kind\":\"text\",\"paragraph\":1,\"slide\":1,\"shape\":1,\"text\":\"Title\",\"exact\":true}");
+            OMNIX.Core.Agent.ExecutionPlan.ValidateCheck(exact,host);
+            exact["exact"]="true"; bool invalidBool=false;
+            try{OMNIX.Core.Agent.ExecutionPlan.ValidateCheck(exact,host);}catch(ArgumentException){invalidBool=true;}
+            Check(invalidBool,"String exact flag accepted");
+        }
+        foreach(var host in new[]{HostType.Word,HostType.PowerPoint}) {
+            string tool=host==HostType.Word?"rewrite_selected_text":"insert_slide";
+            var step=new Newtonsoft.Json.Linq.JObject();step["id"]="content";step["tool"]=tool;
+            step["args"]=Newtonsoft.Json.Linq.JObject.Parse("{\"text\":\"Title\",\"title\":\"Title\",\"index\":\"1\"}");
+            var count=new Newtonsoft.Json.Linq.JObject(); count["kind"]=host==HostType.Word?"table_count":"slide_count";count["count"]=1;
+            step["checks"]=new Newtonsoft.Json.Linq.JArray(count);
+            var steps=new Newtonsoft.Json.Linq.JArray(step);
+            Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Count-only content plan accepted");
+            var exact=Newtonsoft.Json.Linq.JObject.Parse("{\"kind\":\"text\",\"paragraph\":1,\"slide\":1,\"shape\":1,\"text\":\"Title\",\"exact\":true}");
+            step["checks"]=new Newtonsoft.Json.Linq.JArray(exact);
+            Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)==null,"Exact content plan rejected");
+            if(host==HostType.PowerPoint) {
+                exact["text"]="Other";
+                Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Wrong slide title accepted");
+            }
+        }
         plan.SaveCheckpoint = text => { throw new IOException("disk unavailable"); };
         plan.VerifyAll(probe);
         Check(plan.Complete, "Checkpoint failure changed native verification result");

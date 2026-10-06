@@ -110,7 +110,7 @@ namespace OMNIX.Core.Agent
             if (c == null) throw new ArgumentException("Postcondition must be an object.");
             string kind = (string)c["kind"];
             string[] allowed = host == HostType.Excel ? new[]{"cell_value","formula","heading","table","no_errors","format"} :
-                host == HostType.Word ? new[]{"text","paragraph_style","table_count"} : new[]{"text","slide_count","shape_bounds"};
+                host == HostType.Word ? new[]{"text","paragraph_style","table_count","table_content"} : new[]{"text","slide_count","shape_bounds","table_content"};
             if (!allowed.Contains(kind)) throw new ArgumentException("Unsupported postcondition for " + host + ": " + kind);
             if (host == HostType.Excel && (string.IsNullOrWhiteSpace((string)c["sheet"]) || string.IsNullOrWhiteSpace((string)c["address"])))
                 throw new ArgumentException("Excel checks require exact sheet and address.");
@@ -149,6 +149,25 @@ namespace OMNIX.Core.Agent
                 throw new ArgumentException("Style check requires the expected style name.");
             if (kind == "formula" && string.IsNullOrWhiteSpace((string)c["formula"]))
                 throw new ArgumentException("Formula checks require the exact formula and expected result.");
+            if (kind == "text")
+            {
+                if (c["text"].Type != JTokenType.String || ((string)c["text"]).Length > 10000)
+                    throw new ArgumentException("Text checks require at most 10000 characters.");
+                if (c["exact"] != null && c["exact"].Type != JTokenType.Boolean)
+                    throw new ArgumentException("exact must be a boolean.");
+            }
+            if (kind == "table_content")
+            {
+                var cells = c["cells"] as JArray;
+                var first = cells == null || cells.Count == 0 ? null : cells[0] as JArray;
+                if (first == null || first.Count < 1 || cells.Count > 64 || first.Count > 24 || cells.Count * first.Count > 64 ||
+                    cells.Any(row => !(row is JArray) || ((JArray)row).Count != first.Count ||
+                        ((JArray)row).Any(cell => cell.Type != JTokenType.String || ((string)cell).Length > 500)))
+                    throw new ArgumentException("Table content requires an exact rectangular matrix of 1–64 text cells, at most 24 columns and 500 characters per cell.");
+                foreach (string field in host == HostType.Word ? new[]{"table"} : new[]{"slide","shape"})
+                    if (c[field] == null || c[field].Type != JTokenType.Integer || (int)c[field] < 1)
+                        throw new ArgumentException("Table content requires an exact positive " + field + " index.");
+            }
             if (kind == "table_count" || kind == "slide_count")
                 if (c["count"] == null || c["count"].Type != JTokenType.Integer || (int)c["count"] < 0)
                     throw new ArgumentException("Count checks require an explicit nonnegative integer.");

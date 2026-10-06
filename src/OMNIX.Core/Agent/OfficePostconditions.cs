@@ -118,11 +118,39 @@ namespace OMNIX.Core.Agent
             if (!(errors is double || errors is int)) return "Excel error scan could not be evaluated.";
             return Convert.ToDouble(errors, CultureInfo.InvariantCulture) == 0 ? null : "Excel errors exist in the checked range.";
         }
+        // Remove only Office's terminal structural marker, preserving meaningful spaces and lines.
+        public static string WordText(string text)
+        {
+            text = text ?? "";
+            if (text.EndsWith("\r\a", StringComparison.Ordinal)) return text.Substring(0, text.Length - 2);
+            if (text.EndsWith("\r", StringComparison.Ordinal)) return text.Substring(0, text.Length - 1);
+            return text;
+        }
+        public static bool TextMatches(string actual, string expected, bool exact)
+        {
+            if (actual == null || expected == null || actual.Length > 10000) return false;
+            return exact ? string.Equals(actual, expected, StringComparison.Ordinal) : actual.Contains(expected);
+        }
         public static string WordCheck(Word.Application app,JObject c)
         {
             ExecutionPlan.ValidateCheck(c,HostType.Word);
             var doc=app.ActiveDocument; string kind=(string)c["kind"];
             if(kind=="table_count") return doc.Tables.Count==(int)c["count"]?null:"Word table count differs from the plan.";
+            if(kind=="table_content")
+            {
+                var table=doc.Tables[Index(c,"table",1,doc.Tables.Count)];
+                var cells=(JArray)c["cells"]; int rows=cells.Count, columns=((JArray)cells[0]).Count;
+                if(!table.Uniform || table.Rows.Count!=rows || table.Columns.Count!=columns)
+                    return "Word table dimensions or merged structure differ from the plan.";
+                for(int row=1;row<=rows;row++) for(int column=1;column<=columns;column++)
+                {
+                    var range=table.Cell(row,column).Range;
+                    if(range.End-range.Start>502) return "Word table cell exceeds the bounded content check.";
+                    if(!TextMatches(WordText(range.Text),(string)cells[row-1][column-1],true))
+                        return "Word table cell content differs at row "+row+", column "+column+".";
+                }
+                return null;
+            }
             int index=Index(c,"paragraph",1,doc.Paragraphs.Count);
             var p=doc.Paragraphs[index];
             if(kind=="paragraph_style")
@@ -131,8 +159,9 @@ namespace OMNIX.Core.Agent
                 return style!=null && style.NameLocal==(string)c["style"]?null:"Paragraph style differs from the plan.";
             }
             var r=p.Range.Duplicate;
-            if(r.End-r.Start>10000) return "Paragraph exceeds the bounded text check; choose a smaller target.";
-            return (r.Text??"").Contains((string)c["text"])?null:"Expected text is absent from the target paragraph.";
+            if(r.End-r.Start>10002) return "Paragraph exceeds the bounded text check; choose a smaller target.";
+            bool exact=(bool?)c["exact"]??false;
+            return TextMatches(exact?WordText(r.Text):r.Text,(string)c["text"],exact)?null:"Paragraph text differs from the plan.";
         }
         public static string PowerPointCheck(Ppt.Application app,JObject c)
         {
@@ -141,11 +170,25 @@ namespace OMNIX.Core.Agent
             if(kind=="slide_count") return p.Slides.Count==(int)c["count"]?null:"Slide count differs from the plan.";
             var slide=p.Slides[Index(c,"slide",1,p.Slides.Count)];
             var shape=slide.Shapes[Index(c,"shape",1,slide.Shapes.Count)];
-            if(kind=="shape_bounds") return shape.Left>=0 && shape.Top>=0 && shape.Left+shape.Width<=p.PageSetup.SlideWidth+1 && shape.Top+shape.Height<=p.PageSetup.SlideHeight+1?null:"Shape extends outside the slide.";
+            if(kind=="shape_bounds") return shape.Width>0 && shape.Height>0 && shape.Left>=0 && shape.Top>=0 && shape.Left+shape.Width<=p.PageSetup.SlideWidth+1 && shape.Top+shape.Height<=p.PageSetup.SlideHeight+1?null:"Shape extends outside the slide.";
+            if(kind=="table_content")
+            {
+                if(shape.HasTable!=Microsoft.Office.Core.MsoTriState.msoTrue) return "Target shape is not a native PowerPoint table.";
+                var table=shape.Table; var cells=(JArray)c["cells"];
+                int rows=cells.Count, columns=((JArray)cells[0]).Count;
+                if(table.Rows.Count!=rows || table.Columns.Count!=columns) return "PowerPoint table dimensions differ from the plan.";
+                for(int row=1;row<=rows;row++) for(int column=1;column<=columns;column++)
+                {
+                    var textRange=table.Cell(row,column).Shape.TextFrame.TextRange;
+                    if(textRange.Length>500 || !TextMatches(textRange.Text,(string)cells[row-1][column-1],true))
+                        return "PowerPoint table cell content differs at row "+row+", column "+column+".";
+                }
+                return null;
+            }
             if(shape.HasTextFrame!=Microsoft.Office.Core.MsoTriState.msoTrue) return "Target shape has no text frame.";
             var text=shape.TextFrame.TextRange;
             if(text.Length>10000) return "Shape exceeds the bounded text check.";
-            return (text.Text??"").Contains((string)c["text"])?null:"Expected text is absent from the target shape.";
+            return TextMatches(text.Text,(string)c["text"],(bool?)c["exact"]??false)?null:"Shape text differs from the plan.";
         }
     }
 }

@@ -73,3 +73,14 @@
 - [Microsoft: کاهش انتقال داده بین Excel و کد با خواندن/نوشتن دسته‌ای و Value2](https://learn.microsoft.com/en-us/office/vba/excel/concepts/excel-performance/excel-tips-for-optimizing-performance-obstructions)
 - [Microsoft: آرایهٔ Formula هم‌اندازه با محدوده و رفتار Formula/Formula2](https://learn.microsoft.com/en-us/office/vba/api/excel.range.formula)
 - [Microsoft: Office Object Model، STA و محدودیت threading](https://learn.microsoft.com/en-us/visualstudio/vsto/threading-support-in-office?view=vs-2022)
+
+
+## ارتقای تکمیلی: بررسی محتوای Word و PowerPoint
+
+- `text` با `exact:true` متن کامل هدف را تطبیق می‌دهد؛ متن اضافه نیز خطاست. در Word فقط علامت ساختاری انتهای پاراگراف/سلول حذف می‌شود و فاصله‌ها و سطرهای داخلی حفظ می‌شوند.
+- `table_content` ابعاد و تمام سلول‌های جدول بومیِ مستطیلی را با ماتریس مرتب متن بررسی می‌کند: حداکثر ۶۴ سلول، ۲۴ ستون و ۵۰۰ نویسه در هر سلول. جدول بزرگ یا ادغام‌شده نیازمند بررسی جداگانه است.
+- طرح بازنویسی متن Word و افزودن اسلاید PowerPoint با بررسی صرف تعداد یا وجود بخشی از متن پذیرفته نمی‌شود. عنوان درخواستی اسلاید باید بررسی دقیق داشته باشد.
+- بررسی محدودهٔ شکل PowerPoint اندازهٔ صفر یا منفی را نیز رد می‌کند.
+- آزمون‌های خودکار، ماتریس نامعتبر/بزرگ، حفظ فاصله و سطر، متن اضافه و طرح فاقد بررسی محتوای دقیق را پوشش می‌دهند. سناریوی Office واقعی برای تغییر عمدی متن و خالی‌کردن یک سلول نیز اضافه شده است؛ در این محیط اجرا نشده است.
+
+این ارتقا راه بررسی نتیجه را تقویت می‌کند؛ هنوز Spec مستقل کامل، مجموعهٔ الگوهای تخصصی Word/PowerPoint، پوشش تمام Ribbon، آزمون هنگ روی دستگاه کاربر و تضمین سلامت همهٔ مدل‌ها تکمیل نشده‌اند. نتیجهٔ CI جای اجرای واقعی Office را نمی‌گیرد.

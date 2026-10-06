@@ -32,6 +32,26 @@ namespace OMNIX.Core.Agent
 
         public static string Validate(string request, JArray steps, HostType host)
         {
+            if (host == HostType.Word || host == HostType.PowerPoint)
+            {
+                // Structural counts alone cannot establish that requested content was written.
+                foreach (var step in steps.OfType<JObject>())
+                {
+                    var nativeChecks=((JArray)step["checks"]).OfType<JObject>();
+                    string tool=(string)step["tool"];
+                    if ((tool=="rewrite_selected_text" || tool=="insert_slide") &&
+                        !nativeChecks.Any(c => (string)c["kind"]=="text" && (bool?)c["exact"]==true))
+                        return "REQUEST COVERAGE: writing document/slide text requires an exact native text check for this step; counts or substring checks alone are insufficient. Split large content into bounded targets.";
+                    if(tool=="insert_slide")
+                    {
+                        string title=(string)step["args"]["title"];
+                        if(!string.IsNullOrEmpty(title) && !nativeChecks.Any(c => (string)c["kind"]=="text" &&
+                            (bool?)c["exact"]==true && (string)c["text"]==title))
+                            return "REQUEST COVERAGE: the inserted slide requires an exact check of its requested title.";
+                    }
+                }
+                return null;
+            }
             if (host != HostType.Excel) return null;
             string q = (request ?? "").ToLowerInvariant();
             var checks = steps.OfType<JObject>().SelectMany(s => ((JArray)s["checks"]).OfType<JObject>()).ToList();
