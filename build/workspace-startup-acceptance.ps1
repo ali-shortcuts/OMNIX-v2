@@ -307,6 +307,10 @@ class WorkspaceStartupRegression {
             var exact=Newtonsoft.Json.Linq.JObject.Parse("{\"kind\":\"text\",\"paragraph\":1,\"slide\":1,\"shape\":1,\"text\":\"Title\",\"exact\":true}");
             step["checks"]=new Newtonsoft.Json.Linq.JArray(exact);
             Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)==null,"Exact content plan rejected");
+            if(host==HostType.Word) {
+                exact["text"]="Other";
+                Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Wrong Word replacement acceptance passed");
+            }
             if(host==HostType.PowerPoint) {
                 exact["text"]="Other";
                 Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Wrong slide title accepted");

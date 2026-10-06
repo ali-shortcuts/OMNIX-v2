@@ -42,6 +42,13 @@ namespace OMNIX.Core.Agent
                     if ((tool=="rewrite_selected_text" || tool=="insert_slide") &&
                         !nativeChecks.Any(c => (string)c["kind"]=="text" && (bool?)c["exact"]==true))
                         return "REQUEST COVERAGE: writing document/slide text requires an exact native text check for this step; counts or substring checks alone are insufficient. Split large content into bounded targets.";
+                    if(tool=="rewrite_selected_text")
+                    {
+                        string expected=(string)step["args"]["text"];
+                        if(!string.IsNullOrEmpty(expected) && expected.IndexOfAny(new[]{'\r','\n'})<0 &&
+                            !nativeChecks.Any(c => (string)c["kind"]=="text" && (bool?)c["exact"]==true && (string)c["text"]==expected))
+                            return "REQUEST COVERAGE: a single-paragraph rewrite requires an exact check of the actual requested replacement text.";
+                    }
                     if(tool=="insert_slide")
                     {
                         int index;
