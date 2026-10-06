@@ -58,7 +58,7 @@ namespace OMNIX.Core.Agent
                         {
                             string expected=(string)step["args"][field];
                             if(!string.IsNullOrEmpty(expected) && !nativeChecks.Any(c => (string)c["kind"]=="text" &&
-                                (bool?)c["exact"]==true && (string)c["text"]==expected && (int?)c["slide"]==index))
+                                (bool?)c["exact"]==true && OfficePostconditions.TextMatches((string)c["text"],expected,true) && (int?)c["slide"]==index))
                                 return "REQUEST COVERAGE: the inserted slide requires an exact check of its requested "+field+" on the insertion slide.";
                         }
                     }

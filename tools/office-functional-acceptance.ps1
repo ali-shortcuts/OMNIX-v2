@@ -328,7 +328,7 @@ function Test-Excel {
 
 function Test-Word {
     $result = Base-Result 'Word'
-    $app = $null; $doc = $null; $range = $null; $adapter = $null; $executor = $null
+    $app = $null; $doc = $null; $range = $null; $adapter = $null; $executor = $null; $nativeTable = $null; $insertion = $null
     $token = 'OMNIX_E2E_WORD_ORIGINAL'
     try {
         $app = New-Object -ComObject Word.Application
@@ -397,6 +397,8 @@ function Test-Word {
         if ($null -ne $doc) { try { $doc.Close(0) } catch { } }
         if ($null -ne $app) { try { $app.Quit() } catch { } }
         $adapter = $null; $executor = $null
+        Release-ComObjectSafe $nativeTable
+        Release-ComObjectSafe $insertion
         Release-ComObjectSafe $range
         Release-ComObjectSafe $doc
         Release-ComObjectSafe $app
@@ -412,7 +414,7 @@ function Test-Word {
 function Test-PowerPoint {
     $result = Base-Result 'PowerPoint'
     $result.VisionCaptureApplicable = $true
-    $app = $null; $pres = $null; $slide = $null; $adapter = $null; $executor = $null
+    $app = $null; $pres = $null; $slide = $null; $adapter = $null; $executor = $null; $nativeTable = $null; $nativeTableShape = $null
     $token = 'OMNIX_E2E_POWERPOINT_TITLE'
     try {
         $app = New-Object -ComObject PowerPoint.Application
@@ -469,13 +471,14 @@ function Test-PowerPoint {
         $nativeTable.Cell(1,1).Shape.TextFrame.TextRange.Text = 'ID'
         $nativeTable.Cell(1,2).Shape.TextFrame.TextRange.Text = 'Amount'
         $nativeTable.Cell(2,1).Shape.TextFrame.TextRange.Text = '001'
-        $nativeTable.Cell(2,2).Shape.TextFrame.TextRange.Text = '20'
+        $nativeTable.Cell(2,2).Shape.TextFrame.TextRange.Text = "Line1`nLine2"
         $tableCheck = [Newtonsoft.Json.Linq.JObject]::Parse('{"kind":"table_content","slide":1,"shape":1,"cells":[["ID","Amount"],["001","20"]]}')
         $tableCheck['shape'] = [Newtonsoft.Json.Linq.JValue]::new([int]$slide.Shapes.Count)
+        $tableCheck['cells'][1][1] = [Newtonsoft.Json.Linq.JValue]::new("Line1`nLine2")
         $tablePass = ($null -eq $adapter.CheckPostcondition($tableCheck))
         $nativeTable.Cell(2,2).Shape.TextFrame.TextRange.Text = ''
         $emptyRejected = ($null -ne $adapter.CheckPostcondition($tableCheck))
-        $nativeTable.Cell(2,2).Shape.TextFrame.TextRange.Text = '20'
+        $nativeTable.Cell(2,2).Shape.TextFrame.TextRange.Text = "Line1`nLine2"
         $result.StructuralAcceptancePass = [bool]($exactPass -and $extraRejected -and $tablePass -and $emptyRejected -and ($null -eq $adapter.CheckPostcondition($tableCheck)))
     }
     catch [System.Runtime.InteropServices.COMException] {
@@ -489,6 +492,8 @@ function Test-PowerPoint {
         if ($null -ne $pres) { try { $pres.Close() } catch { } }
         if ($null -ne $app) { try { $app.Quit() } catch { } }
         $adapter = $null; $executor = $null
+        Release-ComObjectSafe $nativeTable
+        Release-ComObjectSafe $nativeTableShape
         Release-ComObjectSafe $slide
         Release-ComObjectSafe $pres
         Release-ComObjectSafe $app

@@ -126,10 +126,14 @@ namespace OMNIX.Core.Agent
             if (text.EndsWith("\r", StringComparison.Ordinal)) return text.Substring(0, text.Length - 1);
             return text;
         }
+        public static string NormalizeLineEndings(string text)
+        {
+            return text == null ? null : text.Replace("\r\n", "\n").Replace("\r", "\n");
+        }
         public static bool TextMatches(string actual, string expected, bool exact)
         {
             if (actual == null || expected == null || actual.Length > 10000) return false;
-            return exact ? string.Equals(actual, expected, StringComparison.Ordinal) : actual.Contains(expected);
+            return exact ? string.Equals(NormalizeLineEndings(actual), NormalizeLineEndings(expected), StringComparison.Ordinal) : actual.Contains(expected);
         }
         public static string WordCheck(Word.Application app,JObject c)
         {
