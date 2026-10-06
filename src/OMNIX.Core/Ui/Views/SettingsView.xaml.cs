@@ -107,6 +107,8 @@ namespace OMNIX.Core.Ui
                 CloudflareAccountBox.Text = settings.CloudflareAccountId ?? "";
                 ConfirmWritesCheck.IsChecked = settings.ConfirmEveryWrite;
                 VisibleStepsCheck.IsChecked = settings.ExecutionStepDelayMs > 0;
+                TeachingModeCheck.IsChecked = settings.ExecutionTeachingMode;
+                TeachingModeCheck.Content = settings.UiLanguage == "fa" ? "حالت آموزشی" : "Teaching mode";
                 StepDelaySlider.Value = settings.ExecutionStepDelayMs > 0 ? settings.ExecutionStepDelayMs : 350;
                 BusinessLocaleBox.Text = settings.BusinessLocale ?? "Afghanistan; Dari; currency AFN";
                 ModelCombo.ItemsSource = new[] { "Custom Model" };
@@ -806,6 +808,8 @@ namespace OMNIX.Core.Ui
 
             settings.ConfirmEveryWrite = ConfirmWritesCheck.IsChecked == true;
             settings.ExecutionStepDelayMs = VisibleStepsCheck.IsChecked == true ? (int)StepDelaySlider.Value : 0;
+            settings.ExecutionTeachingMode = TeachingModeCheck.IsChecked == true;
+            if (settings.ExecutionTeachingMode) settings.ExecutionStepDelayMs = Math.Max(800, settings.ExecutionStepDelayMs);
             settings.BusinessLocale = BusinessLocaleBox.Text.Trim();
             settings.PreferLocalWhenAvailable = PreferLocalCheck.IsChecked == true;
 

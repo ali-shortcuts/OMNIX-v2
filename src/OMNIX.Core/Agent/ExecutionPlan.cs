@@ -16,6 +16,12 @@ namespace OMNIX.Core.Agent
         string CheckPostcondition(JObject check);
     }
 
+    public interface IPlanTargetInspectionHost
+    {
+        // Read-only preflight on the owner thread; includes worksheet/chart-sheet name collisions.
+        bool CreationTargetExists(string sheet);
+    }
+
     public sealed class ExecutionPlan
     {
         private string _host;
@@ -38,7 +44,9 @@ namespace OMNIX.Core.Agent
             _applied.Clear(); _started.Clear(); _passed.Clear(); _attempts.Clear();
         }
 
-        public string Submit(string json, HostType host)
+        public string Submit(string json, HostType host) { return Submit(json,host,null); }
+
+        public string Submit(string json, HostType host, Func<string,bool> targetExists)
         {
             if (json == null || json.Length > 60000) throw new ArgumentException("Plan exceeds 60,000 characters.");
             var plan = JObject.Parse(json);
@@ -54,6 +62,7 @@ namespace OMNIX.Core.Agent
             }
             if (steps == null || steps.Count < 1 || steps.Count > (append ? 36 : _plan != null ? 36 : 12)) throw new ArgumentException("Initial plan requires 1–12 steps; append at most 12 per segment, 36 total.");
             var ids = new HashSet<string>(StringComparer.Ordinal);
+            var destinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var token in steps)
             {
                 var step = token as JObject;
@@ -66,6 +75,14 @@ namespace OMNIX.Core.Agent
                 foreach (var c in checks) ValidateCheck(c as JObject, host);
                 if (tool == ToolNames.CreateDataTable && (bool?)step["args"]["uniqueName"] == true)
                     throw new ArgumentException("Planned creation requires an exact, unused sheet name; automatic suffixes are not allowed.");
+                if (tool == ToolNames.CreateDataTable && host == HostType.Excel)
+                {
+                    var table=ExcelTableBuilder.ValidatePlan(step["args"].ToString(Formatting.None));
+                    string destination=(string)table["sheet"];
+                    if(!destinations.Add(destination)) throw new ArgumentException("Two creation steps target the same worksheet. Repair one existing sheet rather than recreate it.");
+                    if(targetExists!=null && !_applied.Contains(id) && !_started.Contains(id) && targetExists(destination))
+                        throw new ArgumentException("Creation destination already exists: "+destination+". No new plan was accepted. Inspect and revise to edit the existing sheet.");
+                }
             }
             string coverage = RequestCoverage.Validate(OriginalRequest, steps, host);
             if (coverage != null) throw new ArgumentException(coverage);

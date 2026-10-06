@@ -314,6 +314,18 @@ class WorkspaceStartupRegression {
             bool rejectedTable=false; try {OMNIX.Core.Agent.ExecutionPlan.ValidateCheck(Newtonsoft.Json.Linq.JObject.Parse(invalidTable),HostType.Excel);} catch(ArgumentException){rejectedTable=true;}
             Check(rejectedTable,"Malformed native table criterion accepted");
         }
+        var teachingView=new OMNIX.Core.Ui.ChatView();
+        var preferences=SettingsManager.Instance.Settings;bool priorTeaching=preferences.ExecutionTeachingMode;
+        try {
+            teachingView.SetBusy(true);preferences.ExecutionTeachingMode=false;teachingView.ShowOperation("write_to_cell","inspect");
+            var lesson=(TextBlock)teachingView.FindName("ExecutionLesson");Check(lesson.Visibility==Visibility.Collapsed,"Teaching details shown when disabled");
+            preferences.ExecutionTeachingMode=true;teachingView.ShowOperation("write_to_cell","inspect");
+            Check(lesson.Visibility==Visibility.Visible && lesson.Text.Length>0,"Teaching explanation absent for real stage");
+            teachingView.SetBusy(false);Check(lesson.Visibility==Visibility.Collapsed,"Stale teaching stage remained after completion");
+            var roundtrip=Newtonsoft.Json.JsonConvert.DeserializeObject<OMNIX.Core.Settings.OmnixSettings>(Newtonsoft.Json.JsonConvert.SerializeObject(preferences));
+            Check(roundtrip.ExecutionTeachingMode,"Teaching preference did not persist");
+            Check(!Newtonsoft.Json.JsonConvert.DeserializeObject<OMNIX.Core.Settings.OmnixSettings>("{}").ExecutionTeachingMode,"Old settings silently enabled teaching mode");
+        } finally {preferences.ExecutionTeachingMode=priorTeaching;}
         var plan=new OMNIX.Core.Agent.ExecutionPlan(); plan.Begin("write cells",true);
         plan.Submit(PlanEnvelope(steps).ToString(),HostType.Excel);
         var probe=new AcceptanceProbe {Accept=true};
@@ -332,6 +344,14 @@ class WorkspaceStartupRegression {
         var unrelated=new OMNIX.Core.Agent.ExecutionPlan {PreviousCheckpoint=saved}; unrelated.Begin("new task",true);
         Check(!unrelated.TryResume("new task",HostType.Excel,probe),"Unrelated request resumed old task");
         var creation=PlanStep("create"); creation["tool"]="create_data_table";
+        creation["args"]=Newtonsoft.Json.Linq.JObject.Parse("{\"sheet\":\"Sheet1\",\"headers\":[\"ID\"],\"rows\":[[1]]}");
+        var secondCreation=(Newtonsoft.Json.Linq.JObject)creation.DeepClone();secondCreation["id"]="second";secondCreation["args"]["sheet"]="Later";
+        var guarded=new OMNIX.Core.Agent.ExecutionPlan();guarded.Begin("create two sheets",true);int inspections=0;
+        bool collision=false;try{guarded.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(creation,secondCreation)).ToString(),HostType.Excel,name=>{inspections++;return name=="Later";});}catch(ArgumentException){collision=true;}
+        Check(collision && inspections==2 && guarded.BeforeWrite(new ToolCall {Name=ToolNames.CreateDataTable,ArgumentsJson=creation["args"].ToString()}).Contains("PLAN REQUIRED"),"Later destination collision accepted a writable partial plan");
+        secondCreation["args"]["sheet"]="sheet1";
+        bool repeated=false;try{guarded.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(creation,secondCreation)).ToString(),HostType.Excel);}catch(ArgumentException){repeated=true;}
+        Check(repeated,"Case-insensitive duplicate creation destinations accepted");
         var uncertain=new OMNIX.Core.Agent.ExecutionPlan(); uncertain.Begin("create",true);
         uncertain.Submit(PlanEnvelope(new Newtonsoft.Json.Linq.JArray(creation)).ToString(),HostType.Excel);
         var createCall=new ToolCall {Name=ToolNames.CreateDataTable,ArgumentsJson=creation["args"].ToString()};
@@ -632,6 +652,30 @@ class WorkspaceStartupRegression {
             bool rejected=false; try { ExcelTableBuilder.ValidatePlan(invalid); } catch { rejected=true; }
             Check(rejected,"Invalid table plan accepted");
         }
+        var mixed=Newtonsoft.Json.Linq.JObject.Parse("{\"sheet\":\"Mixed\",\"headers\":[\"ID\",\"Number\",\"Bool\",\"Date\",\"Formula\",\"Empty\"],\"rows\":[[\"001\",12.5,false,{\"date\":\"2026-10-06\"},{\"formula\":\"=1+1\"},null],[\"002\",0,true,{\"date\":\"2026-10-06\"},{\"formula\":\"=3+2\"},null]]}");
+        var batches=ExcelCellBatch.Build(mixed);
+        Check(batches.Count==6,"Homogeneous mixed columns were not batched");
+        Check(batches[0].NumberFormat=="@" && !batches[0].IsFormula,"Identifiers lost literal text semantics");
+        double date=new DateTime(2026,10,6).ToOADate();
+        object[,] values={{"001",12.5,false,date,2.0,null},{"002",0.0,true,date,5.0,null}};
+        object[,] formulas={{"001",12.5,false,date,"=1+1",null},{"002",0.0,true,date,"=3+2",null}};
+        ExcelCellBatch.Verify(mixed,values,formulas,b=>b.IsFormula);
+        var comValues=Array.CreateInstance(typeof(object),new[]{2,6},new[]{1,1});
+        var comFormulas=Array.CreateInstance(typeof(object),new[]{2,6},new[]{1,1});
+        for(int y=0;y<2;y++)for(int x=0;x<6;x++){comValues.SetValue(values[y,x],y+1,x+1);comFormulas.SetValue(formulas[y,x],y+1,x+1);}
+        ExcelCellBatch.Verify(mixed,comValues,comFormulas,b=>b.IsFormula);
+        values[0,1]="12.5";
+        bool numericText=false;try{ExcelCellBatch.Verify(mixed,values,formulas,b=>b.IsFormula);}catch(InvalidOperationException){numericText=true;}
+        Check(numericText,"Numeric text was accepted as a real number in batch read-back"); values[0,1]=12.5;
+        bool lostFormula=false;try{ExcelCellBatch.Verify(mixed,values,formulas,b=>false);}catch(InvalidOperationException){lostFormula=true;}
+        Check(lostFormula,"Literal formula text was accepted as a native formula");
+        bool badDimensions=false;try{ExcelCellBatch.Verify(mixed,new object[1,6],formulas,b=>b.IsFormula);}catch(InvalidOperationException){badDimensions=true;}
+        Check(badDimensions,"Partial Office read-back was accepted as full data");
+        var large=new Newtonsoft.Json.Linq.JObject(); large["sheet"]="Large";
+        var largeHeaders=new Newtonsoft.Json.Linq.JArray();for(int i=0;i<10;i++)largeHeaders.Add("C"+i);large["headers"]=largeHeaders;
+        var largeRows=new Newtonsoft.Json.Linq.JArray();for(int y=0;y<50;y++){var row=new Newtonsoft.Json.Linq.JArray();for(int x=0;x<10;x++)row.Add(y*10+x);largeRows.Add(row);}large["rows"]=largeRows;
+        Check(ExcelCellBatch.Build(large).Count==10,"500 numeric cells require more than ten writes");
+        Check(ExcelCellBatch.MatrixCell(42.0,0,0,1,1).Equals(42.0),"Single-cell scalar read-back rejected");
         string prompt=SystemPromptBuilder.Build(host,host.ReadContext());
         Check(prompt.Contains("RUNTIME IDENTITY") && prompt.Contains("ACTIVE OFFICE HOST: Excel") &&
               prompt.Contains("read_document_section") && prompt.Contains("create_data_table") &&

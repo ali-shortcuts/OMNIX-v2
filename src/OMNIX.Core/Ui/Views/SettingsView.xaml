@@ -254,6 +254,7 @@
             <TextBlock Text="Execution" Style="{StaticResource Section}" />
             <CheckBox x:Name="ConfirmWritesCheck" Content="Confirm every edit" Foreground="{DynamicResource B.Foreground}" />
             <CheckBox x:Name="VisibleStepsCheck" Content="Visible steps" Foreground="{DynamicResource B.Foreground}" />
+            <CheckBox x:Name="TeachingModeCheck" Content="Teaching mode" Foreground="{DynamicResource B.Foreground}" ToolTip="Show a short explanation of actual execution stages" />
             <TextBlock Text="Stage pause (ms)" Style="{StaticResource FieldLabel}" />
             <Slider x:Name="StepDelaySlider" Minimum="100" Maximum="2000" TickFrequency="100" IsSnapToTickEnabled="True" ToolTip="Delay between visible Office operations" />
             <TextBlock Text="{Binding ElementName=StepDelaySlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="{DynamicResource B.Foreground}" />
