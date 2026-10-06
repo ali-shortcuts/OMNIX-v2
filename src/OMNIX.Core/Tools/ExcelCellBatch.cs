@@ -38,7 +38,7 @@ namespace OMNIX.Core.Tools
         }
         public static IList<ExcelCellBatch> Build(JObject plan)
         {
-            ExcelTableBuilder.ValidatePlan(plan.ToString());
+            ExcelTableBuilder.ValidatePlan(plan.ToString(Newtonsoft.Json.Formatting.None));
             var rows=(JArray)plan["rows"]; var headers=(JArray)plan["headers"];
             var batches=new List<ExcelCellBatch>();
             for(int column=0;column<headers.Count;column++)

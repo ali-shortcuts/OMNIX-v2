@@ -77,7 +77,7 @@ namespace OMNIX.Core.Agent
                     throw new ArgumentException("Planned creation requires an exact, unused sheet name; automatic suffixes are not allowed.");
                 if (tool == ToolNames.CreateDataTable && host == HostType.Excel)
                 {
-                    var table=ExcelTableBuilder.ValidatePlan(step["args"].ToString());
+                    var table=ExcelTableBuilder.ValidatePlan(step["args"].ToString(Formatting.None));
                     string destination=(string)table["sheet"];
                     if(!destinations.Add(destination)) throw new ArgumentException("Two creation steps target the same worksheet. Repair one existing sheet rather than recreate it.");
                     if(targetExists!=null && !_applied.Contains(id) && !_started.Contains(id) && targetExists(destination))
