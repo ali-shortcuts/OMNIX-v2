@@ -32,6 +32,39 @@ namespace OMNIX.Core.Agent
 
         public static string Validate(string request, JArray steps, HostType host)
         {
+            if (host == HostType.Word || host == HostType.PowerPoint)
+            {
+                // Structural counts alone cannot establish that requested content was written.
+                foreach (var step in steps.OfType<JObject>())
+                {
+                    var nativeChecks=((JArray)step["checks"]).OfType<JObject>();
+                    string tool=(string)step["tool"];
+                    if ((tool=="rewrite_selected_text" || tool=="insert_slide") &&
+                        !nativeChecks.Any(c => (string)c["kind"]=="text" && (bool?)c["exact"]==true))
+                        return "REQUEST COVERAGE: writing document/slide text requires an exact native text check for this step; counts or substring checks alone are insufficient. Split large content into bounded targets.";
+                    if(tool=="rewrite_selected_text")
+                    {
+                        string expected=(string)step["args"]["text"];
+                        if(!string.IsNullOrEmpty(expected) && expected.IndexOfAny(new[]{'\r','\n'})<0 &&
+                            !nativeChecks.Any(c => (string)c["kind"]=="text" && (bool?)c["exact"]==true && (string)c["text"]==expected))
+                            return "REQUEST COVERAGE: a single-paragraph rewrite requires an exact check of the actual requested replacement text.";
+                    }
+                    if(tool=="insert_slide")
+                    {
+                        int index;
+                        if(!int.TryParse((string)step["args"]["index"], out index) || index<1)
+                            return "REQUEST COVERAGE: inspect the presentation and specify the exact positive insertion index before planning a slide.";
+                        foreach(string field in new[]{"title","body"})
+                        {
+                            string expected=(string)step["args"][field];
+                            if(!string.IsNullOrEmpty(expected) && !nativeChecks.Any(c => (string)c["kind"]=="text" &&
+                                (bool?)c["exact"]==true && (string)c["text"]==expected && (int?)c["slide"]==index))
+                                return "REQUEST COVERAGE: the inserted slide requires an exact check of its requested "+field+" on the insertion slide.";
+                        }
+                    }
+                }
+                return null;
+            }
             if (host != HostType.Excel) return null;
             string q = (request ?? "").ToLowerInvariant();
             var checks = steps.OfType<JObject>().SelectMany(s => ((JArray)s["checks"]).OfType<JObject>()).ToList();

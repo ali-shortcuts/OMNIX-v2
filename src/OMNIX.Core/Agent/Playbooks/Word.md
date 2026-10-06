@@ -1,2 +1,4 @@
 WORD WORK GUIDE
 Inspect existing paragraphs, styles, tables, sections, headers/footers and selection using available tools. Revise requested content in place. Use native headings and paragraph styles rather than spaces, repeated blank lines or manual visual approximations. Preserve unrelated text and intentional page/section breaks. Respect configured language and direction. Plan exact paragraphs and expected text/style checks; verify table counts and target content after edits. Check page layout visually when supported. Do not claim pagination or all pages inspected without evidence.
+
+Use exact:true for complete requested text, rather than merely finding a substring. For a bounded rectangular native table use table_content with the exact ordered string matrix and inspected target indices. Count-only checks cannot establish content correctness. Preserve separate titles outside tables when requested; never convert them into a repeated data column.

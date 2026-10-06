@@ -128,6 +128,7 @@ function Base-Result([string]$officeHostName) {
         Version = $null
         ContextReadPass = $false
         ReadToolPass = $false
+        StructuralAcceptancePass = $false
         WriteNoConfirmationBlockedPass = $false
         WriteDeniedBlockedPass = $false
         WriteApprovedAppliedPass = $false
@@ -368,6 +369,22 @@ function Test-Word {
         $approveResult = Invoke-Tool $executor $writeCall $adapter
         $result.WriteApprovedAppliedPass = [bool]($approveResult.Success -and
             (Contains-OrdinalIgnoreCase ([string]$doc.Content.Text) 'OMNIX_WORD_WRITE_OK'))
+
+        $exact = [Newtonsoft.Json.Linq.JObject]::Parse('{"kind":"text","paragraph":1,"text":"OMNIX_WORD_WRITE_OK","exact":true}')
+        $exactPass = ($null -eq $adapter.CheckPostcondition($exact))
+        $doc.Paragraphs.Item(1).Range.Text = "OMNIX_WORD_WRITE_OK extra`r"
+        $extraRejected = ($null -ne $adapter.CheckPostcondition($exact))
+        $doc.Paragraphs.Item(1).Range.Text = "OMNIX_WORD_WRITE_OK`r"
+        $insertion = $doc.Range($doc.Content.End - 1, $doc.Content.End - 1)
+        $nativeTable = $doc.Tables.Add($insertion, 2, 2)
+        $nativeTable.Cell(1,1).Range.Text = 'ID'; $nativeTable.Cell(1,2).Range.Text = 'Amount'
+        $nativeTable.Cell(2,1).Range.Text = '001'; $nativeTable.Cell(2,2).Range.Text = '20'
+        $tableCheck = [Newtonsoft.Json.Linq.JObject]::Parse('{"kind":"table_content","table":1,"cells":[["ID","Amount"],["001","20"]]}')
+        $tablePass = ($null -eq $adapter.CheckPostcondition($tableCheck))
+        $nativeTable.Cell(2,2).Range.Text = ''
+        $emptyRejected = ($null -ne $adapter.CheckPostcondition($tableCheck))
+        $nativeTable.Cell(2,2).Range.Text = '20'
+        $result.StructuralAcceptancePass = [bool]($exactPass -and $extraRejected -and $tablePass -and $emptyRejected -and ($null -eq $adapter.CheckPostcondition($tableCheck)))
     }
     catch [System.Runtime.InteropServices.COMException] {
         if ($_.Exception.HResult -eq -2147221164) {
@@ -387,7 +404,7 @@ function Test-Word {
         $result.ProcessExitedCleanly = Wait-ProcessExit 'WINWORD'
     }
     $result.Pass = [bool]($result.Installed -and $result.Started -and $result.ContextReadPass -and $result.ReadToolPass -and
-        $result.WriteNoConfirmationBlockedPass -and $result.WriteDeniedBlockedPass -and $result.WriteApprovedAppliedPass -and
+        $result.WriteNoConfirmationBlockedPass -and $result.WriteDeniedBlockedPass -and $result.WriteApprovedAppliedPass -and $result.StructuralAcceptancePass -and
         $result.ProcessExitedCleanly)
     return [pscustomobject]$result
 }
@@ -441,6 +458,25 @@ function Test-PowerPoint {
         }
         $result.WriteApprovedAppliedPass = [bool]($approveResult.Success -and [int]$pres.Slides.Count -eq 2 -and
             (Contains-OrdinalIgnoreCase $title2 'OMNIX_PPT_WRITE_OK'))
+
+        $titleCheck = [Newtonsoft.Json.Linq.JObject]::Parse('{"kind":"text","slide":1,"shape":1,"text":"OMNIX_E2E_POWERPOINT_TITLE","exact":true}')
+        $exactPass = ($null -eq $adapter.CheckPostcondition($titleCheck))
+        $slide.Shapes.Item(1).TextFrame.TextRange.Text = "$token extra"
+        $extraRejected = ($null -ne $adapter.CheckPostcondition($titleCheck))
+        $slide.Shapes.Item(1).TextFrame.TextRange.Text = $token
+        $nativeTableShape = $slide.Shapes.AddTable(2,2,30,150,300,100)
+        $nativeTable = $nativeTableShape.Table
+        $nativeTable.Cell(1,1).Shape.TextFrame.TextRange.Text = 'ID'
+        $nativeTable.Cell(1,2).Shape.TextFrame.TextRange.Text = 'Amount'
+        $nativeTable.Cell(2,1).Shape.TextFrame.TextRange.Text = '001'
+        $nativeTable.Cell(2,2).Shape.TextFrame.TextRange.Text = '20'
+        $tableCheck = [Newtonsoft.Json.Linq.JObject]::Parse('{"kind":"table_content","slide":1,"shape":1,"cells":[["ID","Amount"],["001","20"]]}')
+        $tableCheck['shape'] = [Newtonsoft.Json.Linq.JValue]::new([int]$slide.Shapes.Count)
+        $tablePass = ($null -eq $adapter.CheckPostcondition($tableCheck))
+        $nativeTable.Cell(2,2).Shape.TextFrame.TextRange.Text = ''
+        $emptyRejected = ($null -ne $adapter.CheckPostcondition($tableCheck))
+        $nativeTable.Cell(2,2).Shape.TextFrame.TextRange.Text = '20'
+        $result.StructuralAcceptancePass = [bool]($exactPass -and $extraRejected -and $tablePass -and $emptyRejected -and ($null -eq $adapter.CheckPostcondition($tableCheck)))
     }
     catch [System.Runtime.InteropServices.COMException] {
         if ($_.Exception.HResult -eq -2147221164) {
@@ -460,7 +496,7 @@ function Test-PowerPoint {
         $result.ProcessExitedCleanly = Wait-ProcessExit 'POWERPNT'
     }
     $result.Pass = [bool]($result.Installed -and $result.Started -and $result.ContextReadPass -and $result.ReadToolPass -and
-        $result.WriteNoConfirmationBlockedPass -and $result.WriteDeniedBlockedPass -and $result.WriteApprovedAppliedPass -and
+        $result.WriteNoConfirmationBlockedPass -and $result.WriteDeniedBlockedPass -and $result.WriteApprovedAppliedPass -and $result.StructuralAcceptancePass -and
         $result.VisionCapturePass -and $result.ProcessExitedCleanly)
     return [pscustomobject]$result
 }
