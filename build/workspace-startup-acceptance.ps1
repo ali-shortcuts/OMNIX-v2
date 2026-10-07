@@ -1094,6 +1094,7 @@ class WorkspaceStartupRegression {
                     Check(settings.Visibility == Visibility.Visible && chat.Visibility == Visibility.Collapsed, "Settings navigation failed");
                     ((RadioButton)view.FindName("TabAbout")).IsChecked = true;
                     Check(about.Visibility == Visibility.Visible && settings.Visibility == Visibility.Collapsed, "About navigation failed");
+                    Check(((OMNIX.Core.Ui.AboutView)about).FindName("DiagnosticsButton")!=null,"Diagnostic export control missing");
                     ((RadioButton)view.FindName("TabChat")).IsChecked = true;
                     Check(chat.Visibility == Visibility.Visible && about.Visibility == Visibility.Collapsed, "Chat navigation failed");
                     Check(view.FindResource("S.Tab.Chat") as string == "Chat", "UI localization failed after background lookup");

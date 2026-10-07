@@ -329,8 +329,7 @@ namespace OMNIX.Core.AiGateway
                 catch (Exception ex)
                 {
                     sw.Stop();
-                    RuntimeDiagnosticJournal.Event("provider_call_end", null, "exception", sw.ElapsedMilliseconds, null,
-                        "round=" + (round + 1) + "; type=" + ex.GetType().Name);
+                    RuntimeDiagnosticJournal.ExceptionEvent("provider_call_end", null, "exception", sw.ElapsedMilliseconds, ex);
                     RuntimeDiagnosticJournal.AbandonRequest("provider_exception", null);
                     throw;
                 }
