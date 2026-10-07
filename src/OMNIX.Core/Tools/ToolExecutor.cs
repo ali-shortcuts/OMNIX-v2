@@ -133,9 +133,8 @@ namespace OMNIX.Core.Tools
             catch (Exception ex)
             {
                 NotifyOperation(call, "failed");
-                RuntimeDiagnosticJournal.Event("executor_result", call != null ? call.Name : null,
-                    "exception", RuntimeDiagnosticJournal.ElapsedMs(dispatchTimer), null,
-                    "type=" + ex.GetType().Name);
+                RuntimeDiagnosticJournal.ExceptionEvent("executor_result", call != null ? call.Name : null,
+                    "exception", RuntimeDiagnosticJournal.ElapsedMs(dispatchTimer), ex);
                 Logger.Error("gateway", "Tool execution failed: " + call.Name, ex);
                 return ToolResult.Fail("TOOL ERROR: " + ex.Message);
             }
@@ -362,8 +361,8 @@ namespace OMNIX.Core.Tools
             }
             catch (Exception ex)
             {
-                RuntimeDiagnosticJournal.Event("write_apply_end", call.Name, "exception",
-                    RuntimeDiagnosticJournal.ElapsedMs(applyTimer), null, "type=" + ex.GetType().Name);
+                RuntimeDiagnosticJournal.ExceptionEvent("write_apply_end", call.Name, "exception",
+                    RuntimeDiagnosticJournal.ElapsedMs(applyTimer), ex);
                 throw;
             }
             NotifyOperation(call, "verify");

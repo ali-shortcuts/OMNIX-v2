@@ -31,6 +31,9 @@ namespace OMNIX.Core.Logging
             public string Model;
         }
 
+        private static readonly int ProcessId = GetProcessId();
+        private static int GetProcessId() { try { using(var process=Process.GetCurrentProcess()) return process.Id; } catch { return 0; } }
+
         private static readonly AsyncLocal<TraceState> Current = new AsyncLocal<TraceState>();
 
         public static string CurrentTraceId
@@ -103,6 +106,18 @@ namespace OMNIX.Core.Logging
             ErrorCode? errorCode,
             string detail)
         {
+            WriteEvent(eventName, toolName, status, elapsedMs, errorCode, detail, null);
+        }
+
+        public static void ExceptionEvent(string eventName, string toolName, string status, long? elapsedMs, Exception exception)
+        {
+            // Numeric HRESULT is actionable without retaining the private exception message.
+            WriteEvent(eventName, toolName, status, elapsedMs, null, null, exception != null ? (int?)exception.HResult : null);
+        }
+
+        private static void WriteEvent(string eventName, string toolName, string status, long? elapsedMs,
+            ErrorCode? errorCode, string detail, int? hresult)
+        {
             try
             {
                 var state = Current.Value;
@@ -121,6 +136,7 @@ namespace OMNIX.Core.Logging
                     ["tsUtc"] = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                     ["traceId"] = traceId,
                     ["thread"] = Thread.CurrentThread.ManagedThreadId,
+                    ["processId"] = ProcessId,
                     ["event"] = safeEvent
                 };
                 if (!string.IsNullOrEmpty(host)) o["host"] = host;
@@ -130,6 +146,7 @@ namespace OMNIX.Core.Logging
                 if (!string.IsNullOrEmpty(safeStatus)) o["status"] = safeStatus;
                 if (elapsedMs.HasValue) o["elapsedMs"] = Math.Max(0, elapsedMs.Value);
                 if (errorCode.HasValue) o["errorCode"] = errorCode.Value.ToString();
+                if (hresult.HasValue) o["hresult"] = hresult.Value;
                 if (!string.IsNullOrEmpty(safeDetail)) o["detail"] = safeDetail;
 
                 Logger.RuntimeEventJson(o.ToString(Formatting.None));
