@@ -137,9 +137,8 @@ namespace OMNIX.Core.Ui
             if(!busy) ExecutionBorder.Visibility=Visibility.Collapsed;
             SendButton.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
             StopButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
-            NewChatButton.IsEnabled = !busy;
-            ClearButton.IsEnabled = !busy;
-            RetryButton.IsEnabled = !busy;
+            foreach(var item in ActionsMenu.Items.OfType<MenuItem>())
+                if(new[]{"NewChatButton","ClearButton","RetryButton"}.Contains(item.Name)) item.IsEnabled=!busy;
         }
 
         public void ShowOperation(string operation, string phase)
