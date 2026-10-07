@@ -340,13 +340,13 @@ class WorkspaceStartupRegression {
                 Check(steps.Count==(host==HostType.Word?5:9),"Host template lost ordered creation/formatting steps");
                 Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)==null,"Host template acceptance is incomplete");
                 if(host==HostType.Word) {
-                    var first=(Newtonsoft.Json.Linq.JObject)steps[0];
-                    Check((bool)first["args"]["args"]["requireBlankDocument"],"Word template would overwrite an existing document");
+                    var firstTemplateStep=(Newtonsoft.Json.Linq.JObject)steps[0];
+                    Check((bool)firstTemplateStep["args"]["args"]["requireBlankDocument"],"Word template would overwrite an existing document");
                     foreach(Newtonsoft.Json.Linq.JObject step in steps) {
                         WordParagraphWriter.Validate((Newtonsoft.Json.Linq.JObject)step["args"]["args"]);
                         Check(((Newtonsoft.Json.Linq.JArray)step["checks"]).Count==3,"Word template lacks native role/text/format checks");
                     }
-                    ((Newtonsoft.Json.Linq.JArray)first["checks"]).RemoveAt(2);
+                    ((Newtonsoft.Json.Linq.JArray)firstTemplateStep["checks"]).RemoveAt(2);
                     Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Weak Word formatting criteria passed");
                 } else {
                     Check((string)steps[0]["args"]["index"]=="4" && (int)steps[0]["checks"][0]["slide"]==4,"Slide template lost exact insertion target");
