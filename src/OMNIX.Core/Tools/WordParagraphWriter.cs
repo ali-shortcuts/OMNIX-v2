@@ -43,6 +43,8 @@ namespace OMNIX.Core.Tools
             if(index==count+1)
             {
                 if((string)a["expectedBefore"]!="") throw new ArgumentException("A new paragraph requires empty expectedBefore.");
+                if(doc.Paragraphs[count].Range.Tables.Count>0)
+                    throw new InvalidOperationException("The document ends inside a table; establish a separate body paragraph before appending.");
                 return;
             }
             var range=doc.Paragraphs[index].Range;
