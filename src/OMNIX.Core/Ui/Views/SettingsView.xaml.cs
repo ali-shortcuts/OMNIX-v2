@@ -67,12 +67,18 @@ namespace OMNIX.Core.Ui
         private void InvalidateVerification()
         {
             if (_loading) return;
+            // Catalog and results belong to this exact endpoint/protocol/credential set.
+            // Detach an old operation before it can publish queued results into the new form.
+            CancelProviderOperation();
+            string current = EffectiveModelId;
+            _discoveredModels.Clear();
             _modelVerification.Clear();
             VerifiedModelsPanel.Children.Clear();
             ModelVerificationText.Text = "";
             ModelVerificationScroll.Visibility = Visibility.Collapsed;
             WorkingModelsOnlyCheck.IsChecked = false;
             WorkingModelsOnlyCheck.Visibility = Visibility.Collapsed;
+            RefreshModelOptions(current);
         }
 
         public void Initialize(WorkspaceController controller)
