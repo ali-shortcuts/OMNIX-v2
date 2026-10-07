@@ -275,7 +275,11 @@ namespace OMNIX.Core.Tools
             EnsureRequestScope(ct);
 
             string rejection = Execution.BeforeWrite(call);
-            if (rejection != null) return ToolResult.Fail(rejection);
+            if (rejection != null) {
+                RuntimeDiagnosticJournal.Event("execution_plan_reject",call.Name,
+                    rejection.StartsWith("PLAN REQUIRED",StringComparison.Ordinal)?"plan_required":"plan_mismatch",null,null,null);
+                return ToolResult.Fail(rejection);
+            }
             WritePreview preview;
             long previewTimer = RuntimeDiagnosticJournal.StartTimer();
             RuntimeDiagnosticJournal.Event("write_preview_start", call.Name, "start", null, null, null);

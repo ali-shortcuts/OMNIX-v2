@@ -14,9 +14,9 @@ namespace OMNIX.Core.Logging
     // Export only known structural metadata. Never copy raw logs or arbitrary detail strings.
     public static class DiagnosticReport
     {
-        private static readonly HashSet<string> Events = new HashSet<string>(new[] { "access_claim_repair","executor_dispatch","executor_reject","executor_result","host_context","mutation_repair","office_reveal","postcondition_error","postcondition_failed","preflight_complete","preflight_error","preflight_start","privacy_check","provider_call_end","provider_call_start","provider_guard","provider_response","provider_round","provider_selected","request_abort","request_complete","request_start","runtime_failure","task_resume","task_segment","tool_execute_end","tool_execute_start","tool_parsed","tool_protocol_reject","ui_dispatcher_gap","verification_repair","write_apply_end","write_apply_start","write_confirmation","write_policy","write_preview_end","write_preview_start","write_verification" }, StringComparer.Ordinal);
+        private static readonly HashSet<string> Events = new HashSet<string>(new[] { "access_claim_repair","execution_plan_reject","executor_dispatch","executor_reject","executor_result","host_context","mutation_repair","office_reveal","postcondition_error","postcondition_failed","preflight_complete","preflight_error","preflight_start","privacy_check","provider_call_end","provider_call_start","provider_guard","provider_response","provider_round","provider_selected","request_abort","request_complete","request_start","runtime_failure","task_resume","task_segment","tool_execute_end","tool_execute_start","tool_parsed","tool_protocol_reject","ui_dispatcher_gap","verification_repair","write_apply_end","write_apply_start","write_confirmation","write_policy","write_preview_end","write_preview_start","write_verification" }, StringComparer.Ordinal);
         private static readonly HashSet<string> Statuses = new HashSet<string>(new[] {
-            "start","end","success","error","exception","omnix_error","failed","cancelled","selected",
+            "plan_required","plan_mismatch","start","end","success","error","exception","omnix_error","failed","cancelled","selected",
             "verified","incomplete","blocked","allowed","shown","accepted","declined","write","read",
             "safe_stop","null","revalidated","resolved","no_verified_progress","request_failure",
             "final_text","native_tool_call","multiple_native_calls","malformed_arguments","not_whitelisted",
@@ -53,6 +53,7 @@ namespace OMNIX.Core.Logging
                     if(e["errorCode"]!=null || new[]{"error","exception","omnix_error","failed","blocked"}.Contains(status)) code="recorded_failure";
                     else if(name=="ui_dispatcher_gap") code="ui_delay_observed";
                     else if(name=="write_verification" && status=="incomplete") code="result_not_verified";
+                    else if(name=="execution_plan_reject") code="execution_plan_rejected";
                     else if(name=="tool_protocol_reject") code="tool_protocol_rejected";
                     else if((long?)e["elapsedMs"]>=15000 && name!="request_complete" && name!="request_abort") code="long_stage_observed";
                     if(code!=null && findings.Count<64) findings.Add(Finding(code,e,"observed"));

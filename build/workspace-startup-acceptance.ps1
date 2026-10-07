@@ -145,6 +145,31 @@ class WorkspaceStartupRegression {
             view.UpdateLayout(); Snapshot(view,"settings-"+mode);
         }
     }
+    static void CompactChatRegression(WorkspaceView view) {
+        foreach(ThemeMode mode in new[]{ThemeMode.Dark,ThemeMode.Light}) {
+            SettingsManager.Instance.Settings.Theme=mode;ThemeManager.Instance.ApplyTo(view);view.ShowChatTab();
+            var chat=view.Chat;chat.ReloadMessages(new ChatTurn[0]);
+            var first=chat.AppendTurn(new ChatTurn {Role=ChatRole.User,Text="First message",TimestampUtc=DateTime.UtcNow});
+            var second=chat.AppendTurn(new ChatTurn {Role=ChatRole.Assistant,Text="Second message",TimestampUtc=DateTime.UtcNow});
+            second.AppendStreamingText(" streamed");
+            var conversation=(System.Windows.Controls.RichTextBox)chat.FindName("ConversationBox");
+            Check(conversation.Visibility==Visibility.Visible,"Continuous selection view is not the default");
+            string text=new System.Windows.Documents.TextRange(conversation.Document.ContentStart,conversation.Document.ContentEnd).Text;
+            Check(text.Contains("First message") && text.Contains("Second message streamed"),"Continuous conversation dropped a turn or streaming update");
+            conversation.SelectAll();
+            Check(conversation.Selection.Text.Contains("First message") && conversation.Selection.Text.Contains("Second message streamed"),"Selection cannot span multiple messages");
+            conversation.Selection.Select(conversation.Document.ContentEnd,conversation.Document.ContentEnd);
+            second.ReplaceText("**Final answer**");
+            text=new System.Windows.Documents.TextRange(conversation.Document.ContentStart,conversation.Document.ContentEnd).Text;
+            Check(text.Contains("First message") && text.Contains("Final answer") && !text.Contains("Second message"),"Final response replacement duplicated or removed messages");
+            var input=(TextBox)chat.FindName("InputBox");Check(input.Height<=56 && input.VerticalScrollBarVisibility==ScrollBarVisibility.Auto,"Composer is not compact and scrollable");
+            Check(((RadioButton)view.FindName("TabSettings")).Visibility==Visibility.Collapsed,"Header still contains the settings tab row");
+            Check(chat.ActionsMenu.Items.Count>=6,"Header menu is missing conversation actions");
+            chat.SetBusy(true);chat.SetBusy(false);
+            Check(((FrameworkElement)chat.FindName("ExecutionBorder")).Visibility==Visibility.Collapsed,"Finished execution panel still occupies chat space");
+            view.UpdateLayout();Snapshot(view,"chat-compact-"+mode);
+        }
+    }
     class FakeHost : IHostAdapter, IIndexedHostAdapter, IOfficeAccessHost {
         public bool AllowWrites; public int Writes;
         public int AccessReads;
@@ -1098,7 +1123,7 @@ class WorkspaceStartupRegression {
                     ((RadioButton)view.FindName("TabChat")).IsChecked = true;
                     Check(chat.Visibility == Visibility.Visible && about.Visibility == Visibility.Collapsed, "Chat navigation failed");
                     Check(view.FindResource("S.Tab.Chat") as string == "Chat", "UI localization failed after background lookup");
-                    if(i==0) SettingsRegression(view);
+                    if(i==0) {SettingsRegression(view);CompactChatRegression(view);}
                     var frame = new DispatcherFrame();
                     Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => frame.Continue = false));
                     Dispatcher.PushFrame(frame);
