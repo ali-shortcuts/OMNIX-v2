@@ -345,7 +345,7 @@ namespace OMNIX.Core.AiGateway
                         if (mutationRepairTurns++ < MaxMutationRepairTurns)
                         {
                             history.Add(current);
-                            current = MutationRepairTurn(runtimePreflight,
+                            current = MutationRepairTurn(runtimePreflight, toolExecutor.Execution,
                                 "The provider returned no response and no write tool was attempted.");
                             continue;
                         }
@@ -425,7 +425,7 @@ namespace OMNIX.Core.AiGateway
                                 TimestampUtc = DateTime.UtcNow
                             });
                             current = ProtocolRepairTurn(
-                                "Your last OMNIX tool arguments were malformed. Return exactly one tool call with a valid JSON OBJECT for args. Do not include commentary inside the arguments.");
+                                "Your last OMNIX tool arguments were malformed. Return exactly one tool call with a valid JSON OBJECT for args. For text transport use ```omnix_tool\n{\"tool\":\"read_office_access\",\"args\":{}}\n``` (replace tool and args with the required next operation). For native transport call omnix_tool with the same object. Do not put prose, Markdown, arrays or executable expressions inside args.\n" + toolExecutor.Execution.NextAction());
                             continue;
                         }
                         return MutationRuntimeFailure("The selected model repeatedly produced malformed tool arguments. No unverified Office write was applied.");
@@ -459,7 +459,8 @@ namespace OMNIX.Core.AiGateway
                         TimestampUtc = DateTime.UtcNow,
                         Text = "OMNIX RUNTIME ACCESS CHECK: " + SafeRuntimeSummary(access.ContentForModel, 1800) +
                                "\nYour previous access claim was not backed by a write tool result. Use this measured state. " +
-                               "If the original user requested a change and the target is writable, invoke exactly one documented tool now. " +
+                               "If the original user requested a change and the target is writable, follow the execution contract now. " +
+                               toolExecutor.Execution.NextAction() + "\n" +
                                "Do not invent a permission problem and do not provide VBA/manual instructions as a substitute for execution."
                     };
                     continue;
@@ -481,7 +482,7 @@ namespace OMNIX.Core.AiGateway
                                 Text = SafeAssistantTrace(response, "Provider returned text without executing the requested Office change."),
                                 TimestampUtc = DateTime.UtcNow
                             });
-                            current = MutationRepairTurn(runtimePreflight,
+                            current = MutationRepairTurn(runtimePreflight, toolExecutor.Execution,
                                 "The original user request requires a real Office change, but you returned text without invoking a write tool.");
                             continue;
                         }
@@ -583,14 +584,13 @@ namespace OMNIX.Core.AiGateway
                 if (isWrite && toolsBlocked)
                     return writeSucceeded ? MutationRuntimeFailure("The current model did not pass the Office tool test. Earlier applied changes remain; further writes were stopped.", successfulWrites, failedWrites) :
                         new ChatResponse { Text = ModelCapabilityEvidence.Explain(ContainsPersian(request.UserTurn == null ? null : request.UserTurn.Text)) };
-                if (isWrite) writeAttempted = true;
 
                 long toolTimer = RuntimeDiagnosticJournal.StartTimer();
                 RuntimeDiagnosticJournal.Event("tool_execute_start", call.Name, isWrite ? "write" : "read", null, null, null);
                 ToolResult result;
                 try
                 {
-                    result = await toolExecutor.ExecuteAsync(call, hostAdapter).ConfigureAwait(true);
+                    result = await toolExecutor.ExecuteAsync(call, hostAdapter, ct).ConfigureAwait(true);
                 }
                 catch (OperationCanceledException)
                 {
@@ -599,8 +599,9 @@ namespace OMNIX.Core.AiGateway
                     RuntimeDiagnosticJournal.AbandonRequest("cancelled_tool", null);
                     throw;
                 }
-                if (isWrite)
+                if (isWrite && (result == null || !result.WriteNotStarted))
                 {
+                    writeAttempted = true;
                     if (result != null && result.Success)
                     {
                         writeSucceeded = true;
@@ -705,7 +706,7 @@ namespace OMNIX.Core.AiGateway
             }
         }
 
-        private static ChatTurn MutationRepairTurn(string runtimePreflight, string reason)
+        private static ChatTurn MutationRepairTurn(string runtimePreflight, Agent.ExecutionPlan execution, string reason)
         {
             return new ChatTurn
             {
@@ -713,7 +714,7 @@ namespace OMNIX.Core.AiGateway
                 TimestampUtc = DateTime.UtcNow,
                 Text = "OMNIX RUNTIME MUTATION REQUIRED: " + reason +
                        "\nThe user's original request requires an actual change inside the active Office document. " +
-                       "Invoke exactly ONE appropriate OMNIX write tool now. You may use a read tool first only when required to target the change correctly. " +
+                       execution.NextAction() + "\nYou may use a read tool first only when required to target the change correctly. " +
                        "Do not answer with a manual table, VBA, generic instructions, or an invented permission limitation. " +
                        "A task is complete only after a write tool succeeds and the affected Office state is verified." +
                        (string.IsNullOrWhiteSpace(runtimePreflight) ? "" :

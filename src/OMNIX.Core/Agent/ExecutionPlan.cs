@@ -391,7 +391,20 @@ namespace OMNIX.Core.Agent
         {
             return "EXECUTION CONTRACT: " + Summary() + "\nOriginal user request: " + OriginalRequest +
                 (_plan==null ? "" : "\nActive immutable acceptance plan: " + _plan.ToString(Formatting.None)) +
-                (string.IsNullOrEmpty(PreviousCheckpoint)?"":"\nPrevious task checkpoint (context only; re-inspect before resuming): " + PreviousCheckpoint);
+                (string.IsNullOrEmpty(PreviousCheckpoint)?"":"\nPrevious task checkpoint (context only; re-inspect before resuming): " + PreviousCheckpoint) +
+                "\n" + NextAction();
+        }
+        public string NextAction()
+        {
+            if (!Required) return "NEXT ACTION: invoke one documented Office tool, then read back any changed state.";
+            if (_plan == null)
+                return "NEXT ACTION: call submit_execution_plan BEFORE any write. Its args is a JSON object with a steps array. Each step requires id (unique text), tool (exact write tool), args (documented JSON object) and checks (nonempty array of host-specific native postcondition objects). You may inspect the target or get_office_template first; retrieving a template does NOT submit its plan. Do not send the write until submission is accepted.";
+            var step = Steps.FirstOrDefault(s => !_passed.Contains((string)s["id"]));
+            if (step == null) return "NEXT ACTION: all planned steps passed native checks. Report the verified result without repeating writes.";
+            string id = (string)step["id"];
+            if (_started.Contains(id) || _applied.Contains(id))
+                return "NEXT ACTION: inspect the target and verify_execution_plan before repairing step " + id + ". It may already have applied. Retain the original checks; do not replay additive creation.";
+            return "NEXT ACTION: execute exactly this next accepted step: " + step.ToString(Formatting.None) + ". Do not skip it or claim completion early.";
         }
     }
 }

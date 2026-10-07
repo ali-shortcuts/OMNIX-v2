@@ -554,6 +554,55 @@ class WorkspaceStartupRegression {
             return Task.FromResult(new ChatResponse { Text="Everything is complete." });
         }
     }
+    sealed class PlanRecoveryProvider : IProviderAdapter {
+        public int Calls; public bool ProtocolHint, PlanHint, AcceptedStepHint;
+        public ProviderInfo Info {get {return new ProviderInfo {Id="custom",Kind=ProviderKind.Cloud,Vision=VisionSupport.No};}}
+        public void Configure(ProviderCredentials c) {} public bool SupportsVisionNow(){return false;}
+        public Task<IReadOnlyList<string>> ListModelsAsync(CancellationToken ct){return Task.FromResult<IReadOnlyList<string>>(new string[0]);}
+        public Task<bool> TestConnectionAsync(CancellationToken ct){return Task.FromResult(true);}
+        public Task<ChatResponse> SendAsync(ChatRequest request,Action<string> delta,CancellationToken ct) {
+            Calls++;
+            if(Calls==1) return Task.FromResult(new ChatResponse {Text="```omnix_tool\n{\"tool\":\"write_to_cell\",\"args\":[]}\n```"});
+            if(Calls==2) {
+                ProtocolHint=request.UserTurn.Text.Contains("JSON OBJECT");
+                var encoded=new Newtonsoft.Json.Linq.JObject { {"tool","write_to_cell"},{"args",PlanStep("recovery")["args"].ToString(Newtonsoft.Json.Formatting.None)} };
+                return Task.FromResult(new ChatResponse {Text="```omnix_tool\n"+encoded.ToString()+"\n```"});
+            }
+            if(Calls==3) return Task.FromResult(new ChatResponse {Text="I cannot execute this write."});
+            if(Calls==4) {
+                PlanHint=request.UserTurn.Text.Contains("submit_execution_plan BEFORE any write") && !request.UserTurn.Text.Contains("write tool now");
+                return Task.FromResult(new ChatResponse {ToolCalls=new List<ProviderToolCall>{new ProviderToolCall {Name=ToolNames.SubmitExecutionPlan,ArgumentsJson=PlanEnvelope(new Newtonsoft.Json.Linq.JArray(PlanStep("recovery"))).ToString()}}});
+            }
+            if(Calls==5) {
+                AcceptedStepHint=request.SystemPrompt.Contains("execute exactly this next accepted step");
+                return Task.FromResult(new ChatResponse {ToolCalls=new List<ProviderToolCall>{new ProviderToolCall {Name=ToolNames.WriteToCell,ArgumentsJson=PlanStep("recovery")["args"].ToString()}}});
+            }
+            return Task.FromResult(new ChatResponse {Text="Recovered and verified."});
+        }
+    }
+    static void PlanRecoveryGatewayRegression() {
+        var settings=SettingsManager.Instance.Settings; var providerId=settings.SelectedProviderId;
+        var privacy=settings.Privacy; bool local=settings.PreferLocalWhenAvailable;
+        try {
+            settings.SelectedProviderId="custom"; settings.Privacy=PrivacyMode.CloudAllowed; settings.PreferLocalWhenAvailable=false;
+            var registry=new ProviderRegistry(); var provider=new PlanRecoveryProvider();
+            var providers=(List<IProviderAdapter>)typeof(ProviderRegistry).GetField("_providers",BindingFlags.NonPublic|BindingFlags.Instance).GetValue(registry);
+            providers.Clear(); providers.Add(provider);
+            var host=new ContractHost {AllowWrites=true,Accept=true}; int previews=0;
+            var executor=new ToolExecutor {WriteConfirmation=preview=>{previews++;return Task.FromResult(true);}};
+            executor.Execution.Begin("Write one into A1",true);
+            executor.Execution.PreviousCheckpoint=new string('x',60000);
+            var budgeted=ChatRequestBudgeter.Apply(new ChatRequest {SystemPrompt=executor.Execution.Envelope(),UserTurn=new ChatTurn {Role=ChatRole.User,Text="Write one into A1"}});
+            Check(budgeted.SystemPrompt.Length<=32768 && budgeted.SystemPrompt.Contains("submit_execution_plan BEFORE any write"),"Bounded system context dropped the required next action");
+            executor.Execution.PreviousCheckpoint=null;
+            var rejected=executor.ExecuteAsync(new ToolCall {Name=ToolNames.WriteToCell,ArgumentsJson=PlanStep("recovery")["args"].ToString()},host).GetAwaiter().GetResult();
+            Check(!rejected.Success && rejected.WriteNotStarted && host.Writes==0 && previews==0,"Unplanned write reached preview or was counted as a native failure");
+            var gateway=new OMNIX.Core.AiGateway.AiGateway(registry);
+            var result=gateway.ChatAsync(new ChatRequest {UserTurn=new ChatTurn {Role=ChatRole.User,Text="Write one into A1"}},host,part=>{},executor,CancellationToken.None).GetAwaiter().GetResult();
+            Check(provider.Calls==6 && provider.ProtocolHint && provider.PlanHint && provider.AcceptedStepHint,"Contract recovery skipped the state-specific next action");
+            Check(host.Writes==1 && previews==1 && executor.Execution.Complete && result.Text=="Recovered and verified.","Malformed protocol or premature write prevented verified recovery, or repeated a write");
+        } finally {settings.SelectedProviderId=providerId;settings.Privacy=privacy;settings.PreferLocalWhenAvailable=local;}
+    }
     static void NativeContractGatewayRegression() {
         var settings=SettingsManager.Instance.Settings;
         var oldProvider=settings.SelectedProviderId; var oldPrivacy=settings.Privacy; bool oldLocal=settings.PreferLocalWhenAvailable;
@@ -1093,6 +1142,7 @@ class WorkspaceStartupRegression {
             TaskLifecycleRegression();
             ScopeIdentityRegression();
             NativeContractGatewayRegression();
+            PlanRecoveryGatewayRegression();
             SegmentGatewayRegression();
             ModelEvidenceRegression();
             OperationProgressRegression();

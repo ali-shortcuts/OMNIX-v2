@@ -278,7 +278,7 @@ namespace OMNIX.Core.Tools
             if (rejection != null) {
                 RuntimeDiagnosticJournal.Event("execution_plan_reject",call.Name,
                     rejection.StartsWith("PLAN REQUIRED",StringComparison.Ordinal)?"plan_required":"plan_mismatch",null,null,null);
-                return ToolResult.Fail(rejection);
+                return new ToolResult { Success = false, ContentForModel = rejection, WriteNotStarted = true };
             }
             WritePreview preview;
             long previewTimer = RuntimeDiagnosticJournal.StartTimer();
