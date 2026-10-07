@@ -565,7 +565,7 @@ class WorkspaceStartupRegression {
             if(Calls==1) return Task.FromResult(new ChatResponse {Text="```omnix_tool\n{\"tool\":\"write_to_cell\",\"args\":[]}\n```"});
             if(Calls==2) {
                 ProtocolHint=request.UserTurn.Text.Contains("JSON OBJECT");
-                var encoded=new Newtonsoft.Json.Linq.JObject { ["tool"]="write_to_cell",["args"]=PlanStep("recovery")["args"].ToString(Newtonsoft.Json.Formatting.None) };
+                var encoded=new Newtonsoft.Json.Linq.JObject { {"tool","write_to_cell"},{"args",PlanStep("recovery")["args"].ToString(Newtonsoft.Json.Formatting.None)} };
                 return Task.FromResult(new ChatResponse {Text="```omnix_tool\n"+encoded.ToString()+"\n```"});
             }
             if(Calls==3) return Task.FromResult(new ChatResponse {Text="I cannot execute this write."});
