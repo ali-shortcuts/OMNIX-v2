@@ -44,6 +44,18 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <ContextMenu x:Key="WorkspaceActions" Background="{DynamicResource B.Surface}" Foreground="{DynamicResource B.Foreground}">
+            <MenuItem Header="{DynamicResource S.Tab.Settings}" Click="OnMenuSettings" />
+            <MenuItem Header="{DynamicResource S.Tab.About}" Click="OnMenuAbout" />
+            <MenuItem Header="Learn" Click="OnMenuLearn" />
+            <Separator />
+            <MenuItem x:Name="NewChatButton" Header="{DynamicResource S.Chat.NewChat}" Click="OnNewChat" AutomationProperties.AutomationId="OMNIX.NewChatButton" />
+            <MenuItem x:Name="CopyButton" Header="Copy all" Click="OnCopy" AutomationProperties.AutomationId="OMNIX.CopyButton" />
+            <MenuItem Header="Message cards" Click="OnTranscript" />
+            <MenuItem Header="Import TXT" Click="OnImportText" />
+            <MenuItem x:Name="ClearButton" Header="{DynamicResource S.Chat.Clear}" Click="OnClear" AutomationProperties.AutomationId="OMNIX.ClearButton" />
+            <MenuItem x:Name="RetryButton" Header="Retry" Click="OnRetry" Visibility="Collapsed" />
+        </ContextMenu>
     </UserControl.Resources>
 
     <DockPanel LastChildFill="True">
@@ -130,7 +142,7 @@
                          BorderBrush="{DynamicResource B.Border}"
                          CaretBrush="{DynamicResource B.Foreground}"
                          AcceptsReturn="True" TextWrapping="Wrap"
-                         FontSize="12" MinHeight="72" MaxHeight="200" VerticalScrollBarVisibility="Auto"
+                         FontSize="13" Height="56" MinHeight="48" MaxHeight="88" VerticalScrollBarVisibility="Auto"
                          VerticalContentAlignment="Top" Padding="8,7"
                          PreviewKeyDown="OnInputKeyDown" />
 
@@ -153,26 +165,6 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <Border Grid.Row="0" Padding="6,4" BorderBrush="{DynamicResource B.Border}"
-                    BorderThickness="0,0,0,1">
-                <WrapPanel>
-                    <Button x:Name="NewChatButton" Style="{StaticResource MiniButton}"
-                            AutomationProperties.AutomationId="OMNIX.NewChatButton"
-                            Content="{DynamicResource S.Chat.NewChat}" Click="OnNewChat" />
-                    <Button x:Name="CopyButton" Style="{StaticResource MiniButton}"
-                            AutomationProperties.AutomationId="OMNIX.CopyButton"
-                            Content="Copy all" Click="OnCopy" Margin="4,0,0,0" />
-                    <Button x:Name="RetryButton" Style="{StaticResource MiniButton}"
-                            AutomationProperties.AutomationId="OMNIX.RetryButton"
-                            Content="{DynamicResource S.Chat.Retry}" Click="OnRetry" Margin="4,0,0,0" />
-                    <Button x:Name="ClearButton" Style="{StaticResource MiniButton}"
-                            AutomationProperties.AutomationId="OMNIX.ClearButton"
-                            Content="{DynamicResource S.Chat.Clear}" Click="OnClear" Margin="4,0,0,0" />
-                    <Button Style="{StaticResource MiniButton}" Content="Transcript" Click="OnTranscript" Margin="4,0,0,0" />
-                    <Button Style="{StaticResource MiniButton}" Content="TXT" Click="OnImportText" Margin="4,0,0,0" />
-                </WrapPanel>
-            </Border>
-
             <Border x:Name="ExecutionBorder" Grid.Row="1" Visibility="Collapsed"
                     Background="{DynamicResource B.Surface}" BorderBrush="{DynamicResource B.Accent}"
                     BorderThickness="3,0,0,0" Padding="8,6" Margin="6,4">
@@ -181,7 +173,7 @@
                                Foreground="{DynamicResource B.Foreground}" TextWrapping="Wrap"
                                AutomationProperties.AutomationId="OMNIX.ExecutionStatus" />
                     <TextBlock x:Name="ExecutionLesson" Visibility="Collapsed" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource B.Foreground}" Margin="0,4,0,0" AutomationProperties.AutomationId="OMNIX.ExecutionLesson" />
-                    <Expander Header="Steps" Foreground="{DynamicResource B.ForegroundDim}" Margin="0,4,0,0">
+                    <Expander Visibility="Collapsed" Header="Steps" Foreground="{DynamicResource B.ForegroundDim}" Margin="0,4,0,0">
                         <TextBox x:Name="ExecutionHistory" IsReadOnly="True" TextWrapping="Wrap"
                                  MaxHeight="120" VerticalScrollBarVisibility="Auto" FontSize="11"
                                  Background="{DynamicResource B.Surface}" Foreground="{DynamicResource B.Foreground}"
@@ -189,11 +181,14 @@
                     </Expander>
                 </StackPanel>
             </Border>
-            <TextBox x:Name="TranscriptBox" Grid.Row="2" Visibility="Collapsed" IsReadOnly="True"
-                     AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
-                     Background="{DynamicResource B.Background}" Foreground="{DynamicResource B.Foreground}"
-                     BorderThickness="0" Padding="8" />
-            <ScrollViewer x:Name="MessagesScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto"
+            <RichTextBox x:Name="ConversationBox" Grid.Row="2" IsReadOnly="True" IsDocumentEnabled="True"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                         Background="{DynamicResource B.Background}" Foreground="{DynamicResource B.Foreground}"
+                         BorderThickness="0" Padding="10,8" FontSize="13"
+                         AutomationProperties.AutomationId="OMNIX.ConversationBody" AutomationProperties.Name="OMNIX conversation">
+                <FlowDocument PagePadding="0" ColumnWidth="Infinity" FontFamily="Segoe UI" FontSize="13" />
+            </RichTextBox>
+            <ScrollViewer x:Name="MessagesScroll" Grid.Row="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
                           AutomationProperties.AutomationId="OMNIX.MessagesScroll"
                           Padding="4,4,4,2">
                 <StackPanel x:Name="MessagesPanel"

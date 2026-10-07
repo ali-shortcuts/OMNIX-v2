@@ -4,6 +4,8 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Documents;
+using OMNIX.Core.Ui.Markdown;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using OMNIX.Core.Storage;
@@ -19,6 +21,8 @@ namespace OMNIX.Core.Ui
     {
         private WorkspaceController _controller;
         private ImageAttachment _pendingImage;
+        private readonly List<Action> _refreshConversation = new List<Action>();
+        private bool _reloading;
         private bool _busy;
         private string _lastOperationPhase;
         private readonly Queue<string> _operationHistory = new Queue<string>();
@@ -26,6 +30,8 @@ namespace OMNIX.Core.Ui
         public ChatView()
         {
             InitializeComponent();
+            Loaded += (sender,args)=>Theming.ThemeManager.Instance.ThemeChanged+=RefreshConversationTheme;
+            Unloaded += (sender,args)=>Theming.ThemeManager.Instance.ThemeChanged-=RefreshConversationTheme;
         }
 
         public void Initialize(WorkspaceController controller)
@@ -33,30 +39,77 @@ namespace OMNIX.Core.Ui
             _controller = controller;
         }
 
+        private void RefreshConversationTheme() {
+            Dispatcher.BeginInvoke(new Action(()=> {if(IsLoaded) foreach(var refresh in _refreshConversation.ToArray()) refresh();}));
+        }
+        public ContextMenu ActionsMenu { get { return (ContextMenu)FindResource("WorkspaceActions"); } }
+        private WorkspaceView Workspace() {
+            DependencyObject node=this;
+            while(node!=null && !(node is WorkspaceView)) node=VisualTreeHelper.GetParent(node);
+            return node as WorkspaceView;
+        }
+        private void OnMenuSettings(object sender,RoutedEventArgs e) { var view=Workspace();if(view!=null) view.ShowSettingsTab(); }
+        private void OnMenuAbout(object sender,RoutedEventArgs e) { var view=Workspace();if(view!=null) view.ShowAboutTab(); }
+        private void OnMenuLearn(object sender,RoutedEventArgs e) { var view=Workspace();if(view!=null) view.ShowLearnTab(); }
+
         // ------------------------------------------------------------- message list
 
         public ChatBubble AppendTurn(ChatTurn turn)
         {
             var bubble = new ChatBubble(turn);
             MessagesPanel.Children.Add(bubble);
-            ScrollToBottom();
+            var header=new Paragraph(new Run((turn.Role==ChatRole.User?Localization.Strings.T("S.Chat.You"):Localization.Strings.T("S.Chat.Assistant"))+" · "+turn.TimestampUtc.ToLocalTime().ToString("HH:mm"))) {FontSize=11,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,10,0,3)};
+            header.SetResourceReference(TextElement.ForegroundProperty,"B.ForegroundDim");
+            var content=new Section {Margin=new Thickness(0,0,0,10)};
+            ConversationBox.Document.Blocks.Add(header);ConversationBox.Document.Blocks.Add(content);
+            Action<string,bool> render=(text,streaming)=>RenderConversationPart(content,text,streaming);
+            bubble.TextUpdated+=render;render(turn.Text??"",false);
+            _refreshConversation.Add(()=>render(bubble.RawText,false));
+            if(turn.HasImages && turn.Images[0].PngBytes!=null) {
+                try {
+                    var bitmap=new BitmapImage();
+                    using(var source=new System.IO.MemoryStream(turn.Images[0].PngBytes)) {
+                        bitmap.BeginInit();bitmap.CacheOption=BitmapCacheOption.OnLoad;bitmap.StreamSource=source;bitmap.EndInit();bitmap.Freeze();
+                    }
+                    ConversationBox.Document.Blocks.Add(new BlockUIContainer(new Image {Source=bitmap,MaxHeight=120,Stretch=Stretch.Uniform}));
+                } catch {}
+            }
+            if(!_reloading) ScrollToBottom();
             return bubble;
         }
 
         public void ReloadMessages(IEnumerable<ChatTurn> turns)
         {
-            TranscriptBox.Text = _controller != null ? _controller.ConversationText() : "";
             MessagesPanel.Children.Clear();
-            foreach (var t in turns)
-            {
-                var bubble = new ChatBubble(t);
-                MessagesPanel.Children.Add(bubble);
-            }
+            _refreshConversation.Clear();
+            ConversationBox.Document.Blocks.Clear();
+            _reloading=true;
+            try {foreach(var turn in turns) AppendTurn(turn);} finally {_reloading=false;}
             ScrollToBottom();
+        }
+
+        private void RenderConversationPart(Section content,string text,bool streaming)
+        {
+            bool follow=!_reloading && ConversationBox.Selection.IsEmpty && ConversationBox.VerticalOffset+ConversationBox.ViewportHeight>=ConversationBox.ExtentHeight-36;
+            content.FlowDirection=System.Text.RegularExpressions.Regex.IsMatch(text??"",@"^[^A-Za-z\u0600-\u06ff]*[\u0600-\u06ff]")?FlowDirection.RightToLeft:FlowDirection.LeftToRight;
+            content.Blocks.Clear();
+            if(streaming) content.Blocks.Add(new Paragraph(new Run(text)) {Margin=new Thickness(0)});
+            else {
+                var doc=new FlowDocument();doc.SetResourceReference(TextElement.ForegroundProperty,"B.Foreground");
+                // Resolve the pane brush explicitly for Markdown tables/code in VSTO.
+                doc.Foreground=(Brush)FindResource("B.Foreground");
+                foreach(string key in new[]{"B.Foreground","B.ForegroundDim","B.Border","B.Accent","B.Link","B.CodeBackground","B.CodeKeyword","B.CodeString","B.CodeComment","B.CodeNumber"}) {
+                    var brush=TryFindResource(key) as Brush;if(brush!=null) doc.Resources[key]=brush;
+                }
+                MarkdownRenderer.Render(doc,text);
+                while(doc.Blocks.FirstBlock!=null) {var block=doc.Blocks.FirstBlock;doc.Blocks.Remove(block);content.Blocks.Add(block);}
+            }
+            if(follow) ConversationBox.ScrollToEnd();
         }
 
         private void ScrollToBottom()
         {
+            if(ConversationBox.Selection.IsEmpty) ConversationBox.ScrollToEnd();
             MessagesScroll.UpdateLayout();
             MessagesScroll.ScrollToEnd();
         }
@@ -80,6 +133,7 @@ namespace OMNIX.Core.Ui
             {
                 ExecutionText.Text = OMNIX.Core.Settings.SettingsManager.Instance.Settings.UiLanguage == "fa" ? "درخواست پایان یافت" : "Request ended";
             }
+            if(!busy) ExecutionBorder.Visibility=Visibility.Collapsed;
             SendButton.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
             StopButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
             NewChatButton.IsEnabled = !busy;
@@ -222,11 +276,10 @@ namespace OMNIX.Core.Ui
 
         private void OnTranscript(object sender, RoutedEventArgs e)
         {
-            bool show = TranscriptBox.Visibility != Visibility.Visible;
-            TranscriptBox.Text = _controller != null ? _controller.ConversationText() : "";
-            TranscriptBox.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-            MessagesScroll.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
-            if (show) TranscriptBox.Focus();
+            bool cards=MessagesScroll.Visibility!=Visibility.Visible;
+            MessagesScroll.Visibility=cards?Visibility.Visible:Visibility.Collapsed;
+            ConversationBox.Visibility=cards?Visibility.Collapsed:Visibility.Visible;
+            if(!cards) ConversationBox.Focus();
         }
 
         private void OnImportText(object sender, RoutedEventArgs e)

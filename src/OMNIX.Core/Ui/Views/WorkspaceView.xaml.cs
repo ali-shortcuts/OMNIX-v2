@@ -28,6 +28,16 @@ namespace OMNIX.Core.Ui
         public ChatView Chat { get { return ChatPage; } }
         public SettingsView Settings { get { return SettingsPage; } }
 
+        private void OpenWorkspaceMenu(object sender, RoutedEventArgs e)
+        {
+            var menu=ChatPage.ActionsMenu;
+            menu.PlacementTarget=WorkspaceMenuButton;
+            menu.Placement=System.Windows.Controls.Primitives.PlacementMode.Bottom;
+            menu.IsOpen=true;
+        }
+        public void ShowAboutTab() { TabAbout.IsChecked=true; }
+        public void ShowLearnTab() { TabLearn.IsChecked=true; }
+
         public void ShowChatTab() { TabChat.IsChecked = true; }
 
         public void ShowSettingsTab()

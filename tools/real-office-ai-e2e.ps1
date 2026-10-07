@@ -235,7 +235,8 @@ function Wait-ForAssistantMarker($root, [string]$marker, [int]$timeoutSec) {
     $deadline = $started.AddSeconds($timeoutSec)
     $lastBodies = 0
     do {
-        $bodies = @(Find-AllUiElementsByAutomationId $root 'OMNIX.AssistantMessageBody')
+        $bodies = @(Find-AllUiElementsByAutomationId $root 'OMNIX.ConversationBody')
+        if ($bodies.Count -eq 0) { $bodies = @(Find-AllUiElementsByAutomationId $root 'OMNIX.AssistantMessageBody') }
         $lastBodies = $bodies.Count
         for ($i = $bodies.Count - 1; $i -ge 0; $i--) {
             $text = Get-UiText $bodies[$i]
@@ -338,6 +339,8 @@ function Test-HostAiE2E($officeHost) {
         $context = Find-UiElementByAutomationId $root 'OMNIX.ContextText'
         $result.ContextControlFound = ($null -ne $context)
 
+        $menu = Find-UiElementByAutomationId $root 'OMNIX.WorkspaceMenu'
+        if ($null -ne $menu) { [void](Activate-UiElement $menu); Start-Sleep -Milliseconds 150 }
         $newChat = Find-UiElementByAutomationId $root 'OMNIX.NewChatButton'
         if ($null -ne $newChat) {
             $result.NewChatInvoked = Activate-UiElement $newChat

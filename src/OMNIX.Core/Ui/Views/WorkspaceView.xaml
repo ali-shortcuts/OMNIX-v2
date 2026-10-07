@@ -36,6 +36,7 @@
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="bd" Property="Opacity" Value="0.85" />
                             </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource B.Accent}" /><Setter TargetName="bd" Property="BorderThickness" Value="2" /></Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="bd" Property="Opacity" Value="0.7" />
                             </Trigger>
@@ -104,11 +105,14 @@
                     <RadioButton x:Name="TabChat" Style="{StaticResource TabToggle}"
                                  GroupName="OmnixTabs"
                                  Content="{DynamicResource S.Tab.Chat}" Checked="ShowChat" />
-                    <RadioButton x:Name="TabSettings" Style="{StaticResource TabToggle}"
+                    <RadioButton x:Name="TabSettings" Visibility="Collapsed" Style="{StaticResource TabToggle}"
                                  GroupName="OmnixTabs" Content="{DynamicResource S.Tab.Settings}" Checked="ShowSettings" />
-                    <RadioButton x:Name="TabAbout" Style="{StaticResource TabToggle}"
+                    <RadioButton x:Name="TabAbout" Visibility="Collapsed" Style="{StaticResource TabToggle}"
                                  GroupName="OmnixTabs" Content="{DynamicResource S.Tab.About}" Checked="ShowAbout" />
-                    <RadioButton x:Name="TabLearn" Style="{StaticResource TabToggle}" GroupName="OmnixTabs" Content="Learn" Checked="ShowLearn" />
+                    <RadioButton x:Name="TabLearn" Visibility="Collapsed" Style="{StaticResource TabToggle}" GroupName="OmnixTabs" Content="Learn" Checked="ShowLearn" />
+                    <Button x:Name="WorkspaceMenuButton" Content="☰" FontFamily="Segoe UI Symbol" Style="{StaticResource OmnixButton}"
+                            Click="OpenWorkspaceMenu" Margin="6,0,0,0" Padding="9,4" ToolTip="Menu"
+                            AutomationProperties.AutomationId="OMNIX.WorkspaceMenu" AutomationProperties.Name="Workspace menu" />
                 </WrapPanel>
             </Grid>
         </Border>

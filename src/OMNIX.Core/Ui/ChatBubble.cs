@@ -26,6 +26,8 @@ namespace OMNIX.Core.Ui
         private readonly FlowDocument _doc;
         private string _rawText = "";
 
+        public string RawText { get { return _rawText; } }
+        public event Action<string,bool> TextUpdated;
         public bool IsUser { get; private set; }
 
         public ChatBubble(ChatTurn turn)
@@ -164,6 +166,7 @@ namespace OMNIX.Core.Ui
         public void AppendText(string chunk)
         {
             _rawText += chunk ?? "";
+            if(TextUpdated!=null) TextUpdated(_rawText,false);
             if (!IsLoaded) return;
             AppendMarkdown(_rawText);
             ScrollToEndSafe();
@@ -174,6 +177,7 @@ namespace OMNIX.Core.Ui
         {
             if (string.IsNullOrEmpty(chunk)) return;
             _rawText += chunk;
+            if(TextUpdated!=null) TextUpdated(_rawText,true);
             if (!IsLoaded) return;
             var paragraph = _doc.Blocks.LastBlock as Paragraph;
             if (paragraph == null) { paragraph = new Paragraph(); _doc.Blocks.Add(paragraph); }
@@ -187,6 +191,7 @@ namespace OMNIX.Core.Ui
         public void ReplaceText(string fullText)
         {
             _rawText = fullText ?? "";
+            if(TextUpdated!=null) TextUpdated(_rawText,false);
             if (!IsLoaded) return;
             AppendMarkdown(_rawText);
             ScrollToEndSafe();
