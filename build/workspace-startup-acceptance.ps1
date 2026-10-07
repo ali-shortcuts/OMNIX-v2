@@ -591,6 +591,10 @@ class WorkspaceStartupRegression {
             var host=new ContractHost {AllowWrites=true,Accept=true}; int previews=0;
             var executor=new ToolExecutor {WriteConfirmation=preview=>{previews++;return Task.FromResult(true);}};
             executor.Execution.Begin("Write one into A1",true);
+            executor.Execution.PreviousCheckpoint=new string('x',60000);
+            var budgeted=ChatRequestBudgeter.Apply(new ChatRequest {SystemPrompt=executor.Execution.Envelope(),UserTurn=new ChatTurn {Role=ChatRole.User,Text="Write one into A1"}});
+            Check(budgeted.SystemPrompt.Length<=32768 && budgeted.SystemPrompt.Contains("submit_execution_plan BEFORE any write"),"Bounded system context dropped the required next action");
+            executor.Execution.PreviousCheckpoint=null;
             var rejected=executor.ExecuteAsync(new ToolCall {Name=ToolNames.WriteToCell,ArgumentsJson=PlanStep("recovery")["args"].ToString()},host).GetAwaiter().GetResult();
             Check(!rejected.Success && rejected.WriteNotStarted && host.Writes==0 && previews==0,"Unplanned write reached preview or was counted as a native failure");
             var gateway=new OMNIX.Core.AiGateway.AiGateway(registry);
