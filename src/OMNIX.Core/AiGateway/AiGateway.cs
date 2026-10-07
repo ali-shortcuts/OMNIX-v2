@@ -288,17 +288,23 @@ namespace OMNIX.Core.AiGateway
                     using (var roundCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                     {
                         roundCts.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(1, Math.Min(120000, (TimeSpan.FromMinutes(10) - taskClock.Elapsed).TotalMilliseconds))));
+                        var roundToken = roundCts.Token;
+                        int deltasOpen = 1;
                         try
                         {
-                            response = await Task.Run(() => RetryPolicy.ExecuteWithRetryAsync(
-                                innerCt => provider.SendAsync(req, visibleDelta.OnDelta, innerCt),
-                                roundCts.Token), roundCts.Token).ConfigureAwait(true);
+                            var pending = Task.Run(() => RetryPolicy.ExecuteWithRetryAsync(
+                                innerCt => provider.SendAsync(req, part => {
+                                    if (Volatile.Read(ref deltasOpen) == 1 && !roundToken.IsCancellationRequested)
+                                        visibleDelta.OnDelta(part);
+                                }, innerCt), roundToken), roundToken);
+                            response = await RetryPolicy.WaitWithCancellationAsync(pending, roundToken).ConfigureAwait(true);
                         }
                         catch (OperationCanceledException)
                         {
                             ct.ThrowIfCancellationRequested();
                             throw OmnixException.Timeout("Provider round exceeded 120 seconds; Office changes already applied were retained. Inspect before retrying.");
                         }
+                        finally { Interlocked.Exchange(ref deltasOpen, 0); }
                     }
                     sw.Stop();
                     _health.RecordSuccess(provider.Info.Id, sw.ElapsedMilliseconds);

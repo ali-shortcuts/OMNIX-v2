@@ -22,6 +22,12 @@ namespace OMNIX.Core.Ui
         private WorkspaceController _controller;
         private ImageAttachment _pendingImage;
         private readonly List<Action> _refreshConversation = new List<Action>();
+        private sealed class ConversationPart
+        {
+            public Section Content;
+            public string Text = "";
+            public Paragraph StreamingParagraph;
+        }
         private bool _reloading;
         private bool _busy;
         private string _lastOperationPhase;
@@ -62,7 +68,8 @@ namespace OMNIX.Core.Ui
             header.SetResourceReference(TextElement.ForegroundProperty,"B.ForegroundDim");
             var content=new Section {Margin=new Thickness(0,0,0,10)};
             ConversationBox.Document.Blocks.Add(header);ConversationBox.Document.Blocks.Add(content);
-            Action<string,bool> render=(text,streaming)=>RenderConversationPart(content,text,streaming);
+            var part = new ConversationPart { Content = content };
+            Action<string,bool> render=(text,streaming)=>RenderConversationPart(part,text,streaming);
             bubble.TextUpdated+=render;render(turn.Text??"",false);
             _refreshConversation.Add(()=>render(bubble.RawText,false));
             if(turn.HasImages && turn.Images[0].PngBytes!=null) {
@@ -88,14 +95,29 @@ namespace OMNIX.Core.Ui
             ScrollToBottom();
         }
 
-        private void RenderConversationPart(Section content,string text,bool streaming)
+        private void RenderConversationPart(ConversationPart part,string text,bool streaming)
         {
+            var content = part.Content;
+            text = text ?? "";
             ConversationBox.Document.Foreground=(Brush)FindResource("B.Foreground");
             bool follow=!_reloading && ConversationBox.Selection.IsEmpty && ConversationBox.VerticalOffset+ConversationBox.ViewportHeight>=ConversationBox.ExtentHeight-36;
             content.FlowDirection=System.Text.RegularExpressions.Regex.IsMatch(text??"",@"^[^A-Za-z\u0600-\u06ff]*[\u0600-\u06ff]")?FlowDirection.RightToLeft:FlowDirection.LeftToRight;
-            content.Blocks.Clear();
-            if(streaming) content.Blocks.Add(new Paragraph(new Run(text)) {Margin=new Thickness(0)});
+            if(streaming) {
+                if(part.StreamingParagraph != null && text.StartsWith(part.Text, StringComparison.Ordinal))
+                {
+                    // Keep the existing text/selection and append only this transport batch.
+                    string added = text.Substring(part.Text.Length);
+                    if(added.Length > 0) part.StreamingParagraph.Inlines.Add(new Run(added));
+                }
+                else {
+                    content.Blocks.Clear();
+                    part.StreamingParagraph = new Paragraph(new Run(text)) {Margin=new Thickness(0)};
+                    content.Blocks.Add(part.StreamingParagraph);
+                }
+            }
             else {
+                content.Blocks.Clear();
+                part.StreamingParagraph = null;
                 var doc=new FlowDocument();doc.SetResourceReference(TextElement.ForegroundProperty,"B.Foreground");
                 // Resolve the pane brush explicitly for Markdown tables/code in VSTO.
                 doc.Foreground=(Brush)FindResource("B.Foreground");
@@ -105,6 +127,7 @@ namespace OMNIX.Core.Ui
                 MarkdownRenderer.Render(doc,text);
                 while(doc.Blocks.FirstBlock!=null) {var block=doc.Blocks.FirstBlock;doc.Blocks.Remove(block);content.Blocks.Add(block);}
             }
+            part.Text = text;
             if(follow) ConversationBox.ScrollToEnd();
         }
 
