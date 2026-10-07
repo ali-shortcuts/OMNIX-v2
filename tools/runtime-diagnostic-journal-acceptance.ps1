@@ -143,6 +143,7 @@ public static class RuntimeDiagnosticJournalHarness
         var unknown=new JObject();unknown["event"]=marker;unknown["traceId"]=marker;reportRows.Add(unknown);
         var diagnostic=DiagnosticReport.Analyze(reportRows);string export=diagnostic.ToString();
         var requests=(JArray)diagnostic["requests"];
+        if((int)diagnostic["summary"]["recorded_failure"]!=1 || (int)diagnostic["summary"]["ui_delay_observed"]!=1) failures.Add("Diagnostic summary miscounted observed evidence.");
         var findings=requests.SelectMany(r=>((JArray)r["findings"]).OfType<JObject>()).ToList();
         if(export.Contains(marker) || export.Contains(fakePrompt) || export.Contains("prompt") && export.Contains(fakePrompt)) failures.Add("Report exported secret or payload input.");
         if(!findings.Any(f=>(string)f["code"]=="recorded_failure" && (int?)f["hresult"]==-2147467259)) failures.Add("Report lost numeric native failure evidence.");

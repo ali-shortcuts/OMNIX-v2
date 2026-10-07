@@ -70,7 +70,19 @@ namespace OMNIX.Core.Logging
             report["coreVersion"]=typeof(DiagnosticReport).Assembly.GetName().Version.ToString();
             report["retainedEvents"]=retained.Count; report["ignoredEvents"]=ignored; report["evictedEvents"]=evicted; report["omittedTraces"]=omitted;
             report["limitations"]="A missing end event may mean an active request, log rotation, interruption or crash; it does not prove a root cause. Timing thresholds are diagnostic heuristics. No document, prompt, endpoint, model ID, raw exception or credential content is exported.";
-            report["requests"]=requests; return report;
+            var allFindings=requests.OfType<JObject>().SelectMany(r=>((JArray)r["findings"]).OfType<JObject>()).ToList();
+            var summary=new JObject();summary["traces"]=requests.Count;
+            foreach(string code in new[]{"recorded_failure","ui_delay_observed","result_not_verified","request_without_terminal_event","stage_without_end_event","long_stage_observed","tool_protocol_rejected"})
+                summary[code]=allFindings.Count(f=>(string)f["code"]==code);
+            report["summary"]=summary;
+            var guide=new JObject();guide["recorded_failure"]="خطا در این مرحله ثبت شده؛ کد خطا و نخستین شکست را بررسی کنید.";
+            guide["ui_delay_observed"]="تأخیر رابط مشاهده شده؛ به‌تنهایی علت هنگ را ثابت نمی‌کند.";
+            guide["result_not_verified"]="درستی نتیجه تأیید نشده؛ بررسی بومی و مرحلهٔ ساخت را مقایسه کنید.";
+            guide["request_without_terminal_event"]="پایان درخواست ثبت نشده؛ درخواست فعال، قطع یا چرخش لاگ هم ممکن است.";
+            guide["stage_without_end_event"]="شروع مرحله ثبت شده اما پایان آن در دادهٔ موجود نیست.";
+            guide["long_stage_observed"]="مدت مرحله بیش از آستانهٔ تشخیصی بوده؛ الزاماً باگ نیست.";
+            guide["tool_protocol_rejected"]="فراخوانی ابزار رد شده؛ مسیر پروتکل و طرح اجرا بررسی شود.";
+            report["readingGuide"]=guide;report["requests"]=requests; return report;
         }
         private static JObject Finding(string code,JObject e,string evidence)
         {
@@ -84,6 +96,8 @@ namespace OMNIX.Core.Logging
             string trace=raw["traceId"]!=null && raw["traceId"].Type==JTokenType.String?(string)raw["traceId"]:null;
             if(trace!="no-trace" && (trace==null || !Regex.IsMatch(trace,"\\A[0-9a-f]{16}\\z"))) return null;
             var e=new JObject();e["traceId"]=trace;e["event"]=raw["event"].DeepClone();
+            if(raw["provider"]!=null && raw["provider"].Type==JTokenType.String &&
+                new[]{"custom","agentrouter","sambanova","nvidia","siliconflow","cloudflare","gemini","groq","openrouter","mistral","huggingface","cerebras","ollama","lmstudio"}.Contains((string)raw["provider"])) e["provider"]=raw["provider"].DeepClone();
             DateTime stamp;
             if(raw["tsUtc"]!=null && raw["tsUtc"].Type==JTokenType.String && DateTime.TryParse((string)raw["tsUtc"],CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out stamp)) e["tsUtc"]=stamp.ToUniversalTime().ToString("o");
             foreach(string key in new[]{"elapsedMs","thread","processId"})
