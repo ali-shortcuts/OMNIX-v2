@@ -116,6 +116,25 @@ class WorkspaceStartupRegression {
                 if((string)button.Content=="denied-model") Check(!button.IsEnabled,"Denied model is selectable");
             }
 
+            foreach(string changedField in new[]{"CustomBaseUrlBox","ApiKeyBox","CloudflareAccountBox","CustomApiTypeCombo"}) {
+                discovered.Add("old-endpoint-model");
+                verified["old-endpoint-model"]=new ModelVerificationResult {ModelId="old-endpoint-model",State=ModelVerificationState.Working};
+                var begin=settings.GetType().GetMethod("BeginProviderOperation",BindingFlags.NonPublic|BindingFlags.Instance);
+                var oldOperation=(CancellationTokenSource)begin.Invoke(settings,new object[]{25});
+                try {
+                    if(changedField=="ApiKeyBox") ((PasswordBox)settings.FindName(changedField)).Password="synthetic-test-key-"+mode;
+                    else if(changedField=="CustomApiTypeCombo") {
+                        var protocol=(ComboBox)settings.FindName(changedField); protocol.SelectedIndex=protocol.SelectedIndex==0?1:0;
+                    }
+                    else ((TextBox)settings.FindName(changedField)).Text="changed-"+mode;
+                    Check(discovered.Count==0 && verified.Count==0,"Connection change retained stale model catalog/evidence: "+changedField);
+                    Check(oldOperation.IsCancellationRequested,"Connection change retained active verification: "+changedField);
+                    Check(settings.GetType().GetField("_providerOperation",BindingFlags.NonPublic|BindingFlags.Instance).GetValue(settings)==null,"Stale operation can still publish model results");
+                    Check(model.Text=="working-model","Connection change silently replaced the selected model");
+                    Check(!model.Items.Contains("old-endpoint-model"),"Old endpoint catalog is still selectable");
+                } finally { oldOperation.Dispose(); }
+            }
+
             var connectionButton=(Button)settings.FindName("TestButton");
             var modelButton=(Button)settings.FindName("TestModelButton");
             var verifyButton=(Button)settings.FindName("VerifyModelsButton");
