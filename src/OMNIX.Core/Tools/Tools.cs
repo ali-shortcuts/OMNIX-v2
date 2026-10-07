@@ -100,6 +100,8 @@ namespace OMNIX.Core.Tools
         public string ContentForModel { get; set; }
         public string UiNote { get; set; }
         public byte[] CapturedPng { get; set; }
+        // A contract rejection occurred before preview/apply. It is not a native write failure.
+        public bool WriteNotStarted { get; set; }
 
         public static ToolResult Ok(string contentForModel, string uiNote = null)
         {
@@ -244,7 +246,11 @@ namespace OMNIX.Core.Tools
                 var obj = JObject.Parse(body);
                 string tool = (string)obj["tool"];
                 if (string.IsNullOrWhiteSpace(tool)) return Invalid("Missing tool name");
-                string args = obj["args"] != null ? obj["args"].ToString(Formatting.None) : "{}";
+                JToken argument = obj["args"];
+                // Match native wrapper decoding: some compatible providers JSON-encode args.
+                // Decode one layer only; the Gateway still requires a bounded JSON object.
+                string args = argument == null ? "{}" : argument.Type == JTokenType.String ?
+                    (string)argument : argument.ToString(Formatting.None);
                 return new ToolCall { Name = ToolNames.Normalize(tool), ArgumentsJson = args };
             }
             catch
