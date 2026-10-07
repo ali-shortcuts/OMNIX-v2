@@ -529,8 +529,7 @@ namespace OMNIX.Core.Context
         {
             int count = ActiveSlideCount();
             if (requested <= 0) return count + 1;
-            if (requested < 1) return 1;
-            if (requested > count + 1) return count + 1;
+            if (requested > count + 1) throw new ArgumentException("Insertion index is beyond the current slide count + 1. Inspect the presentation; no slide was created.");
             return requested;
         }
 

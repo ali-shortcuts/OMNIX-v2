@@ -90,6 +90,7 @@
     <Compile Include="AiGateway\Adapters\MistralAdapter.cs" />
     <Compile Include="AiGateway\Adapters\OllamaAdapter.cs" />
     <Compile Include="AiGateway\Adapters\OpenRouterAdapter.cs" />
+    <Compile Include="Tools\WordParagraphWriter.cs" />
     <Compile Include="Agent\ExecutionPlan.cs" />
     <Compile Include="Agent\RequestCoverage.cs" />
     <Compile Include="Agent\OfficePlaybooks.cs" />
@@ -145,6 +146,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Agent\Playbooks\Excel.md"><LogicalName>OMNIX.Agent.Excel.md</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="Agent\Playbooks\PowerPoint.md"><LogicalName>OMNIX.Agent.PowerPoint.md</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="Agent\Playbooks\office_documents.json"><LogicalName>OMNIX.Agent.office_documents.json</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="Agent\Playbooks\Word.md"><LogicalName>OMNIX.Agent.Word.md</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="Agent\Playbooks\business.md"><LogicalName>OMNIX.Agent.business.md</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="Agent\Playbooks\contract.md"><LogicalName>OMNIX.Agent.contract.md</LogicalName></EmbeddedResource>

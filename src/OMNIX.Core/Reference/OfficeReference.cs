@@ -26,7 +26,10 @@ namespace OMNIX.Core.Reference
             string catalog = OfficeCapabilityRegistry.Search(type, query, offset);
             string label = language == "fa" ? "ابزارهای پیاده‌سازی‌شده در OMNIX (با توجه به اجازه و نسخهٔ Office):" : "Implemented OMNIX tools (subject to Office permissions/version):";
             string recipes = type == HostType.Excel ? FormulaGuidance(query) : "";
-            return SearchReference(host, query, offset, language) + recipes + "\n\n" + label + "\n" + catalog;
+            string templates="";
+            if(offset==0 && type!=HostType.Excel)
+                templates="\n"+(language=="fa"?"الگوها: ":"Templates: ")+(type==HostType.Word?"report · letter · meeting":"briefing · training · sales");
+            return SearchReference(host, query, offset, language) + recipes + templates + "\n\n" + label + "\n" + catalog;
         }
 
         private static string FormulaGuidance(string query)

@@ -129,6 +129,7 @@ function Base-Result([string]$officeHostName) {
         ContextReadPass = $false
         ReadToolPass = $false
         StructuralAcceptancePass = $false
+        TemplateAcceptancePass = $false
         WriteNoConfirmationBlockedPass = $false
         WriteDeniedBlockedPass = $false
         WriteApprovedAppliedPass = $false
@@ -328,7 +329,7 @@ function Test-Excel {
 
 function Test-Word {
     $result = Base-Result 'Word'
-    $app = $null; $doc = $null; $range = $null; $adapter = $null; $executor = $null; $nativeTable = $null; $insertion = $null
+    $app = $null; $doc = $null; $range = $null; $adapter = $null; $executor = $null; $nativeTable = $null; $insertion = $null; $reportDoc = $null
     $token = 'OMNIX_E2E_WORD_ORIGINAL'
     try {
         $app = New-Object -ComObject Word.Application
@@ -385,6 +386,40 @@ function Test-Word {
         $emptyRejected = ($null -ne $adapter.CheckPostcondition($tableCheck))
         $nativeTable.Cell(2,2).Range.Text = '20'
         $result.StructuralAcceptancePass = [bool]($exactPass -and $extraRejected -and $tablePass -and $emptyRejected -and ($null -eq $adapter.CheckPostcondition($tableCheck)))
+
+        $reportDoc = $app.Documents.Add()
+        $options = [Newtonsoft.Json.Linq.JObject]::Parse('{"name":"report","title":"OMNIX guarded report","rtl":true}')
+        $templateJson = [OMNIX.Core.Agent.OfficePlaybooks]::Template($options,[OMNIX.Core.Context.HostType]::Word)
+        $template = $templateJson | ConvertFrom-Json
+        $reportPlan = New-Object -TypeName 'OMNIX.Core.Agent.ExecutionPlan'
+        $reportPlan.Begin('sample report',$true)
+        [void]$reportPlan.Submit($templateJson,[OMNIX.Core.Context.HostType]::Word)
+        foreach ($step in $template.steps) {
+            $argsJson = $step.args | ConvertTo-Json -Depth 20 -Compress
+            $call = New-ToolCall $step.tool $argsJson
+            $blocked = $reportPlan.BeforeWrite($call)
+            if ($null -ne $blocked) { throw "Word template blocked: $blocked" }
+            [void][OMNIX.Core.Context.WordCapabilityEngine]::Prepare($app,$argsJson)
+            $reportPlan.MarkApplying()
+            [OMNIX.Core.Context.WordCapabilityEngine]::Apply($app,$argsJson)
+            [void]$reportPlan.AfterWrite($adapter)
+        }
+        [void]$reportPlan.VerifyAll($adapter)
+        $initialVerified = [bool]$reportPlan.Complete
+        $repeatRefused = $false
+        try { [void][OMNIX.Core.Context.WordCapabilityEngine]::Prepare($app,($template.steps[0].args | ConvertTo-Json -Depth 20 -Compress)) }
+        catch { $repeatRefused = $true }
+        $reportDoc.Paragraphs.Item(3).Range.Text = "Changed by test`r"
+        [void]$reportPlan.VerifyAll($adapter)
+        $corruptionDetected = (-not $reportPlan.Complete)
+        $repair = $template.steps[2].args
+        $staleRefused = $false
+        try { [void][OMNIX.Core.Context.WordCapabilityEngine]::Prepare($app,($repair | ConvertTo-Json -Depth 20 -Compress)) }
+        catch { $staleRefused = $true }
+        $repair.args.expectedBefore = 'Changed by test'
+        [OMNIX.Core.Context.WordCapabilityEngine]::Apply($app,($repair | ConvertTo-Json -Depth 20 -Compress))
+        [void]$reportPlan.VerifyAll($adapter)
+        $result.TemplateAcceptancePass = [bool]($initialVerified -and $repeatRefused -and $corruptionDetected -and $staleRefused -and $reportPlan.Complete -and $reportDoc.Paragraphs.Count -eq 5)
     }
     catch [System.Runtime.InteropServices.COMException] {
         if ($_.Exception.HResult -eq -2147221164) {
@@ -394,19 +429,21 @@ function Test-Word {
     }
     catch { $result.Error = "$($_.Exception.GetType().FullName): $($_.Exception.Message)" }
     finally {
+        if ($null -ne $reportDoc) { try { $reportDoc.Close(0) } catch { } }
         if ($null -ne $doc) { try { $doc.Close(0) } catch { } }
         if ($null -ne $app) { try { $app.Quit() } catch { } }
         $adapter = $null; $executor = $null
         Release-ComObjectSafe $nativeTable
         Release-ComObjectSafe $insertion
         Release-ComObjectSafe $range
+        Release-ComObjectSafe $reportDoc
         Release-ComObjectSafe $doc
         Release-ComObjectSafe $app
         [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect(); [GC]::WaitForPendingFinalizers()
         $result.ProcessExitedCleanly = Wait-ProcessExit 'WINWORD'
     }
     $result.Pass = [bool]($result.Installed -and $result.Started -and $result.ContextReadPass -and $result.ReadToolPass -and
-        $result.WriteNoConfirmationBlockedPass -and $result.WriteDeniedBlockedPass -and $result.WriteApprovedAppliedPass -and $result.StructuralAcceptancePass -and
+        $result.WriteNoConfirmationBlockedPass -and $result.WriteDeniedBlockedPass -and $result.WriteApprovedAppliedPass -and $result.StructuralAcceptancePass -and $result.TemplateAcceptancePass -and
         $result.ProcessExitedCleanly)
     return [pscustomobject]$result
 }
@@ -414,7 +451,7 @@ function Test-Word {
 function Test-PowerPoint {
     $result = Base-Result 'PowerPoint'
     $result.VisionCaptureApplicable = $true
-    $app = $null; $pres = $null; $slide = $null; $adapter = $null; $executor = $null; $nativeTable = $null; $nativeTableShape = $null
+    $app = $null; $pres = $null; $slide = $null; $adapter = $null; $executor = $null; $nativeTable = $null; $nativeTableShape = $null; $target = $null
     $token = 'OMNIX_E2E_POWERPOINT_TITLE'
     try {
         $app = New-Object -ComObject PowerPoint.Application
@@ -480,6 +517,39 @@ function Test-PowerPoint {
         $emptyRejected = ($null -ne $adapter.CheckPostcondition($tableCheck))
         $nativeTable.Cell(2,2).Shape.TextFrame.TextRange.Text = "Line1`nLine2"
         $result.StructuralAcceptancePass = [bool]($exactPass -and $extraRejected -and $tablePass -and $emptyRejected -and ($null -eq $adapter.CheckPostcondition($tableCheck)))
+
+        $slideCountBefore = [int]$pres.Slides.Count
+        $options = [Newtonsoft.Json.Linq.JObject]::Parse('{"name":"briefing","title":"OMNIX briefing","startIndex":1,"rtl":true}')
+        $options['startIndex'] = [Newtonsoft.Json.Linq.JValue]::new($slideCountBefore + 1)
+        $templateJson = [OMNIX.Core.Agent.OfficePlaybooks]::Template($options,[OMNIX.Core.Context.HostType]::PowerPoint)
+        $template = $templateJson | ConvertFrom-Json
+        $slidesPlan = New-Object -TypeName 'OMNIX.Core.Agent.ExecutionPlan'
+        $slidesPlan.Begin('sample briefing',$true)
+        [void]$slidesPlan.Submit($templateJson,[OMNIX.Core.Context.HostType]::PowerPoint)
+        foreach ($step in $template.steps) {
+            $argsJson = $step.args | ConvertTo-Json -Depth 20 -Compress
+            $call = New-ToolCall $step.tool $argsJson
+            $blocked = $slidesPlan.BeforeWrite($call)
+            if ($null -ne $blocked) { throw "PowerPoint template blocked: $blocked" }
+            [void]$adapter.PrepareWrite($step.tool,$argsJson)
+            $slidesPlan.MarkApplying()
+            $adapter.ApplyWrite($step.tool,$argsJson)
+            [void]$slidesPlan.AfterWrite($adapter)
+        }
+        [void]$slidesPlan.VerifyAll($adapter)
+        $initialVerified = [bool]$slidesPlan.Complete
+        $target = $pres.Slides.Item($slideCountBefore + 1).Shapes.Item(1)
+        $target.TextFrame.TextRange.Text = 'Changed by test'
+        [void]$slidesPlan.VerifyAll($adapter)
+        $corruptionDetected = (-not $slidesPlan.Complete)
+        $target.TextFrame.TextRange.Text = 'OMNIX briefing'
+        [void]$slidesPlan.VerifyAll($adapter)
+        $countBeforeGap = [int]$pres.Slides.Count
+        $gapRefused = $false
+        try { [void]$adapter.PrepareWrite('insert_slide',('{"index":"' + ($countBeforeGap + 3) + '","title":"Gap","body":"Invalid target"}')) }
+        catch { $gapRefused = $true }
+        $result.TemplateAcceptancePass = [bool]($initialVerified -and $corruptionDetected -and $slidesPlan.Complete -and
+            $pres.Slides.Count -eq ($slideCountBefore + 3) -and $gapRefused -and $pres.Slides.Count -eq $countBeforeGap)
     }
     catch [System.Runtime.InteropServices.COMException] {
         if ($_.Exception.HResult -eq -2147221164) {
@@ -494,6 +564,7 @@ function Test-PowerPoint {
         $adapter = $null; $executor = $null
         Release-ComObjectSafe $nativeTable
         Release-ComObjectSafe $nativeTableShape
+        Release-ComObjectSafe $target
         Release-ComObjectSafe $slide
         Release-ComObjectSafe $pres
         Release-ComObjectSafe $app
@@ -501,7 +572,7 @@ function Test-PowerPoint {
         $result.ProcessExitedCleanly = Wait-ProcessExit 'POWERPNT'
     }
     $result.Pass = [bool]($result.Installed -and $result.Started -and $result.ContextReadPass -and $result.ReadToolPass -and
-        $result.WriteNoConfirmationBlockedPass -and $result.WriteDeniedBlockedPass -and $result.WriteApprovedAppliedPass -and $result.StructuralAcceptancePass -and
+        $result.WriteNoConfirmationBlockedPass -and $result.WriteDeniedBlockedPass -and $result.WriteApprovedAppliedPass -and $result.StructuralAcceptancePass -and $result.TemplateAcceptancePass -and
         $result.VisionCapturePass -and $result.ProcessExitedCleanly)
     return [pscustomobject]$result
 }

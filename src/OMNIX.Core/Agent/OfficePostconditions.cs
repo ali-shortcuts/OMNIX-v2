@@ -160,7 +160,17 @@ namespace OMNIX.Core.Agent
             if(kind=="paragraph_style")
             {
                 var style=p.Range.get_Style() as Word.Style;
-                return style!=null && style.NameLocal==(string)c["style"]?null:"Paragraph style differs from the plan.";
+                string expected=c["styleId"]!=null?doc.Styles[(object)(int)c["styleId"]].NameLocal:(string)c["style"];
+                return style!=null && style.NameLocal==expected?null:"Paragraph style differs from the plan.";
+            }
+            if(kind=="paragraph_format")
+            {
+                var font=p.Range.Font; var format=p.Format;
+                int alignment=(string)c["alignment"]=="center"?(int)Word.WdParagraphAlignment.wdAlignParagraphCenter:
+                    (string)c["alignment"]=="right"?(int)Word.WdParagraphAlignment.wdAlignParagraphRight:(int)Word.WdParagraphAlignment.wdAlignParagraphLeft;
+                return font.Size==(int)c["fontSize"] && font.Bold==((bool)c["bold"]?-1:0) && (int)format.Alignment==alignment &&
+                    format.ReadingOrder==((bool)c["rtl"]?Word.WdReadingOrder.wdReadingOrderRtl:Word.WdReadingOrder.wdReadingOrderLtr)?null:
+                    "Paragraph formatting differs from the plan.";
             }
             var r=p.Range.Duplicate;
             if(r.End-r.Start>10002) return "Paragraph exceeds the bounded text check; choose a smaller target.";
@@ -190,6 +200,13 @@ namespace OMNIX.Core.Agent
                 return null;
             }
             if(shape.HasTextFrame!=Microsoft.Office.Core.MsoTriState.msoTrue) return "Target shape has no text frame.";
+            if(kind=="text_alignment")
+            {
+                string alignment=(string)c["alignment"];
+                var expected=alignment=="right"?Ppt.PpParagraphAlignment.ppAlignRight:alignment=="center"?Ppt.PpParagraphAlignment.ppAlignCenter:
+                    alignment=="justify"?Ppt.PpParagraphAlignment.ppAlignJustify:Ppt.PpParagraphAlignment.ppAlignLeft;
+                return shape.TextFrame.TextRange.ParagraphFormat.Alignment==expected?null:"Shape text alignment differs from the plan.";
+            }
             var text=shape.TextFrame.TextRange;
             if(text.Length>10000) return "Shape exceeds the bounded text check.";
             return TextMatches(text.Text,(string)c["text"],(bool?)c["exact"]??false)?null:"Shape text differs from the plan.";
