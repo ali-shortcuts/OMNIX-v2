@@ -90,6 +90,7 @@ namespace OMNIX.Core.Ui
 
         private void RenderConversationPart(Section content,string text,bool streaming)
         {
+            ConversationBox.Document.Foreground=(Brush)FindResource("B.Foreground");
             bool follow=!_reloading && ConversationBox.Selection.IsEmpty && ConversationBox.VerticalOffset+ConversationBox.ViewportHeight>=ConversationBox.ExtentHeight-36;
             content.FlowDirection=System.Text.RegularExpressions.Regex.IsMatch(text??"",@"^[^A-Za-z\u0600-\u06ff]*[\u0600-\u06ff]")?FlowDirection.RightToLeft:FlowDirection.LeftToRight;
             content.Blocks.Clear();

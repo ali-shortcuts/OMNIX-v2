@@ -45,6 +45,18 @@
             </Setter>
         </Style>
         <ContextMenu x:Key="WorkspaceActions" Background="{DynamicResource B.Surface}" Foreground="{DynamicResource B.Foreground}">
+            <ContextMenu.Resources>
+                <Style TargetType="MenuItem">
+                    <Setter Property="Foreground" Value="{DynamicResource B.Foreground}" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="FontSize" Value="12" />
+                    <Setter Property="Padding" Value="10,6" />
+                    <Style.Triggers><Trigger Property="IsHighlighted" Value="True">
+                        <Setter Property="Background" Value="{DynamicResource B.Accent}" />
+                        <Setter Property="Foreground" Value="{DynamicResource B.AccentForeground}" />
+                    </Trigger></Style.Triggers>
+                </Style>
+            </ContextMenu.Resources>
             <MenuItem Header="{DynamicResource S.Tab.Settings}" Click="OnMenuSettings" />
             <MenuItem Header="{DynamicResource S.Tab.About}" Click="OnMenuAbout" />
             <MenuItem Header="Learn" Click="OnMenuLearn" />

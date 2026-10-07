@@ -126,9 +126,10 @@ namespace OMNIX.Core.Ui
             Loaded += (sender, args) =>
             {
                 ApplyResolvedThemeResources();
-                AppendMarkdown(_rawText);
+                if(IsVisible) AppendMarkdown(_rawText);
                 Theming.ThemeManager.Instance.ThemeChanged += RefreshTheme;
             };
+            IsVisibleChanged += (sender,args)=> {if(IsVisible && IsLoaded) AppendMarkdown(_rawText);};
             Unloaded += (sender, args) => Theming.ThemeManager.Instance.ThemeChanged -= RefreshTheme;
         }
 
@@ -136,7 +137,7 @@ namespace OMNIX.Core.Ui
         {
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (!IsLoaded) return;
+                if (!IsLoaded || !IsVisible) return;
                 ApplyResolvedThemeResources();
                 AppendMarkdown(_rawText);
             }));
@@ -167,7 +168,7 @@ namespace OMNIX.Core.Ui
         {
             _rawText += chunk ?? "";
             if(TextUpdated!=null) TextUpdated(_rawText,false);
-            if (!IsLoaded) return;
+            if (!IsLoaded || !IsVisible) return;
             AppendMarkdown(_rawText);
             ScrollToEndSafe();
         }
@@ -178,7 +179,7 @@ namespace OMNIX.Core.Ui
             if (string.IsNullOrEmpty(chunk)) return;
             _rawText += chunk;
             if(TextUpdated!=null) TextUpdated(_rawText,true);
-            if (!IsLoaded) return;
+            if (!IsLoaded || !IsVisible) return;
             var paragraph = _doc.Blocks.LastBlock as Paragraph;
             if (paragraph == null) { paragraph = new Paragraph(); _doc.Blocks.Add(paragraph); }
             paragraph.Inlines.Add(new Run(chunk));
@@ -192,7 +193,7 @@ namespace OMNIX.Core.Ui
         {
             _rawText = fullText ?? "";
             if(TextUpdated!=null) TextUpdated(_rawText,false);
-            if (!IsLoaded) return;
+            if (!IsLoaded || !IsVisible) return;
             AppendMarkdown(_rawText);
             ScrollToEndSafe();
         }
