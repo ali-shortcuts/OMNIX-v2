@@ -159,6 +159,18 @@ class WorkspaceStartupRegression {
             conversation.SelectAll();
             Check(conversation.Selection.Text.Contains("First message") && conversation.Selection.Text.Contains("Second message streamed"),"Selection cannot span multiple messages");
             conversation.Selection.Select(conversation.Document.ContentEnd,conversation.Document.ContentEnd);
+            var streamingSection=conversation.Document.Blocks.OfType<System.Windows.Documents.Section>().Last();
+            var streamingParagraph=streamingSection.Blocks.FirstBlock;
+            conversation.Selection.Select(streamingParagraph.ContentStart.GetPositionAtOffset(2),streamingParagraph.ContentStart.GetPositionAtOffset(7));
+            string selectedPrefix=conversation.Selection.Text;
+            Check(selectedPrefix.Length>0,"Streaming selection fixture has no text");
+            string chunk=new string('x',512);
+            for(int n=0;n<100;n++) second.AppendStreamingText(chunk);
+            Check(Object.ReferenceEquals(streamingParagraph,streamingSection.Blocks.FirstBlock),"Streaming rebuilt the existing paragraph on every batch");
+            Check(conversation.Selection.Text==selectedPrefix,"Streaming discarded a selection in previously rendered text");
+            text=new System.Windows.Documents.TextRange(conversation.Document.ContentStart,conversation.Document.ContentEnd).Text;
+            Check(text.Contains(new string('x',51200)),"Long incremental streaming lost or duplicated text");
+            conversation.Selection.Select(conversation.Document.ContentEnd,conversation.Document.ContentEnd);
             second.ReplaceText("**Final answer**");
             text=new System.Windows.Documents.TextRange(conversation.Document.ContentStart,conversation.Document.ContentEnd).Text;
             Check(text.Contains("First message") && text.Contains("Final answer") && !text.Contains("Second message"),"Final response replacement duplicated or removed messages");
@@ -1002,6 +1014,53 @@ class WorkspaceStartupRegression {
             return Task.FromResult(new ChatResponse {Text="Done"});
         }
     }
+    sealed class UncooperativeProvider : IProviderAdapter {
+        public int Calls;
+        public Action<string> LateDelta;
+        public readonly TaskCompletionSource<ChatResponse> Pending=new TaskCompletionSource<ChatResponse>();
+        public ProviderInfo Info {get {return new ProviderInfo {Id="custom",Kind=ProviderKind.Cloud,DisplayName="Cancellation fixture"};}}
+        public void Configure(ProviderCredentials c) {} public bool SupportsVisionNow(){return false;}
+        public Task<IReadOnlyList<string>> ListModelsAsync(CancellationToken ct){return Task.FromResult<IReadOnlyList<string>>(new string[0]);}
+        public Task<bool> TestConnectionAsync(CancellationToken ct){return Task.FromResult(true);}
+        public Task<ChatResponse> SendAsync(ChatRequest request,Action<string> delta,CancellationToken ct) {
+            LateDelta=delta;
+            if(Interlocked.Increment(ref Calls)>1) return Task.FromResult(new ChatResponse {Text="Fresh answer"});
+            return Pending.Task; // Deliberately ignores ct, modelling a stuck adapter/socket.
+        }
+    }
+    static void UncooperativeCancellationRegression() {
+        var settings=SettingsManager.Instance.Settings;
+        string old=settings.SelectedProviderId;var privacy=settings.Privacy;bool local=settings.PreferLocalWhenAvailable;
+        try {
+            settings.SelectedProviderId="custom";settings.Privacy=PrivacyMode.CloudAllowed;settings.PreferLocalWhenAvailable=false;
+            var registry=new ProviderRegistry();var provider=new UncooperativeProvider();
+            var list=(List<IProviderAdapter>)typeof(ProviderRegistry).GetField("_providers",BindingFlags.NonPublic|BindingFlags.Instance).GetValue(registry);
+            list.Clear();list.Add(provider);
+            var gateway=new OMNIX.Core.AiGateway.AiGateway(registry);var host=new FakeHost {AllowWrites=true};int deltas=0;
+            using(var cancel=new CancellationTokenSource()) {
+                var request=gateway.ChatAsync(new ChatRequest {UserTurn=new ChatTurn {Role=ChatRole.User,Text="Create a table"}},host,part=>Interlocked.Increment(ref deltas),new ToolExecutor(),cancel.Token);
+                var clock=Stopwatch.StartNew();
+                while(Volatile.Read(ref provider.Calls)==0 && clock.ElapsedMilliseconds<2000) Thread.Sleep(5);
+                Check(provider.Calls==1,"Cancellation fixture did not reach the provider");
+                cancel.Cancel(); clock.Restart();
+                while(!request.IsCompleted && clock.ElapsedMilliseconds<2000) Thread.Sleep(5);
+                Check(request.IsCompleted,"Stop still waits for a provider that ignores cancellation");
+                bool cancelled=false;try{request.GetAwaiter().GetResult();}catch(OperationCanceledException){cancelled=true;}
+                Check(cancelled && !provider.Pending.Task.IsCompleted,"Cancellation waited for or consumed an abandoned provider response");
+                provider.LateDelta("Late answer from the old request");
+                provider.Pending.TrySetResult(new ChatResponse {ToolCalls=new List<ProviderToolCall>{new ProviderToolCall {Name=ToolNames.WriteToCell,ArgumentsJson="{\"address\":\"A1\",\"value\":42}"}}});
+                var fresh=gateway.ChatAsync(new ChatRequest {UserTurn=new ChatTurn {Role=ChatRole.User,Text="Hello"}},host,part=>{},new ToolExecutor(),CancellationToken.None).GetAwaiter().GetResult();
+                Check(fresh.Text=="Fresh answer" && host.Writes==0 && deltas==0,"Abandoned response reached the document or a new request");
+            }
+            // Exercise the same wait primitive used by the 120-second gateway deadline quickly.
+            var stalled=new TaskCompletionSource<int>();
+            using(var deadline=new CancellationTokenSource(40)) {
+                bool expired=false;try{RetryPolicy.WaitWithCancellationAsync(stalled.Task,deadline.Token).GetAwaiter().GetResult();}catch(OperationCanceledException){expired=true;}
+                Check(expired && !stalled.Task.IsCompleted,"A non-cooperative task defeated the wait deadline");
+                stalled.TrySetException(new InvalidOperationException("Late fixture fault"));
+            }
+        } finally {settings.SelectedProviderId=old;settings.Privacy=privacy;settings.PreferLocalWhenAvailable=local;}
+    }
     static void ResponsiveGatewayRegression() {
         var settings=SettingsManager.Instance.Settings;
         string old=settings.SelectedProviderId; var privacy=settings.Privacy;
@@ -1137,6 +1196,7 @@ class WorkspaceStartupRegression {
             TransportRegression();
             AsyncContextRegression();
             ResponsiveGatewayRegression();
+            UncooperativeCancellationRegression();
             CatalogRoutesRegression();
             ExecutionPlanRegression();
             TaskLifecycleRegression();

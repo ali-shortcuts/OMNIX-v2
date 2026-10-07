@@ -12,6 +12,27 @@ namespace OMNIX.Core.AiGateway
     /// </summary>
     public static class RetryPolicy
     {
+        // Cancellation must release the caller even if an adapter/socket ignores its token.
+        // This cancels waiting, not remote execution. Never pass abandoned results to Office.
+        public static async Task<T> WaitWithCancellationAsync<T>(Task<T> pending, CancellationToken ct)
+        {
+            if (pending == null) throw new ArgumentNullException("pending");
+            // Observe a late fault after cancellation without logging private transport payloads.
+            pending.ContinueWith(task => { var observed = task.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            ct.ThrowIfCancellationRequested();
+            if (!ct.CanBeCanceled) return await pending.ConfigureAwait(false);
+            var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using (ct.Register(() => cancelled.TrySetResult(true)))
+            {
+                await Task.WhenAny(pending, cancelled.Task).ConfigureAwait(false);
+                // Cancellation wins a completion race; an old tool result must not reach Office.
+                ct.ThrowIfCancellationRequested();
+                return await pending.ConfigureAwait(false);
+            }
+        }
+
         public static async Task<T> ExecuteWithRetryAsync<T>(Func<CancellationToken, Task<T>> action, CancellationToken ct)
         {
             if (action == null) throw new ArgumentNullException("action");
