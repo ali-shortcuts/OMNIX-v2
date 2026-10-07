@@ -331,6 +331,44 @@ class WorkspaceStartupRegression {
                 Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Unresolved append target accepted");
             }
         }
+        foreach(var host in new[]{HostType.Word,HostType.PowerPoint}) {
+            string[] names=host==HostType.Word?new[]{"report","letter","meeting"}:new[]{"briefing","training","sales"};
+            foreach(string name in names) {
+                var options=new Newtonsoft.Json.Linq.JObject();options["name"]=name;options["title"]="Exact title";options["startIndex"]=4;options["rtl"]=true;
+                var result=Newtonsoft.Json.Linq.JObject.Parse(OMNIX.Core.Agent.OfficePlaybooks.Template(options,host));
+                var steps=(Newtonsoft.Json.Linq.JArray)result["steps"];
+                Check(steps.Count==(host==HostType.Word?5:9),"Host template lost ordered creation/formatting steps");
+                Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)==null,"Host template acceptance is incomplete");
+                if(host==HostType.Word) {
+                    var firstTemplateStep=(Newtonsoft.Json.Linq.JObject)steps[0];
+                    Check((bool)firstTemplateStep["args"]["args"]["requireBlankDocument"],"Word template would overwrite an existing document");
+                    foreach(Newtonsoft.Json.Linq.JObject step in steps) {
+                        WordParagraphWriter.Validate((Newtonsoft.Json.Linq.JObject)step["args"]["args"]);
+                        Check(((Newtonsoft.Json.Linq.JArray)step["checks"]).Count==3,"Word template lacks native role/text/format checks");
+                    }
+                    ((Newtonsoft.Json.Linq.JArray)firstTemplateStep["checks"]).RemoveAt(2);
+                    Check(OMNIX.Core.Agent.RequestCoverage.Validate("create",steps,host)!=null,"Weak Word formatting criteria passed");
+                } else {
+                    Check((string)steps[0]["args"]["index"]=="4" && (int)steps[0]["checks"][0]["slide"]==4,"Slide template lost exact insertion target");
+                    options.Remove("startIndex");bool rejectedIndex=false;
+                    try{OMNIX.Core.Agent.OfficePlaybooks.Template(options,host);}catch(ArgumentException){rejectedIndex=true;}
+                    Check(rejectedIndex,"Uninspected PowerPoint append target accepted");
+                }
+                options["title"]="Bad\nTitle";bool badTitle=false;
+                try{OMNIX.Core.Agent.OfficePlaybooks.Template(options,host);}catch(ArgumentException){badTitle=true;}
+                Check(badTitle,"Control characters in template title accepted");
+            }
+        }
+        var paragraphArgs=Newtonsoft.Json.Linq.JObject.Parse("{\"paragraph\":1,\"text\":\"Title\",\"expectedBefore\":\"\",\"role\":\"title\"}");
+        WordParagraphWriter.Validate(paragraphArgs);
+        foreach(string field in new[]{"paragraph","text","expectedBefore","role"}) {
+            var invalid=(Newtonsoft.Json.Linq.JObject)paragraphArgs.DeepClone();invalid.Remove(field);
+            bool rejectedParagraph=false;try{WordParagraphWriter.Validate(invalid);}catch(ArgumentException){rejectedParagraph=true;}
+            Check(rejectedParagraph,"Missing paragraph field accepted: "+field);
+        }
+        paragraphArgs["text"]="Two\nParagraphs";bool multiple=false;
+        try{WordParagraphWriter.Validate(paragraphArgs);}catch(ArgumentException){multiple=true;}
+        Check(multiple,"Multi-paragraph text accepted by a one-paragraph operation");
         plan.SaveCheckpoint = text => { throw new IOException("disk unavailable"); };
         plan.VerifyAll(probe);
         Check(plan.Complete, "Checkpoint failure changed native verification result");

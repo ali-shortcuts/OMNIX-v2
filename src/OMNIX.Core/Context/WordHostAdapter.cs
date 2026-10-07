@@ -57,7 +57,7 @@ namespace OMNIX.Core.Context
         {
             get
             {
-                return "Word direct object-model access: document/selection text, paragraphs/headings/tables metadata, main text plus available headers/footers/comments/footnotes/endnotes/text-frame stories, current-view capture, and confirmed rewrite of the exact selected range with native UndoRecord. OMNIX visibly navigates to the real Word range and activates the relevant native Ribbon tab when possible.";
+                return "Word direct object-model access: document/selection text, paragraphs/headings/tables metadata, main text plus available headers/footers/comments/footnotes/endnotes/text-frame stories, current-view capture, and confirmed rewrite of the exact selected range and guarded paragraph-index creation/repair with native UndoRecord. OMNIX visibly navigates to the real Word range and activates the relevant native Ribbon tab when possible.";
             }
         }
 
@@ -71,6 +71,13 @@ namespace OMNIX.Core.Context
                 ActivateCapabilityRibbonTab(capability);
                 try
                 {
+                    if(capability=="paragraph.write")
+                    {
+                        var target=Newtonsoft.Json.Linq.JObject.Parse(args.Get("args","{}"));
+                        int paragraph=(int)target["paragraph"];
+                        var doc=_app.ActiveDocument;
+                        if(paragraph>=1 && paragraph<=doc.Paragraphs.Count) doc.Paragraphs[paragraph].Range.Select();
+                    }
                     if (_app.ActiveWindow != null && _app.Selection != null)
                         _app.ActiveWindow.ScrollIntoView(_app.Selection.Range, true);
                 }

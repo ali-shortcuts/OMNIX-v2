@@ -42,6 +42,21 @@ namespace OMNIX.Core.Agent
                     if ((tool=="rewrite_selected_text" || tool=="insert_slide") &&
                         !nativeChecks.Any(c => (string)c["kind"]=="text" && (bool?)c["exact"]==true))
                         return "REQUEST COVERAGE: writing document/slide text requires an exact native text check for this step; counts or substring checks alone are insufficient. Split large content into bounded targets.";
+                    if(host==HostType.Word && tool=="execute_office_capability" && (string)step["args"]["capability"]=="paragraph.write")
+                    {
+                        var args=step["args"]["args"] as JObject;
+                        Tools.WordParagraphWriter.Validate(args);
+                        int paragraph=(int)args["paragraph"]; string text=(string)args["text"], role=(string)args["role"];
+                        bool rtl=(bool?)args["rtl"]??true;
+                        if(!nativeChecks.Any(c => (string)c["kind"]=="text" && (int?)c["paragraph"]==paragraph &&
+                            (bool?)c["exact"]==true && (string)c["text"]==text) ||
+                           !nativeChecks.Any(c => (string)c["kind"]=="paragraph_style" && (int?)c["paragraph"]==paragraph &&
+                            (int?)c["styleId"]==Tools.WordParagraphWriter.StyleId(role)) ||
+                           !nativeChecks.Any(c => (string)c["kind"]=="paragraph_format" && (int?)c["paragraph"]==paragraph &&
+                            (int?)c["fontSize"]==(role=="title"?20:role=="heading"?14:12) && (bool?)c["bold"]==(role!="body") &&
+                            (bool?)c["rtl"]==rtl && (string)c["alignment"]==(role=="title"?"center":rtl?"right":"left")))
+                            return "REQUEST COVERAGE: paragraph.write requires its exact target text, native role style and complete expected paragraph formatting checks.";
+                    }
                     if(tool=="rewrite_selected_text")
                     {
                         string expected=(string)step["args"]["text"];

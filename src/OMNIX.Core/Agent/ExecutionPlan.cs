@@ -73,6 +73,8 @@ namespace OMNIX.Core.Agent
                 var checks = step["checks"] as JArray;
                 if (checks == null || checks.Count < 1 || checks.Count > 12) throw new ArgumentException("Each step requires 1–12 native postconditions.");
                 foreach (var c in checks) ValidateCheck(c as JObject, host);
+                if(host==HostType.Word && tool==ToolNames.ExecuteOfficeCapability && (string)step["args"]["capability"]=="paragraph.write")
+                    WordParagraphWriter.Validate(step["args"]["args"] as JObject);
                 if (tool == ToolNames.CreateDataTable && (bool?)step["args"]["uniqueName"] == true)
                     throw new ArgumentException("Planned creation requires an exact, unused sheet name; automatic suffixes are not allowed.");
                 if (tool == ToolNames.CreateDataTable && host == HostType.Excel)
@@ -110,7 +112,7 @@ namespace OMNIX.Core.Agent
             if (c == null) throw new ArgumentException("Postcondition must be an object.");
             string kind = (string)c["kind"];
             string[] allowed = host == HostType.Excel ? new[]{"cell_value","formula","heading","table","no_errors","format"} :
-                host == HostType.Word ? new[]{"text","paragraph_style","table_count","table_content"} : new[]{"text","slide_count","shape_bounds","table_content"};
+                host == HostType.Word ? new[]{"text","paragraph_style","table_count","table_content","paragraph_format"} : new[]{"text","slide_count","shape_bounds","table_content","text_alignment"};
             if (!allowed.Contains(kind)) throw new ArgumentException("Unsupported postcondition for " + host + ": " + kind);
             if (host == HostType.Excel && (string.IsNullOrWhiteSpace((string)c["sheet"]) || string.IsNullOrWhiteSpace((string)c["address"])))
                 throw new ArgumentException("Excel checks require exact sheet and address.");
@@ -145,8 +147,23 @@ namespace OMNIX.Core.Agent
             }
             if (kind == "format" && !new[]{"bold","italic","wrapText","fontSize","numberFormat","horizontalAlignment"}.Any(k => c[k] != null))
                 throw new ArgumentException("Format checks require at least one explicit formatting property.");
-            if (kind == "paragraph_style" && string.IsNullOrWhiteSpace((string)c["style"]))
-                throw new ArgumentException("Style check requires the expected style name.");
+            if(kind=="paragraph_style")
+            {
+                if(c["styleId"]!=null)
+                {
+                    if(c["styleId"].Type!=JTokenType.Integer || !new[]{-63,-2,-67,-1}.Contains((int)c["styleId"]))
+                        throw new ArgumentException("styleId supports Title, Heading1, BodyText or Normal.");
+                }
+                else if(string.IsNullOrWhiteSpace((string)c["style"])) throw new ArgumentException("Style check requires style or styleId.");
+            }
+            if(kind=="paragraph_format")
+            {
+                if(c["paragraph"]==null || c["paragraph"].Type!=JTokenType.Integer || (int)c["paragraph"]<1 ||
+                    c["fontSize"]==null || c["fontSize"].Type!=JTokenType.Integer || (int)c["fontSize"]<6 || (int)c["fontSize"]>96 ||
+                    c["bold"]==null || c["bold"].Type!=JTokenType.Boolean || c["rtl"]==null || c["rtl"].Type!=JTokenType.Boolean ||
+                    !new[]{"left","right","center"}.Contains((string)c["alignment"]))
+                    throw new ArgumentException("Paragraph formatting requires paragraph, bounded fontSize, bold, rtl and alignment.");
+            }
             if (kind == "formula" && string.IsNullOrWhiteSpace((string)c["formula"]))
                 throw new ArgumentException("Formula checks require the exact formula and expected result.");
             if (kind == "text")
@@ -168,6 +185,10 @@ namespace OMNIX.Core.Agent
                     if (c[field] == null || c[field].Type != JTokenType.Integer || (int)c[field] < 1)
                         throw new ArgumentException("Table content requires an exact positive " + field + " index.");
             }
+            if(kind=="text_alignment" && (c["slide"]==null || c["slide"].Type!=JTokenType.Integer || (int)c["slide"]<1 ||
+                c["shape"]==null || c["shape"].Type!=JTokenType.Integer || (int)c["shape"]<1 ||
+                !new[]{"left","right","center","justify"}.Contains((string)c["alignment"])))
+                throw new ArgumentException("Text alignment requires exact slide/shape indices and alignment.");
             if (kind == "table_count" || kind == "slide_count")
                 if (c["count"] == null || c["count"].Type != JTokenType.Integer || (int)c["count"] < 0)
                     throw new ArgumentException("Count checks require an explicit nonnegative integer.");
@@ -202,7 +223,7 @@ namespace OMNIX.Core.Agent
                 try
                 {
                     string id = (string)JObject.Parse(call.ArgumentsJson ?? "{}")["capability"];
-                    if (new[]{"sheet.heading","shape.text","shape.format","table.cell_text","table.cell_shading","table.cell_alignment"}.Contains(id)) return false;
+                    if (new[]{"sheet.heading","shape.text","shape.format","table.cell_text","table.cell_shading","table.cell_alignment","paragraph.write"}.Contains(id)) return false;
                 }
                 catch { }
             }

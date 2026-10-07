@@ -120,6 +120,7 @@ namespace OMNIX.Core.Context
             x.Add(C(HostType.Excel,"print_area.clear","Page Layout","Clear worksheet print area.","sheet"));
 
             // Word — content, formatting, document structure, review and layout.
+            x.Add(C(HostType.Word,"paragraph.write","Document Structure","Write one exact paragraph with inspected expectedBefore; append without gaps and apply a native title/heading/body style. Blank-document guard available.","paragraph,text,expectedBefore,role=title|heading|body,rtl=true|false,requireBlankDocument=true|false"));
             x.Add(C(HostType.Word,"text.insert_before","Editing","Insert text before current selection.","text"));
             x.Add(C(HostType.Word,"text.insert_after","Editing","Insert text after current selection.","text"));
             x.Add(C(HostType.Word,"text.find_replace","Editing","Find/replace within the main document story.","find,replace,matchCase=false,wholeWord=false"));
@@ -307,6 +308,14 @@ namespace OMNIX.Core.Context
             var root=CapabilityArgs.Obj(json); string id=CapabilityArgs.Capability(root);
             if(!OfficeCapabilityRegistry.Exists(HostType.Word,id)) throw new ArgumentException("Unsupported Word capability: "+id);
             var doc=app.ActiveDocument; if(doc==null) throw new InvalidOperationException("No active Word document.");
+            if(id=="paragraph.write")
+            {
+                var args=CapabilityArgs.Args(root); WordParagraphWriter.Prepare(doc,args);
+                string text=(string)args["text"];
+                return new WritePreview { ToolName=ToolNames.ExecuteOfficeCapability, Title="Word — paragraph "+(int)args["paragraph"],
+                    Before="Guarded paragraph target in "+doc.Name+"; inspected expectedBefore must match or the requested text must already exist.",
+                    After=(string)args["role"]+": "+(text.Length>160?text.Substring(0,160)+"…":text), ArgumentsJson=json };
+            }
             return new WritePreview{ToolName=ToolNames.ExecuteOfficeCapability,Title="Word capability — "+id,Before="Document: "+doc.Name+"; selection="+app.Selection.Start+"-"+app.Selection.End,After="Execute "+id+" against the active document/selection.",ArgumentsJson=json};
         }
         public static void Apply(Word.Application app,string json)
@@ -316,6 +325,7 @@ namespace OMNIX.Core.Context
             Func<Word.Table> table=()=> { if(sel.Tables.Count<1) throw new InvalidOperationException("Selection is not inside a table."); return sel.Tables[1]; };
             switch(id)
             {
+                case "paragraph.write": WordParagraphWriter.Apply(app,a); break;
                 case "text.insert_before": sel.Range.InsertBefore(CapabilityArgs.S(a,"text","")); break;
                 case "text.insert_after": sel.Range.InsertAfter(CapabilityArgs.S(a,"text","")); break;
                 case "text.find_replace": { var f=doc.Content.Find; f.ClearFormatting(); f.Replacement.ClearFormatting(); f.Text=CapabilityArgs.S(a,"find",""); f.Replacement.Text=CapabilityArgs.S(a,"replace",""); f.MatchCase=CapabilityArgs.B(a,"matchCase",false); f.MatchWholeWord=CapabilityArgs.B(a,"wholeWord",false); f.Execute(Replace:Word.WdReplace.wdReplaceAll); break; }

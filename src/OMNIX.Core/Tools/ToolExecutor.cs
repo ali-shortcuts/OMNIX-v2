@@ -170,7 +170,7 @@ namespace OMNIX.Core.Tools
             {
                 case ToolNames.GetOfficeTemplate:
                     var templateArgs = Newtonsoft.Json.Linq.JObject.Parse(call.ArgumentsJson ?? "{}");
-                    return ToolResult.Ok(Agent.OfficePlaybooks.Template((string)templateArgs["name"], (string)templateArgs["sheet"], adapter.Host));
+                    return ToolResult.Ok(Agent.OfficePlaybooks.Template(templateArgs, adapter.Host));
                 case ToolNames.SubmitExecutionPlan:
                     var targets=adapter as Agent.IPlanTargetInspectionHost;
                     return ToolResult.Ok(Execution.Submit(call.ArgumentsJson, adapter.Host,
